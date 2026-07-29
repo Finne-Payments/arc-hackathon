@@ -1,0 +1,4 @@
+# Confidential working documents stay out of this public repo.
+project/uploads/*.pdf
+
+.DS_Store

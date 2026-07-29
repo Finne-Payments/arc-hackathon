@@ -1,0 +1,1250 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="_ds/entente-design-system-5276b1ae-64a6-479f-836d-2b877c02fddf/colors_and_type.css">
+<script src="_ds/entente-design-system-5276b1ae-64a6-479f-836d-2b877c02fddf/_ds_bundle.js"></script>
+<style>
+html,body{margin:0;padding:0;background:var(--color-bg);}
+body{font-family:var(--font-sans);color:var(--color-fg);-webkit-font-smoothing:antialiased;}
+a{color:var(--brand-600);text-decoration:none;}
+a:hover{color:var(--brand-700);text-decoration:underline;}
+@keyframes riseIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+@keyframes pulseDot{0%,100%{opacity:1}50%{opacity:.35}}
+@keyframes shimmer{0%{background-position:-400px 0}100%{background-position:400px 0}}
+</style>
+</helmet>
+
+<div style="min-height:100vh;display:flex;align-items:stretch">
+
+<!-- ============ SIDEBAR ============ -->
+<div style="width:224px;flex-shrink:0;background:var(--color-surface);border-right:1px solid var(--color-border);position:sticky;top:0;height:100vh;box-sizing:border-box;display:flex;flex-direction:column;padding:20px 12px 16px">
+  <div style="display:flex;align-items:baseline;gap:8px;padding:0 10px 20px">
+    <span style="font-family:var(--font-sans);font-weight:800;font-size:16px;letter-spacing:.12em;color:var(--color-fg)">FINN&Eacute;</span>
+    <span style="font-family:var(--font-mono);font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--color-fg-subtle)">on Arc</span>
+  </div>
+  <div style="font-family:var(--font-mono);font-weight:600;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--color-fg-subtle);padding:0 10px 8px">{{ navSectionLabel }}</div>
+  <sc-for list="{{ navItems }}" as="nav" hint-placeholder-count="2">
+    <div onClick="{{ nav.go }}" style="display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:var(--radius-md);cursor:pointer;font-size:13.5px;font-weight:{{ nav.weight }};color:{{ nav.fg }};background:{{ nav.bg }};margin-bottom:2px" style-hover="background:var(--ink-50)">{{ nav.label }}</div>
+  </sc-for>
+  <span style="flex:1"></span>
+  <div style="border:1px solid var(--warn-border);background:var(--warn-soft);border-radius:var(--radius-md);padding:9px 11px;font-size:11px;line-height:1.5;color:var(--color-fg-muted);margin-bottom:12px"><strong style="color:var(--color-fg)">Arc testnet</strong> &middot; demonstration environment</div>
+  <div style="font-family:var(--font-mono);font-weight:600;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--color-fg-subtle);padding:0 10px 6px">Session</div>
+  <div style="display:flex;flex-direction:column;border:1px solid var(--color-border);border-radius:var(--radius-md);overflow:hidden">
+    <button onClick="{{ asReviewer }}" style="border:none;cursor:pointer;padding:7px 10px;text-align:left;font-size:12px;font-weight:600;font-family:var(--font-sans);background:{{ revTabBg }};color:{{ revTabFg }}">Arbiter &middot; Dana</button>
+    <button onClick="{{ asClaimant }}" style="border:none;border-top:1px solid var(--color-border);cursor:pointer;padding:7px 10px;text-align:left;font-size:12px;font-weight:600;font-family:var(--font-sans);background:{{ claTabBg }};color:{{ claTabFg }}">Merchant &middot; Northbeam</button>
+    <button onClick="{{ asRecipient }}" style="border:none;border-top:1px solid var(--color-border);cursor:pointer;padding:7px 10px;text-align:left;font-size:12px;font-weight:600;font-family:var(--font-sans);background:{{ recTabBg }};color:{{ recTabFg }}">Customer &middot; Maya</button>
+    <button onClick="{{ asPlatform }}" style="border:none;border-top:1px solid var(--color-border);cursor:pointer;padding:7px 10px;text-align:left;font-size:12px;font-weight:600;font-family:var(--font-sans);background:{{ plaTabBg }};color:{{ plaTabFg }}">Platform &middot; Parkline</button>
+  </div>
+</div>
+
+<!-- ============ MAIN ============ -->
+<div style="flex:1;min-width:0;display:flex;flex-direction:column">
+<div style="position:sticky;top:0;z-index:40;background:rgba(255,255,255,.88);backdrop-filter:blur(8px);border-bottom:1px solid var(--color-border)">
+  <div style="display:flex;align-items:center;gap:14px;padding:9px 28px">
+    <div style="flex:1;max-width:420px;display:flex;align-items:center;gap:9px;border:1px solid var(--color-border);border-radius:var(--radius-md);padding:7px 12px;background:var(--color-surface);color:var(--color-fg-subtle);font-size:13px">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-3.5-3.5"></path></svg>
+      Search payments, cases, addresses
+    </div>
+    <span style="flex:1"></span>
+    <span style="display:inline-flex;align-items:center;gap:7px;border:1px solid var(--color-border);border-radius:var(--radius-pill);padding:4px 12px;font-size:12px;font-weight:500;color:var(--color-fg-muted);background:var(--color-surface)">
+      <span style="width:7px;height:7px;border-radius:50%;background:{{ roleDotColor }}"></span>{{ roleBadge }}
+    </span>
+  </div>
+</div>
+
+<div style="flex:1;width:100%;max-width:1100px;margin:0;padding:28px 32px 110px;box-sizing:border-box">
+
+<!-- ============ SCREEN 1 · PAYOUT LEDGER ============ -->
+<sc-if value="{{ isLedger }}" hint-placeholder-val="{{ true }}">
+<div style="animation:riseIn .25s ease-out">
+  <h1 style="margin:0 0 24px;font-family:var(--font-sans);font-weight:700;font-size:24px;letter-spacing:-0.02em">Payouts</h1>
+
+  <sc-if value="{{ ledgerStale }}" hint-placeholder-val="{{ false }}">
+    <div style="display:flex;align-items:center;gap:10px;background:var(--warn-soft);border:1px solid var(--warn-border);border-radius:var(--radius-md);padding:10px 16px;font-size:13px;color:var(--color-fg);margin-bottom:16px">
+      <span style="width:8px;height:8px;border-radius:50%;background:var(--warn-500);animation:pulseDot 1.6s infinite"></span>
+      Showing last confirmed chain state from 14:32 &middot; reconnecting
+    </div>
+  </sc-if>
+
+  <sc-if value="{{ ledgerError }}" hint-placeholder-val="{{ false }}">
+    <div style="background:var(--color-surface);border:1px solid var(--color-border);border-radius:var(--radius-lg);padding:48px 32px;text-align:center">
+      <div style="font-family:var(--font-sans);font-weight:700;font-size:17px;margin-bottom:8px">We couldn't load your payouts</div>
+      <div style="font-size:14px;color:var(--color-fg-muted);margin-bottom:20px">Nothing has changed on chain &mdash; this is a connection problem on our side.</div>
+      <button style="border:1.5px solid var(--ink-200);background:var(--color-surface);cursor:pointer;font-family:var(--font-sans);font-weight:600;font-size:14px;padding:9px 18px;border-radius:var(--radius-md);color:var(--color-fg)" style-hover="background:var(--ink-100)">Try again</button>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{ ledgerEmpty }}" hint-placeholder-val="{{ false }}">
+    <div style="background:var(--color-surface);border:1px solid var(--color-border);border-radius:var(--radius-lg);padding:56px 40px;text-align:center;max-width:640px;margin:0 auto">
+      <div style="font-family:var(--font-sans);font-weight:700;font-size:18px;margin-bottom:10px">No payouts yet</div>
+      <p style="margin:0 auto;font-size:14px;line-height:1.6;color:var(--color-fg-muted);max-width:460px;text-wrap:pretty">Payouts made through your payment platform appear here once Finn&eacute; detects them on Arc. Each one carries a receipt binding the payment to the work it was for.</p>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{ ledgerLoading }}" hint-placeholder-val="{{ false }}">
+    <div style="background:var(--color-surface);border:1px solid var(--color-border);border-radius:var(--radius-lg);padding:8px 20px">
+      <sc-for list="{{ skeletonRows }}" as="s" hint-placeholder-count="5">
+        <div style="height:20px;margin:18px 0;border-radius:6px;background:linear-gradient(90deg,var(--ink-100) 25%,var(--ink-50) 50%,var(--ink-100) 75%);background-size:800px 100%;animation:shimmer 1.4s linear infinite"></div>
+      </sc-for>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{ ledgerNormal }}" hint-placeholder-val="{{ true }}">
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;background:var(--color-surface);border:1px solid var(--color-border);border-radius:var(--radius-lg);box-shadow:var(--shadow-sm);margin-bottom:20px;overflow:hidden">
+      <div style="padding:16px 20px">
+        <div style="font-family:var(--font-mono);font-weight:600;font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--color-fg-subtle);margin-bottom:10px">Protected payouts</div>
+        <div style="font-family:var(--font-mono);font-weight:500;font-size:22px;font-variant-numeric:tabular-nums">3</div>
+        <div style="font-size:12px;color:var(--color-fg-subtle);margin-top:4px">430 USDC in escrow</div>
+      </div>
+      <div style="padding:16px 20px;border-left:1px solid var(--color-border)">
+        <div style="font-family:var(--font-mono);font-weight:600;font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--warn-600);margin-bottom:10px">Open disputes</div>
+        <div style="font-family:var(--font-mono);font-weight:500;font-size:22px;font-variant-numeric:tabular-nums">1</div>
+        <div style="font-size:12px;color:var(--color-fg-subtle);margin-top:4px">Oldest reply due in {{ countdown }}</div>
+      </div>
+      <div style="padding:16px 20px;border-left:1px solid var(--color-border)">
+        <div style="font-family:var(--font-mono);font-weight:600;font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--color-fg-subtle);margin-bottom:10px">Resolved this month</div>
+        <div style="font-family:var(--font-mono);font-weight:500;font-size:22px;font-variant-numeric:tabular-nums">2</div>
+        <div style="font-size:12px;color:var(--color-fg-subtle);margin-top:4px">1 refunded &middot; 1 cleared</div>
+      </div>
+      <div style="padding:16px 20px;border-left:1px solid var(--color-border)">
+        <div style="font-family:var(--font-mono);font-weight:600;font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--color-fg-subtle);margin-bottom:10px">Arbiter reserve</div>
+        <div style="font-family:var(--font-mono);font-weight:500;font-size:22px;font-variant-numeric:tabular-nums">500 USDC</div>
+        <div style="font-size:12px;color:var(--color-fg-subtle);margin-top:4px">Backs post-escrow refunds</div>
+      </div>
+    </div>
+
+    <div style="background:var(--color-surface);border:1px solid var(--color-border);border-radius:var(--radius-lg);box-shadow:var(--shadow-xs);overflow:hidden">
+      <div style="display:grid;grid-template-columns:1.2fr .8fr 1.5fr .8fr 1fr 1.1fr .6fr;gap:12px;padding:12px 20px;border-bottom:1px solid var(--color-border);font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--color-fg-subtle)">
+        <span>Recipient</span><span style="text-align:right">Amount</span><span>For</span><span>Paid</span><span>Status</span><span>Deadline</span><span></span>
+      </div>
+      <div style="display:grid;grid-template-columns:1.2fr .8fr 1.5fr .8fr 1fr 1.1fr .6fr;gap:12px;padding:11px 20px;border-bottom:1px solid var(--color-border);font-size:13.5px;align-items:center;background:var(--warn-soft)">
+        <span style="font-weight:600">Maya Reyes</span>
+        <span style="font-family:var(--font-mono);font-size:13px;font-variant-numeric:tabular-nums;text-align:right">100 USDC</span>
+        <span>Three product videos &mdash; spring launch</span>
+        <span style="color:var(--color-fg-muted);font-size:13px">14 Jul</span>
+        <span><span style="display:inline-flex;align-items:center;gap:6px;border:1px solid var(--color-border);background:var(--color-surface);border-radius:var(--radius-pill);padding:3px 10px;font-size:12px;font-weight:500"><span style="width:7px;height:7px;border-radius:50%;background:var(--warn-500)"></span>Disputed</span></span>
+        <span style="font-size:13px;color:var(--color-fg-muted)">Reply due in {{ countdown }}</span>
+        <a onClick="{{ goReceipt }}" style="cursor:pointer;font-size:13px;font-weight:600">Receipt</a>
+      </div>
+      <div style="display:grid;grid-template-columns:1.2fr .8fr 1.5fr .8fr 1fr 1.1fr .6fr;gap:12px;padding:11px 20px;border-bottom:1px solid var(--color-border);font-size:13.5px;align-items:center" style-hover="background:var(--ink-50)">
+        <span style="font-weight:600">Jonah Park</span>
+        <span style="font-family:var(--font-mono);font-size:13px;font-variant-numeric:tabular-nums;text-align:right">250 USDC</span>
+        <span>Brand guidelines refresh</span>
+        <span style="color:var(--color-fg-muted);font-size:13px">21 Jul</span>
+        <span><span style="display:inline-flex;align-items:center;gap:6px;border:1px solid var(--color-border);background:var(--color-surface);border-radius:var(--radius-pill);padding:3px 10px;font-size:12px;font-weight:500"><span style="width:7px;height:7px;border-radius:50%;background:var(--brand-500)"></span>Protected</span></span>
+        <span style="font-size:13px;color:var(--color-fg-muted)">Unlocks 20 Aug</span>
+        <a style="cursor:pointer;font-size:13px;font-weight:600">Receipt</a>
+      </div>
+      <div style="display:grid;grid-template-columns:1.2fr .8fr 1.5fr .8fr 1fr 1.1fr .6fr;gap:12px;padding:11px 20px;border-bottom:1px solid var(--color-border);font-size:13.5px;align-items:center" style-hover="background:var(--ink-50)">
+        <span style="font-weight:600">Priya Nair</span>
+        <span style="font-family:var(--font-mono);font-size:13px;font-variant-numeric:tabular-nums;text-align:right">80 USDC</span>
+        <span>Landing page copy &mdash; v2</span>
+        <span style="color:var(--color-fg-muted);font-size:13px">18 Jul</span>
+        <span><span style="display:inline-flex;align-items:center;gap:6px;border:1px solid var(--color-border);background:var(--color-surface);border-radius:var(--radius-pill);padding:3px 10px;font-size:12px;font-weight:500"><span style="width:7px;height:7px;border-radius:50%;background:var(--brand-500)"></span>Protected</span></span>
+        <span style="font-size:13px;color:var(--color-fg-muted)">Unlocks 17 Aug</span>
+        <a style="cursor:pointer;font-size:13px;font-weight:600">Receipt</a>
+      </div>
+      <div style="display:grid;grid-template-columns:1.2fr .8fr 1.5fr .8fr 1fr 1.1fr .6fr;gap:12px;padding:11px 20px;border-bottom:1px solid var(--color-border);font-size:13.5px;align-items:center" style-hover="background:var(--ink-50)">
+        <span style="font-weight:600">Tom&aacute;s Rivera</span>
+        <span style="font-family:var(--font-mono);font-size:13px;font-variant-numeric:tabular-nums;text-align:right">120 USDC</span>
+        <span>Podcast editing, June batch</span>
+        <span style="color:var(--color-fg-muted);font-size:13px">2 Jul</span>
+        <span><span style="display:inline-flex;align-items:center;gap:6px;border:1px solid var(--color-border);background:var(--color-surface);border-radius:var(--radius-pill);padding:3px 10px;font-size:12px;font-weight:500"><span style="width:7px;height:7px;border-radius:50%;background:var(--ok-500)"></span>Cleared</span></span>
+        <span style="font-size:13px;color:var(--color-fg-subtle)">&mdash;</span>
+        <a style="cursor:pointer;font-size:13px;font-weight:600">Receipt</a>
+      </div>
+      <div style="display:grid;grid-template-columns:1.2fr .8fr 1.5fr .8fr 1fr 1.1fr .6fr;gap:12px;padding:11px 20px;font-size:13.5px;align-items:center" style-hover="background:var(--ink-50)">
+        <span style="font-weight:600">Alex Chen</span>
+        <span style="font-family:var(--font-mono);font-size:13px;font-variant-numeric:tabular-nums;text-align:right">60 USDC</span>
+        <span>Icon set &mdash; payments module</span>
+        <span style="color:var(--color-fg-muted);font-size:13px">25 Jun</span>
+        <span><span style="display:inline-flex;align-items:center;gap:6px;border:1px solid var(--color-border);background:var(--color-surface);border-radius:var(--radius-pill);padding:3px 10px;font-size:12px;font-weight:500"><span style="width:7px;height:7px;border-radius:50%;background:var(--risk-500)"></span>Refunded</span></span>
+        <span style="font-size:13px;color:var(--color-fg-subtle)">&mdash;</span>
+        <a style="cursor:pointer;font-size:13px;font-weight:600">Receipt</a>
+      </div>
+    </div>
+  </sc-if>
+</div>
+</sc-if>
+
+<!-- ============ DISPUTES QUEUE ============ -->
+<sc-if value="{{ isDisputesList }}" hint-placeholder-val="{{ false }}">
+<div style="animation:riseIn .25s ease-out">
+  <h1 style="margin:0 0 6px;font-family:var(--font-sans);font-weight:700;font-size:24px;letter-spacing:-0.02em">Disputes</h1>
+  <div style="font-size:14px;color:var(--color-fg-muted);margin-bottom:24px">{{ disputesSubtitle }}</div>
+  <div style="background:var(--color-surface);border:1px solid var(--color-border);border-radius:var(--radius-lg);box-shadow:var(--shadow-sm);overflow:hidden">
+    <div style="display:grid;grid-template-columns:.9fr 1.5fr .8fr 1.2fr 1.1fr;gap:12px;padding:12px 20px;border-bottom:1px solid var(--color-border);font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--color-fg-subtle)">
+      <span>Case</span><span>Parties</span><span style="text-align:right">Contested</span><span>Status</span><span>Reply due</span>
+    </div>
+    <div onClick="{{ goCase }}" style="display:grid;grid-template-columns:.9fr 1.5fr .8fr 1.2fr 1.1fr;gap:12px;padding:13px 20px;border-bottom:1px solid var(--color-border);font-size:13.5px;align-items:center;cursor:pointer" style-hover="background:var(--ink-50)">
+      <span style="font-family:var(--font-mono);font-size:12.5px;font-weight:600">CASE-0142</span>
+      <span>Northbeam Studios &harr; Maya Reyes</span>
+      <span style="font-family:var(--font-mono);font-size:13px;font-variant-numeric:tabular-nums;text-align:right">33 USDC</span>
+      <span><span style="display:inline-flex;align-items:center;gap:6px;border:1px solid var(--color-border);background:var(--color-surface);border-radius:var(--radius-pill);padding:3px 10px;font-size:12px;font-weight:500"><span style="width:7px;height:7px;border-radius:50%;background:{{ caseChipColor }}"></span>{{ caseChipLabel }}</span></span>
+      <span style="display:flex;align-items:center;justify-content:space-between;gap:8px"><span style="font-size:13px;color:var(--color-fg-muted)">{{ disputeDeadlineCell }}</span><span style="font-size:13px;font-weight:600;color:var(--brand-600)">Open case &rarr;</span></span>
+    </div>
+    <div style="display:grid;grid-template-columns:.9fr 1.5fr .8fr 1.2fr 1.1fr;gap:12px;padding:13px 20px;font-size:13.5px;align-items:center;color:var(--color-fg-muted)">
+      <span style="font-family:var(--font-mono);font-size:12.5px;font-weight:600">CASE-0137</span>
+      <span>Northbeam Studios &harr; Alex Chen</span>
+      <span style="font-family:var(--font-mono);font-size:13px;font-variant-numeric:tabular-nums;text-align:right">60 USDC</span>
+      <span><span style="display:inline-flex;align-items:center;gap:6px;border:1px solid var(--color-border);background:var(--color-surface);border-radius:var(--radius-pill);padding:3px 10px;font-size:12px;font-weight:500;color:var(--color-fg)"><span style="width:7px;height:7px;border-radius:50%;background:var(--risk-500)"></span>Refunded</span></span>
+      <span style="font-size:13px;color:var(--color-fg-subtle)">Closed 12 Jul</span>
+    </div>
+  </div>
+</div>
+</sc-if>
+
+<!-- ============ PLATFORM · MARKETPLACE VIEW ============ -->
+<sc-if value="{{ isPlatform }}" hint-placeholder-val="{{ false }}">
+<div style="animation:riseIn .25s ease-out">
+  <div style="display:flex;align-items:center;gap:14px;margin-bottom:20px">
+    <h1 style="margin:0;font-family:var(--font-sans);font-weight:700;font-size:24px;letter-spacing:-0.02em">Transactions</h1>
+    <span style="border:1px solid var(--color-border);background:var(--color-surface);border-radius:var(--radius-pill);padding:3px 12px;font-size:12px;font-weight:500;color:var(--color-fg-muted)">View access &middot; decisions stay with each merchant's arbiter</span>
+    <span style="flex:1"></span>
+    <button onClick="{{ doExport }}" style="border:1.5px solid var(--ink-200);background:var(--color-surface);cursor:pointer;font-family:var(--font-sans);font-weight:600;font-size:13px;padding:9px 15px;border-radius:var(--radius-md);color:var(--color-fg)" style-hover="background:var(--ink-100)">Export for audit</button>
+  </div>
+  <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;background:var(--color-surface);border:1px solid var(--color-border);border-radius:var(--radius-lg);box-shadow:var(--shadow-sm);margin-bottom:20px;overflow:hidden">
+    <div style="padding:16px 20px">
+      <div style="font-family:var(--font-mono);font-weight:600;font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--color-fg-subtle);margin-bottom:10px">Volume &middot; 30 days</div>
+      <div style="font-family:var(--font-mono);font-weight:500;font-size:22px;font-variant-numeric:tabular-nums">4,820 USDC</div>
+      <div style="font-size:12px;color:var(--color-fg-subtle);margin-top:4px">Across 4 merchants</div>
+    </div>
+    <div style="padding:16px 20px;border-left:1px solid var(--color-border)">
+      <div style="font-family:var(--font-mono);font-weight:600;font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--color-fg-subtle);margin-bottom:10px">Protected in escrow</div>
+      <div style="font-family:var(--font-mono);font-weight:500;font-size:22px;font-variant-numeric:tabular-nums">430 USDC</div>
+      <div style="font-size:12px;color:var(--color-fg-subtle);margin-top:4px">3 payments</div>
+    </div>
+    <div style="padding:16px 20px;border-left:1px solid var(--color-border)">
+      <div style="font-family:var(--font-mono);font-weight:600;font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--warn-600);margin-bottom:10px">Open disputes</div>
+      <div style="font-family:var(--font-mono);font-weight:500;font-size:22px;font-variant-numeric:tabular-nums">1</div>
+      <div style="font-size:12px;color:var(--color-fg-subtle);margin-top:4px">Oldest reply due in {{ countdown }}</div>
+    </div>
+    <div style="padding:16px 20px;border-left:1px solid var(--color-border)">
+      <div style="font-family:var(--font-mono);font-weight:600;font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--color-fg-subtle);margin-bottom:10px">Refund rate</div>
+      <div style="font-family:var(--font-mono);font-weight:500;font-size:22px;font-variant-numeric:tabular-nums">2.1%</div>
+      <div style="font-size:12px;color:var(--color-fg-subtle);margin-top:4px">Trailing 90 days</div>
+    </div>
+  </div>
+  <div style="background:var(--color-surface);border:1px solid var(--color-border);border-radius:var(--radius-lg);box-shadow:var(--shadow-sm);overflow:hidden">
+    <div style="display:grid;grid-template-columns:1.2fr 1fr .8fr 1.5fr 1.1fr .6fr;gap:12px;padding:12px 20px;border-bottom:1px solid var(--color-border);font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--color-fg-subtle)">
+      <span>Merchant</span><span>Customer</span><span style="text-align:right">Amount</span><span>For</span><span>Status</span><span></span>
+    </div>
+    <div style="display:grid;grid-template-columns:1.2fr 1fr .8fr 1.5fr 1.1fr .6fr;gap:12px;padding:11px 20px;border-bottom:1px solid var(--color-border);font-size:13.5px;align-items:center;background:var(--warn-soft)">
+      <span style="font-weight:600">Northbeam Studios</span><span>Maya Reyes</span>
+      <span style="font-family:var(--font-mono);font-size:13px;font-variant-numeric:tabular-nums;text-align:right">100 USDC</span>
+      <span>Three product videos &mdash; spring launch</span>
+      <span><span style="display:inline-flex;align-items:center;gap:6px;border:1px solid var(--color-border);background:var(--color-surface);border-radius:var(--radius-pill);padding:3px 10px;font-size:12px;font-weight:500"><span style="width:7px;height:7px;border-radius:50%;background:var(--warn-500)"></span>Disputed</span></span>
+      <a onClick="{{ goReceipt }}" style="cursor:pointer;font-size:13px;font-weight:600">Receipt</a>
+    </div>
+    <div style="display:grid;grid-template-columns:1.2fr 1fr .8fr 1.5fr 1.1fr .6fr;gap:12px;padding:11px 20px;border-bottom:1px solid var(--color-border);font-size:13.5px;align-items:center" style-hover="background:var(--ink-50)">
+      <span style="font-weight:600">Northbeam Studios</span><span>Jonah Park</span>
+      <span style="font-family:var(--font-mono);font-size:13px;font-variant-numeric:tabular-nums;text-align:right">250 USDC</span>
+      <span>Brand guidelines refresh</span>
+      <span><span style="display:inline-flex;align-items:center;gap:6px;border:1px solid var(--color-border);background:var(--color-surface);border-radius:var(--radius-pill);padding:3px 10px;font-size:12px;font-weight:500"><span style="width:7px;height:7px;border-radius:50%;background:var(--brand-500)"></span>Protected</span></span>
+      <a style="cursor:pointer;font-size:13px;font-weight:600">Receipt</a>
+    </div>
+    <div style="display:grid;grid-template-columns:1.2fr 1fr .8fr 1.5fr 1.1fr .6fr;gap:12px;padding:11px 20px;border-bottom:1px solid var(--color-border);font-size:13.5px;align-items:center" style-hover="background:var(--ink-50)">
+      <span style="font-weight:600">Halcyon Press</span><span>Maya Reyes</span>
+      <span style="font-family:var(--font-mono);font-size:13px;font-variant-numeric:tabular-nums;text-align:right">140 USDC</span>
+      <span>Author interview edit</span>
+      <span><span style="display:inline-flex;align-items:center;gap:6px;border:1px solid var(--color-border);background:var(--color-surface);border-radius:var(--radius-pill);padding:3px 10px;font-size:12px;font-weight:500"><span style="width:7px;height:7px;border-radius:50%;background:var(--ok-500)"></span>Ready to withdraw</span></span>
+      <a style="cursor:pointer;font-size:13px;font-weight:600">Receipt</a>
+    </div>
+    <div style="display:grid;grid-template-columns:1.2fr 1fr .8fr 1.5fr 1.1fr .6fr;gap:12px;padding:11px 20px;border-bottom:1px solid var(--color-border);font-size:13.5px;align-items:center" style-hover="background:var(--ink-50)">
+      <span style="font-weight:600">Copperline Audio</span><span>Tom&aacute;s Rivera</span>
+      <span style="font-family:var(--font-mono);font-size:13px;font-variant-numeric:tabular-nums;text-align:right">120 USDC</span>
+      <span>Podcast editing, June batch</span>
+      <span><span style="display:inline-flex;align-items:center;gap:6px;border:1px solid var(--color-border);background:var(--color-surface);border-radius:var(--radius-pill);padding:3px 10px;font-size:12px;font-weight:500"><span style="width:7px;height:7px;border-radius:50%;background:var(--ok-500)"></span>Cleared</span></span>
+      <a style="cursor:pointer;font-size:13px;font-weight:600">Receipt</a>
+    </div>
+    <div style="display:grid;grid-template-columns:1.2fr 1fr .8fr 1.5fr 1.1fr .6fr;gap:12px;padding:11px 20px;font-size:13.5px;align-items:center" style-hover="background:var(--ink-50)">
+      <span style="font-weight:600">Northbeam Studios</span><span>Alex Chen</span>
+      <span style="font-family:var(--font-mono);font-size:13px;font-variant-numeric:tabular-nums;text-align:right">60 USDC</span>
+      <span>Icon set &mdash; payments module</span>
+      <span><span style="display:inline-flex;align-items:center;gap:6px;border:1px solid var(--color-border);background:var(--color-surface);border-radius:var(--radius-pill);padding:3px 10px;font-size:12px;font-weight:500"><span style="width:7px;height:7px;border-radius:50%;background:var(--risk-500)"></span>Refunded</span></span>
+      <a style="cursor:pointer;font-size:13px;font-weight:600">Receipt</a>
+    </div>
+  </div>
+</div>
+</sc-if>
+
+<!-- ============ NEW PROTECTED PAYOUT (secondary form) ============ -->
+<sc-if value="{{ isNewPayout }}" hint-placeholder-val="{{ false }}">
+<div style="animation:riseIn .25s ease-out;max-width:720px;margin:0">
+  <a onClick="{{ goLedger }}" style="cursor:pointer;font-size:13px;font-weight:600">&larr; All payouts</a>
+  <h1 style="margin:14px 0 6px;font-family:var(--font-sans);font-weight:700;font-size:24px;letter-spacing:-0.02em">New protected payout</h1>
+  <p style="margin:0 0 24px;font-size:14px;color:var(--color-fg-muted);line-height:1.6">The payment sits protected until the date you set. If the work goes wrong, a person at Northbeam decides &mdash; money can only return to your refund address.</p>
+  <div style="background:var(--color-surface);border:1px solid var(--color-border);border-radius:var(--radius-lg);box-shadow:var(--shadow-xs);padding:28px;display:flex;flex-direction:column;gap:20px">
+    <div style="display:flex;flex-direction:column;gap:6px">
+      <label style="font-size:13px;font-weight:600">Recipient</label>
+      <input value="Maya Reyes &middot; 0x9fA3&hellip;C77b" readOnly style="border:1.5px solid var(--ink-200);border-radius:var(--radius-md);padding:10px 12px;font-family:var(--font-sans);font-size:14px;color:var(--color-fg);background:var(--color-surface)">
+    </div>
+    <div style="display:flex;flex-direction:column;gap:6px;max-width:220px">
+      <label style="font-size:13px;font-weight:600">Amount</label>
+      <div style="display:flex;align-items:center;gap:8px;border:1.5px solid var(--ink-200);border-radius:var(--radius-md);padding:10px 12px">
+        <input value="100" readOnly style="border:none;outline:none;width:80px;font-family:var(--font-mono);font-size:14px;color:var(--color-fg);background:transparent">
+        <span style="font-size:13px;font-weight:600;color:var(--color-fg-muted)">USDC</span>
+      </div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:8px">
+      <label style="font-size:13px;font-weight:600">Deliverables</label>
+      <div style="display:grid;grid-template-columns:1fr 130px;gap:8px">
+        <input value="Video 1 &mdash; product hero" readOnly style="border:1.5px solid var(--ink-200);border-radius:var(--radius-md);padding:9px 12px;font-family:var(--font-sans);font-size:14px;background:var(--color-surface)">
+        <input value="Due 30 Jun" readOnly style="border:1.5px solid var(--ink-200);border-radius:var(--radius-md);padding:9px 12px;font-family:var(--font-sans);font-size:14px;color:var(--color-fg-muted);background:var(--color-surface)">
+        <input value="Video 2 &mdash; feature walkthrough" readOnly style="border:1.5px solid var(--ink-200);border-radius:var(--radius-md);padding:9px 12px;font-family:var(--font-sans);font-size:14px;background:var(--color-surface)">
+        <input value="Due 7 Jul" readOnly style="border:1.5px solid var(--ink-200);border-radius:var(--radius-md);padding:9px 12px;font-family:var(--font-sans);font-size:14px;color:var(--color-fg-muted);background:var(--color-surface)">
+        <input value="Video 3 &mdash; customer story cut" readOnly style="border:1.5px solid var(--ink-200);border-radius:var(--radius-md);padding:9px 12px;font-family:var(--font-sans);font-size:14px;background:var(--color-surface)">
+        <input value="Due 12 Jul" readOnly style="border:1.5px solid var(--ink-200);border-radius:var(--radius-md);padding:9px 12px;font-family:var(--font-sans);font-size:14px;color:var(--color-fg-muted);background:var(--color-surface)">
+      </div>
+      <a style="cursor:pointer;font-size:13px;font-weight:600;align-self:flex-start">+ Add a deliverable</a>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:8px">
+      <label style="font-size:13px;font-weight:600">Payout policy</label>
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <label style="display:flex;gap:10px;align-items:flex-start;border:1.5px solid var(--brand-600);background:var(--brand-50);border-radius:var(--radius-md);padding:12px 14px;cursor:pointer">
+          <input type="radio" checked readOnly style="margin-top:2px;accent-color:var(--brand-600)">
+          <span><span style="font-size:14px;font-weight:600">Standard &middot; 30-day protection</span><br><span style="font-size:13px;color:var(--color-fg-muted)">Money unlocks 30 days after payment unless a dispute is open.</span></span>
+        </label>
+        <label style="display:flex;gap:10px;align-items:flex-start;border:1.5px solid var(--ink-200);border-radius:var(--radius-md);padding:12px 14px;cursor:pointer" style-hover="background:var(--ink-50)">
+          <input type="radio" readOnly style="margin-top:2px;accent-color:var(--brand-600)">
+          <span><span style="font-size:14px;font-weight:600">Per-deliverable &middot; releases in parts</span><br><span style="font-size:13px;color:var(--color-fg-muted)">A share of the payment unlocks as each deliverable is confirmed.</span></span>
+        </label>
+      </div>
+    </div>
+    <div style="border-top:1px solid var(--color-border);padding-top:20px">
+      <div style="background:var(--brand-50);border:1px solid var(--brand-200);border-radius:var(--radius-md);padding:14px 16px;margin-bottom:16px">
+        <div style="font-size:13px;font-weight:600;color:var(--brand-800);margin-bottom:4px">Pay and protect</div>
+        <div style="font-size:13px;color:var(--color-fg-muted);line-height:1.55">If a refund is ever approved, it can only go to <span onClick="{{ copyTech }}" data-copy="0x4B2109cE55aa10bd3F41c0e88a7cD10a5f9E9d3E" title="Copy full address" style="font-family:var(--font-mono);font-size:12px;background:var(--ink-100);border-radius:6px;padding:1px 7px;cursor:pointer;color:var(--ink-700)">0x4B21&hellip;9d3E</span> &mdash; your treasury wallet, fixed at payment time. This cannot be changed later.</div>
+      </div>
+      <div style="display:flex;gap:10px">
+        <button style="border:none;cursor:pointer;background:var(--brand-600);color:#fff;font-family:var(--font-sans);font-weight:600;font-size:14px;padding:10px 18px;border-radius:var(--radius-md);box-shadow:var(--shadow-sm)" style-hover="background:var(--brand-700)">Pay 100 USDC and protect</button>
+        <button onClick="{{ goLedger }}" style="border:1.5px solid var(--ink-200);background:var(--color-surface);cursor:pointer;font-family:var(--font-sans);font-weight:600;font-size:14px;padding:10px 18px;border-radius:var(--radius-md);color:var(--color-fg)" style-hover="background:var(--ink-100)">Cancel</button>
+      </div>
+    </div>
+  </div>
+</div>
+</sc-if>
+
+<!-- ============ SCREEN 2 / 6 · PAYOUT RECEIPT + FINAL RECEIPT ============ -->
+<sc-if value="{{ showReceipt }}" hint-placeholder-val="{{ false }}">
+<div style="animation:riseIn .25s ease-out;max-width:820px;margin:0">
+  <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
+    <a onClick="{{ goBackHome }}" style="cursor:pointer;font-size:13px;font-weight:600">&larr; {{ backLabel }}</a>
+    <span style="flex:1"></span>
+    <span style="display:inline-flex;align-items:center;gap:7px;background:var(--brand-50);border:1px solid var(--brand-200);border-radius:var(--radius-pill);padding:4px 12px;font-size:12px;font-weight:500;color:var(--brand-800)">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+      Identical view &middot; both sides see this page
+    </span>
+    <sc-if value="{{ isFinal }}" hint-placeholder-val="{{ false }}">
+      <button onClick="{{ printPage }}" style="border:1.5px solid var(--ink-200);background:var(--color-surface);cursor:pointer;font-family:var(--font-sans);font-weight:600;font-size:13px;padding:6px 13px;border-radius:var(--radius-md);color:var(--color-fg)" style-hover="background:var(--ink-100)">Print / save as PDF</button>
+    </sc-if>
+  </div>
+
+  <div style="display:flex;align-items:baseline;gap:14px;margin-bottom:6px">
+    <h1 style="margin:0;font-family:var(--font-sans);font-weight:700;font-size:24px;letter-spacing:-0.02em">{{ receiptTitle }}</h1>
+    <span style="display:inline-flex;align-items:center;gap:6px;border:1px solid var(--color-border);background:var(--color-surface);border-radius:var(--radius-pill);padding:3px 10px;font-size:12px;font-weight:500"><span style="width:7px;height:7px;border-radius:50%;background:{{ receiptChipColor }}"></span>{{ receiptChipLabel }}</span>
+  </div>
+  <div style="font-size:14px;color:var(--color-fg-muted);margin-bottom:20px">Northbeam Studios paid Maya Reyes &middot; 14 July 2026</div>
+
+  <sc-if value="{{ showDisputeBanner }}" hint-placeholder-val="{{ false }}">
+    <div style="display:flex;align-items:center;gap:12px;background:var(--warn-soft);border:1px solid var(--warn-border);border-radius:var(--radius-md);padding:13px 18px;margin-bottom:20px">
+      <span style="width:8px;height:8px;border-radius:50%;background:var(--warn-500)"></span>
+      <span style="font-size:14px;flex:1"><strong>This payment is disputed.</strong> 33 USDC contested over Video 3 &middot; reply due in {{ countdown }}</span>
+      <button onClick="{{ goCase }}" style="border:none;cursor:pointer;background:var(--ink-900);color:#fff;font-family:var(--font-sans);font-weight:600;font-size:13px;padding:7px 14px;border-radius:var(--radius-md)" style-hover="background:var(--ink-800)">Open the case</button>
+    </div>
+  </sc-if>
+
+  <div style="display:grid;grid-template-columns:5fr 7fr;gap:16px;align-items:start">
+    <!-- Pane one: chain -->
+    <div style="background:var(--color-surface);border:1px solid var(--color-border);border-radius:var(--radius-lg);box-shadow:var(--shadow-sm);padding:24px">
+      <div style="font-family:var(--font-mono);font-weight:600;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--brand-600);margin-bottom:16px">What the chain recorded</div>
+      <div style="font-family:var(--font-mono);font-weight:500;font-size:28px;font-variant-numeric:tabular-nums;margin-bottom:2px">100 USDC</div>
+      <div style="font-size:12px;color:var(--ink-400);margin-bottom:20px">on Arc &middot; via Circle Refund Protocol</div>
+      <div style="display:flex;flex-direction:column;gap:13px">
+        <div><div style="font-size:11px;color:var(--ink-400);margin-bottom:3px">From wallet</div><span onClick="{{ copyTech }}" data-copy="0x4B2109cE55aa10bd3F41c0e88a7cD10a5f9E9d3E" title="Copy" style="font-family:var(--font-mono);font-size:12px;background:var(--ink-100);border:1px solid var(--ink-150);border-radius:6px;padding:2px 8px;cursor:pointer;color:var(--ink-700)">0x4B21&hellip;9d3E</span> <a onClick="{{ noop }}" title="View on Arc explorer" style="font-size:11px;cursor:pointer">&nearr;</a></div>
+        <div><div style="font-size:11px;color:var(--ink-400);margin-bottom:3px">To wallet</div><span onClick="{{ copyTech }}" data-copy="0x9fA30bb7e2Dd41Ac09918e6b7cAf24E60f21C77b" title="Copy" style="font-family:var(--font-mono);font-size:12px;background:var(--ink-100);border:1px solid var(--ink-150);border-radius:6px;padding:2px 8px;cursor:pointer;color:var(--ink-700)">0x9fA3&hellip;C77b</span> <a onClick="{{ noop }}" title="View on Arc explorer" style="font-size:11px;cursor:pointer">&nearr;</a></div>
+        <div><div style="font-size:11px;color:var(--ink-400);margin-bottom:3px">Refund address &middot; fixed at payment time</div><span onClick="{{ copyTech }}" data-copy="0x4B2109cE55aa10bd3F41c0e88a7cD10a5f9E9d3E" title="Copy" style="font-family:var(--font-mono);font-size:12px;background:var(--ink-100);border:1px solid var(--ink-150);border-radius:6px;padding:2px 8px;cursor:pointer;color:var(--ink-700)">0x4B21&hellip;9d3E</span> <a onClick="{{ noop }}" title="View on Arc explorer" style="font-size:11px;cursor:pointer">&nearr;</a></div>
+        <div><div style="font-size:11px;color:var(--ink-400);margin-bottom:3px">Transaction ID</div><span onClick="{{ copyTech }}" data-copy="0x7c9e42d18aa0be5533c60912ff74d02b81ce6f2a4d3b90e17c55a8d90124a1f2" title="Copy" style="font-family:var(--font-mono);font-size:12px;background:var(--ink-100);border:1px solid var(--ink-150);border-radius:6px;padding:2px 8px;cursor:pointer;color:var(--ink-700)">0x7c9e&hellip;a1f2</span> <a onClick="{{ noop }}" title="View on Arc explorer" style="font-size:11px;cursor:pointer">&nearr;</a></div>
+        <div><div style="font-size:11px;color:var(--ink-400);margin-bottom:3px">Payment ID</div><span onClick="{{ copyTech }}" data-copy="pmt_0x84d02fe1c9b7a35510" title="Copy" style="font-family:var(--font-mono);font-size:12px;background:var(--ink-100);border:1px solid var(--ink-150);border-radius:6px;padding:2px 8px;cursor:pointer;color:var(--ink-700)">pmt_0x84d0&hellip;5510</span></div>
+        <div><div style="font-size:11px;color:var(--ink-400);margin-bottom:3px">Protection ends</div><span style="font-family:var(--font-mono);font-size:12px;color:var(--ink-700)">13 Aug 2026 &middot; 14:06 UTC</span></div>
+      </div>
+    </div>
+    <!-- Pane two: purpose -->
+    <div style="background:var(--color-surface);border:1px solid var(--color-border);border-radius:var(--radius-lg);box-shadow:var(--shadow-xs);padding:24px">
+      <div style="font-family:var(--font-mono);font-weight:600;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--brand-600);margin-bottom:16px">What it was for</div>
+      <div style="font-size:15px;font-weight:600;margin-bottom:2px">Three product videos &mdash; spring launch</div>
+      <div style="font-size:13px;color:var(--color-fg-muted);line-height:1.55;margin-bottom:16px">Northbeam Studios &rarr; Maya Reyes. Three short videos for the spring product launch: a hero film, a feature walkthrough and a customer story cut, delivered ready for the site.</div>
+      <div style="display:flex;flex-direction:column;border-top:1px solid var(--color-border)">
+        <div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--color-border);font-size:13px">
+          <span style="color:var(--ok-600);font-weight:700">&#10003;</span><span style="flex:1">Video 1 &mdash; product hero</span><span style="color:var(--color-fg-subtle)">due 30 Jun</span><span style="color:var(--ok-600);font-weight:500">Delivered 28 Jun</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--color-border);font-size:13px">
+          <span style="color:var(--ok-600);font-weight:700">&#10003;</span><span style="flex:1">Video 2 &mdash; feature walkthrough</span><span style="color:var(--color-fg-subtle)">due 7 Jul</span><span style="color:var(--ok-600);font-weight:500">Delivered 6 Jul</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--color-border);font-size:13px">
+          <span style="color:var(--warn-600);font-weight:700">&#9675;</span><span style="flex:1">Video 3 &mdash; customer story cut</span><span style="color:var(--color-fg-subtle)">due 12 Jul</span><span style="color:var(--color-fg-muted);font-weight:500">Not on file</span>
+        </div>
+      </div>
+      <div style="font-size:13px;color:var(--color-fg-muted);line-height:1.55;margin:14px 0 16px">Policy: the money unlocks 30 days after payment unless a dispute is open. <a onClick="{{ noop }}" style="cursor:pointer;font-weight:600">Read the full policy</a></div>
+      <sc-if value="{{ showDisputeBanner }}" hint-placeholder-val="{{ false }}">
+        <div style="font-size:13px;margin-bottom:16px"><span style="font-weight:600">Dispute deadline:</span> <span style="color:var(--color-fg-muted)">reply due in {{ countdown }}</span></div>
+      </sc-if>
+      <div style="font-family:var(--font-mono);font-weight:600;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--color-fg-subtle);margin:4px 0 10px">Evidence on record</div>
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <div style="display:flex;align-items:center;gap:10px;border:1px solid var(--color-border);border-radius:var(--radius-md);padding:9px 12px;font-size:13px">
+          <span style="flex:1;font-weight:500">Work order &mdash; three product videos</span>
+          <span style="border:1px solid var(--color-border);border-radius:var(--radius-pill);padding:1px 8px;font-size:11px;color:var(--color-fg-muted)">Merchant</span>
+          <span style="color:var(--color-fg-subtle);font-size:12px">14 Jul</span>
+          <span style="font-family:var(--font-mono);font-size:11px;color:var(--color-fg-subtle)">a3f2&hellip;09be</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;border:1px solid var(--color-border);border-radius:var(--radius-md);padding:9px 12px;font-size:13px">
+          <span style="flex:1;font-weight:500">final_hero_v3.mp4</span>
+          <span style="border:1px solid var(--color-border);border-radius:var(--radius-pill);padding:1px 8px;font-size:11px;color:var(--color-fg-muted)">Customer</span>
+          <span style="color:var(--color-fg-subtle);font-size:12px">28 Jun</span>
+          <span style="font-family:var(--font-mono);font-size:11px;color:var(--color-fg-subtle)">7be1&hellip;d380</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;border:1px solid var(--color-border);border-radius:var(--radius-md);padding:9px 12px;font-size:13px">
+          <span style="flex:1;font-weight:500">feature_walkthrough_final.mp4</span>
+          <span style="border:1px solid var(--color-border);border-radius:var(--radius-pill);padding:1px 8px;font-size:11px;color:var(--color-fg-muted)">Customer</span>
+          <span style="color:var(--color-fg-subtle);font-size:12px">6 Jul</span>
+          <span style="font-family:var(--font-mono);font-size:11px;color:var(--color-fg-subtle)">c514&hellip;22ab</span>
+        </div>
+      </div>
+      <sc-if value="{{ isRecipient }}" hint-placeholder-val="{{ false }}">
+        <sc-if value="{{ notDecided }}" hint-placeholder-val="{{ false }}">
+          <button onClick="{{ goCase }}" style="margin-top:18px;border:1.5px solid var(--ink-200);background:var(--color-surface);cursor:pointer;font-family:var(--font-sans);font-weight:600;font-size:13px;padding:9px 15px;border-radius:var(--radius-md);color:var(--color-fg)" style-hover="background:var(--ink-100)">Something wrong with this payment?</button>
+        </sc-if>
+      </sc-if>
+      <sc-if value="{{ isClaimant }}" hint-placeholder-val="{{ false }}">
+        <sc-if value="{{ notDecided }}" hint-placeholder-val="{{ false }}">
+          <div style="display:flex;gap:10px;margin-top:18px">
+            <button onClick="{{ goCase }}" style="border:1.5px solid var(--ink-200);background:var(--color-surface);cursor:pointer;font-family:var(--font-sans);font-weight:600;font-size:13px;padding:9px 15px;border-radius:var(--radius-md);color:var(--color-fg)" style-hover="background:var(--ink-100)">Open a dispute</button>
+          </div>
+        </sc-if>
+      </sc-if>
+    </div>
+  </div>
+
+  <!-- Outcome strip (final receipt) -->
+  <sc-if value="{{ showOutcome }}" hint-placeholder-val="{{ false }}">
+    <div style="margin-top:16px;background:var(--color-surface);border:1px solid var(--color-border);border-left:none;border-radius:var(--radius-lg);box-shadow:var(--shadow-xs);overflow:hidden">
+      <div style="height:4px;background:var(--brand-600)"></div>
+      <div style="padding:24px 28px">
+        <div style="font-family:var(--font-mono);font-weight:600;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--brand-600);margin-bottom:12px">Outcome</div>
+        <div style="font-size:17px;font-weight:600;margin-bottom:4px">Partial refund approved &middot; 33 USDC returned to Northbeam Studios</div>
+        <div style="font-size:13px;color:var(--color-fg-muted);margin-bottom:18px">Decided by <strong style="color:var(--color-fg)">Dana Whitfield</strong> &middot; wallet <span onClick="{{ copyTech }}" data-copy="0x4B2109cE55aa10bd3F41c0e88a7cD10a5f9E9d3E" title="Copy" style="font-family:var(--font-mono);font-size:12px;background:var(--ink-100);border-radius:6px;padding:1px 7px;cursor:pointer;color:var(--ink-700)">0x4B21&hellip;9d3E</span> &middot; 29 July 2026, 15:42 UTC</div>
+        <div style="background:var(--color-surface-2);border:1px solid var(--color-border);border-radius:var(--radius-md);padding:16px 18px;font-size:14px;line-height:1.65;margin-bottom:18px">
+          <div style="font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--color-fg-subtle);margin-bottom:8px">Written reasons</div>
+          The work order covers three videos of equal value. Two are on file and confirmed delivered. No file or delivery confirmation for the third video appears in the record, and the reply did not add one within the response window. The contested 33 USDC returns to the refund address fixed when the payment was made; the remaining 67 USDC stays with Maya Reyes.
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px 24px;font-size:13px">
+          <div><span style="color:var(--color-fg-subtle)">Refund transaction</span><br><span onClick="{{ copyTech }}" data-copy="0x2e61aa04cd97f1b3805592e0c11da6b47f30918ce2ab5d6f01c744e5a90ab8c4" title="Copy" style="font-family:var(--font-mono);font-size:12px;background:var(--ink-100);border-radius:6px;padding:1px 7px;cursor:pointer;color:var(--ink-700)">0x2e61&hellip;b8c4</span> <a onClick="{{ noop }}" title="View on Arc explorer" style="font-size:11px;cursor:pointer">&nearr;</a></div>
+          <div><span style="color:var(--color-fg-subtle)">Evidence bundle fingerprint</span><br><span onClick="{{ copyTech }}" data-copy="9c1d80f3e6b2a75c44a7" title="Copy" style="font-family:var(--font-mono);font-size:12px;background:var(--ink-100);border-radius:6px;padding:1px 7px;cursor:pointer;color:var(--ink-700)">9c1d&hellip;44a7</span></div>
+          <div><span style="color:var(--color-fg-subtle)">Decision fingerprint</span><br><span onClick="{{ copyTech }}" data-copy="e77a3c50b1d94f86120f" title="Copy" style="font-family:var(--font-mono);font-size:12px;background:var(--ink-100);border-radius:6px;padding:1px 7px;cursor:pointer;color:var(--ink-700)">e77a&hellip;120f</span></div>
+          <div><span style="color:var(--color-fg-subtle)">Anchored on Arc</span><br><span onClick="{{ copyTech }}" data-copy="0x5a30cc17e9d24fb08113aa6290e5cd47f8b1620da4ce93b5f70211348d9077e1" title="Copy" style="font-family:var(--font-mono);font-size:12px;background:var(--ink-100);border-radius:6px;padding:1px 7px;cursor:pointer;color:var(--ink-700)">0x5a30&hellip;77e1</span> <a onClick="{{ noop }}" title="View on Arc explorer" style="font-size:11px;cursor:pointer">&nearr;</a></div>
+        </div>
+        <div style="border-top:1px solid var(--color-border);margin-top:18px;padding-top:14px;font-size:13px;color:var(--color-fg-muted)">This record is permanent. Corrections are added, never edited.</div>
+      </div>
+    </div>
+    <!-- Debt-outstanding variant -->
+    <div style="margin-top:16px;background:var(--color-surface);border:1px dashed var(--color-border-strong);border-radius:var(--radius-lg);padding:18px 24px">
+      <div style="display:flex;align-items:center;gap:10px;font-size:13px">
+        <span style="display:inline-flex;align-items:center;gap:6px;border:1px solid var(--color-border);background:var(--color-surface);border-radius:var(--radius-pill);padding:3px 10px;font-size:12px;font-weight:500"><span style="width:7px;height:7px;border-radius:50%;background:var(--risk-500)"></span>Debt outstanding</span>
+        <span style="color:var(--color-fg-muted)">Variant when funds were already withdrawn: <strong style="color:var(--color-fg)">33 USDC recovered from a future payout</strong> &mdash; the repayment shows against the next payment when it occurs.</span>
+      </div>
+    </div>
+  </sc-if>
+
+  <div style="display:flex;align-items:center;gap:10px;margin-top:16px;padding:12px 18px;background:var(--color-surface-2);border:1px solid var(--color-border);border-radius:var(--radius-md);font-size:12px;color:var(--color-fg-muted)">
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--brand-600)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 4 6v6c0 5 3.4 8.4 8 10 4.6-1.6 8-5 8-10V6l-8-4Z"></path></svg>
+    Receipt fingerprint anchored on Arc &middot; <span onClick="{{ copyTech }}" data-copy="0x91b4dd2670e5ac03f1189b5a44c07de2531f60c8ba92e14d70a3b6c255e30d18" title="Copy" style="font-family:var(--font-mono);font-size:11px;background:var(--ink-100);border-radius:6px;padding:1px 7px;cursor:pointer;color:var(--ink-700)">0x91b4&hellip;0d18</span> <a onClick="{{ noop }}" title="View on Arc explorer" style="font-size:11px;cursor:pointer">&nearr;</a>
+  </div>
+</div>
+</sc-if>
+
+<!-- ============ SCREEN 3 · CASE ROOM ============ -->
+<sc-if value="{{ isCase }}" hint-placeholder-val="{{ false }}">
+<div style="animation:riseIn .25s ease-out;max-width:820px;margin:0">
+  <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
+    <a onClick="{{ goDisputes }}" style="cursor:pointer;font-size:13px;font-weight:600">&larr; All disputes</a>
+    <span style="flex:1"></span>
+    <span style="display:inline-flex;align-items:center;gap:7px;background:var(--brand-50);border:1px solid var(--brand-200);border-radius:var(--radius-pill);padding:4px 12px;font-size:12px;font-weight:500;color:var(--brand-800)">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+      Identical view &middot; both sides see this page
+    </span>
+  </div>
+
+  <div style="background:var(--color-surface);border:1px solid var(--color-border);border-radius:var(--radius-lg);box-shadow:var(--shadow-xs);padding:20px 24px;margin-bottom:20px">
+    <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+      <div>
+        <div style="font-family:var(--font-sans);font-weight:700;font-size:19px;letter-spacing:-0.02em">Case 0142</div>
+        <div style="font-size:13px;color:var(--color-fg-muted);margin-top:2px">Concerns <a onClick="{{ goReceipt }}" style="cursor:pointer;font-weight:600">the 100 USDC payment to Maya Reyes</a> &middot; three product videos</div>
+      </div>
+      <span style="flex:1"></span>
+      <div style="text-align:right">
+        <div style="font-family:var(--font-mono);font-weight:500;font-size:19px;font-variant-numeric:tabular-nums">33 USDC</div>
+        <div style="font-size:12px;color:var(--color-fg-subtle)">contested</div>
+      </div>
+      <div style="width:1px;height:36px;background:var(--color-border)"></div>
+      <div style="text-align:right">
+        <sc-if value="{{ stageAwaiting }}" hint-placeholder-val="{{ false }}">
+          <div style="font-family:var(--font-mono);font-weight:500;font-size:19px;font-variant-numeric:tabular-nums;color:var(--warn-600)">{{ countdown }}</div>
+          <div style="font-size:12px;color:var(--color-fg-subtle)">to reply</div>
+        </sc-if>
+        <sc-if value="{{ notAwaiting }}" hint-placeholder-val="{{ true }}">
+          <span style="display:inline-flex;align-items:center;gap:6px;border:1px solid var(--color-border);background:var(--color-surface);border-radius:var(--radius-pill);padding:3px 10px;font-size:12px;font-weight:500"><span style="width:7px;height:7px;border-radius:50%;background:{{ caseChipColor }}"></span>{{ caseChipLabel }}</span>
+        </sc-if>
+      </div>
+    </div>
+  </div>
+
+  <!-- (a) The claim -->
+  <div style="background:var(--color-surface);border:1px solid var(--color-border);border-radius:var(--radius-lg);box-shadow:var(--shadow-xs);padding:22px 24px;margin-bottom:16px">
+    <div style="font-family:var(--font-mono);font-weight:600;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--brand-600);margin-bottom:12px">The claim</div>
+    <div style="display:flex;align-items:center;gap:10px;font-size:13px;color:var(--color-fg-muted);margin-bottom:12px">
+      Opened by <strong style="color:var(--color-fg)">Northbeam Studios</strong> &middot; 22 July 2026
+      <span style="border:1px solid var(--color-border);border-radius:var(--radius-pill);padding:2px 10px;font-size:12px;font-weight:500;color:var(--color-fg)">Work not delivered in full</span>
+    </div>
+    <p style="margin:0 0 12px;font-size:14px;line-height:1.65">&ldquo;Videos 1 and 2 arrived and are live on our site. Video 3, the customer story cut, was due 12 July and has not been delivered. We are asking for the share of the payment covering that video to come back.&rdquo;</p>
+    <div style="font-size:13px;color:var(--color-fg-muted)"><span style="font-weight:600;color:var(--color-fg)">Asking for:</span> 33 USDC returned to the refund address fixed at payment time.</div>
+  </div>
+
+  <!-- Directed information request (target side only) -->
+  <sc-if value="{{ showReqCard }}" hint-placeholder-val="{{ false }}">
+    <div style="background:var(--warn-soft);border:1.5px solid var(--warn-border);border-radius:var(--radius-lg);padding:20px 22px;margin-bottom:16px">
+      <div style="font-family:var(--font-mono);font-weight:600;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--warn-600);margin-bottom:8px">The arbiter needs something from you</div>
+      <div style="font-size:14px;line-height:1.6;margin-bottom:12px">&ldquo;{{ reqCardText }}&rdquo;</div>
+      <textarea placeholder="Write your answer&hellip;" style="width:100%;box-sizing:border-box;min-height:64px;border:1.5px solid var(--ink-200);border-radius:var(--radius-md);padding:10px 12px;font-family:var(--font-sans);font-size:13.5px;resize:vertical;background:var(--color-surface);margin-bottom:10px"></textarea>
+      <div style="display:flex;gap:10px;align-items:center">
+        <button style="border:1.5px solid var(--ink-200);background:var(--color-surface);cursor:pointer;font-family:var(--font-sans);font-weight:600;font-size:13px;padding:8px 14px;border-radius:var(--radius-md);color:var(--color-fg)" style-hover="background:var(--ink-100)">Attach document</button>
+        <button style="border:none;cursor:pointer;background:var(--brand-600);color:#fff;font-family:var(--font-sans);font-weight:600;font-size:13px;padding:9px 16px;border-radius:var(--radius-md)" style-hover="background:var(--brand-700)">Send to the case</button>
+        <span style="font-size:12px;color:var(--color-fg-subtle)">Your answer joins the shared evidence record.</span>
+      </div>
+    </div>
+  </sc-if>
+
+  <!-- Reply composer (awaiting) -->
+  <sc-if value="{{ showComposer }}" hint-placeholder-val="{{ false }}">
+    <div style="background:var(--brand-50);border:1.5px solid var(--brand-200);border-radius:var(--radius-lg);padding:22px 24px;margin-bottom:16px">
+      <div style="font-family:var(--font-mono);font-weight:600;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--brand-700);margin-bottom:6px">Your reply</div>
+      <div style="font-size:13px;color:var(--color-fg-muted);margin-bottom:12px">This is your right of reply &mdash; your statement and anything you attach appear alongside the claim, with equal weight, before anyone decides. Due in {{ countdown }}.</div>
+      <textarea placeholder="Tell your side plainly. What happened with Video 3?" style="width:100%;box-sizing:border-box;min-height:96px;border:1.5px solid var(--ink-200);border-radius:var(--radius-md);padding:12px 14px;font-family:var(--font-sans);font-size:14px;resize:vertical;background:var(--color-surface)"></textarea>
+      <div style="display:flex;gap:10px;margin-top:12px;align-items:center">
+        <button style="border:1.5px solid var(--ink-200);background:var(--color-surface);cursor:pointer;font-family:var(--font-sans);font-weight:600;font-size:13px;padding:8px 14px;border-radius:var(--radius-md);color:var(--color-fg)" style-hover="background:var(--ink-100)">Attach evidence</button>
+        <span style="flex:1"></span>
+        <button style="border:none;cursor:pointer;background:var(--brand-600);color:#fff;font-family:var(--font-sans);font-weight:600;font-size:13px;padding:9px 16px;border-radius:var(--radius-md)" style-hover="background:var(--brand-700)">Submit reply</button>
+      </div>
+    </div>
+  </sc-if>
+
+  <!-- (b2) The response -->
+  <sc-if value="{{ showReply }}" hint-placeholder-val="{{ true }}">
+    <div style="background:var(--color-surface);border:1px solid var(--color-border);border-radius:var(--radius-lg);box-shadow:var(--shadow-xs);padding:22px 24px;margin-bottom:16px">
+      <div style="font-family:var(--font-mono);font-weight:600;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--brand-600);margin-bottom:12px">The response</div>
+      <div style="font-size:13px;color:var(--color-fg-muted);margin-bottom:12px">From <strong style="color:var(--color-fg)">Maya Reyes</strong> &middot; 24 July 2026</div>
+      <p style="margin:0;font-size:14px;line-height:1.65">&ldquo;I sent Video 3 on 11 July through a file-transfer link, a day before the deadline. The link expired after seven days and I didn't keep the delivery confirmation. I've attached a screen recording of the expired link page. I can re-deliver the file today if that helps resolve this.&rdquo;</p>
+    </div>
+  </sc-if>
+
+  <!-- (b) The evidence -->
+  <div style="background:var(--color-surface);border:1px solid var(--color-border);border-radius:var(--radius-lg);box-shadow:var(--shadow-xs);padding:22px 24px;margin-bottom:16px">
+    <div style="font-family:var(--font-mono);font-weight:600;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--brand-600);margin-bottom:12px">The evidence</div>
+    <div style="display:flex;flex-direction:column;gap:8px">
+      <div style="display:flex;align-items:center;gap:10px;border:1px solid var(--color-border);border-radius:var(--radius-md);padding:10px 14px;font-size:13px" style-hover="background:var(--ink-50)">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--ink-500)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6Z"></path><path d="M14 2v6h6"></path></svg>
+        <span style="flex:1;font-weight:500">Work order &mdash; three product videos</span>
+        <span style="border:1px solid var(--color-border);border-radius:var(--radius-pill);padding:1px 8px;font-size:11px;color:var(--color-fg-muted)">Merchant</span>
+        <span style="color:var(--color-fg-subtle);font-size:12px">14 Jul</span>
+        <span style="font-family:var(--font-mono);font-size:11px;color:var(--color-fg-subtle)">a3f2&hellip;09be</span>
+        <a onClick="{{ noop }}" style="cursor:pointer;font-size:12px;font-weight:600">Open</a>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;border:1px solid var(--color-border);border-radius:var(--radius-md);padding:10px 14px;font-size:13px" style-hover="background:var(--ink-50)">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--ink-500)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 8-6 4 6 4V8Z"></path><rect x="2" y="6" width="14" height="12" rx="2"></rect></svg>
+        <span style="flex:1;font-weight:500">final_hero_v3.mp4</span>
+        <span style="border:1px solid var(--color-border);border-radius:var(--radius-pill);padding:1px 8px;font-size:11px;color:var(--color-fg-muted)">Customer</span>
+        <span style="color:var(--color-fg-subtle);font-size:12px">28 Jun</span>
+        <span style="font-family:var(--font-mono);font-size:11px;color:var(--color-fg-subtle)">7be1&hellip;d380</span>
+        <a onClick="{{ noop }}" style="cursor:pointer;font-size:12px;font-weight:600">Open</a>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;border:1px solid var(--color-border);border-radius:var(--radius-md);padding:10px 14px;font-size:13px" style-hover="background:var(--ink-50)">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--ink-500)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 8-6 4 6 4V8Z"></path><rect x="2" y="6" width="14" height="12" rx="2"></rect></svg>
+        <span style="flex:1;font-weight:500">feature_walkthrough_final.mp4</span>
+        <span style="border:1px solid var(--color-border);border-radius:var(--radius-pill);padding:1px 8px;font-size:11px;color:var(--color-fg-muted)">Customer</span>
+        <span style="color:var(--color-fg-subtle);font-size:12px">6 Jul</span>
+        <span style="font-family:var(--font-mono);font-size:11px;color:var(--color-fg-subtle)">c514&hellip;22ab</span>
+        <a onClick="{{ noop }}" style="cursor:pointer;font-size:12px;font-weight:600">Open</a>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;border:1px solid var(--color-border);border-radius:var(--radius-md);padding:10px 14px;font-size:13px" style-hover="background:var(--ink-50)">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--ink-500)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6Z"></path><path d="M14 2v6h6"></path></svg>
+        <span style="flex:1;font-weight:500">Delivery checklist export</span>
+        <span style="border:1px solid var(--color-border);border-radius:var(--radius-pill);padding:1px 8px;font-size:11px;color:var(--color-fg-muted)">Merchant</span>
+        <span style="color:var(--color-fg-subtle);font-size:12px">22 Jul</span>
+        <span style="font-family:var(--font-mono);font-size:11px;color:var(--color-fg-subtle)">f0d9&hellip;71c3</span>
+        <a onClick="{{ noop }}" style="cursor:pointer;font-size:12px;font-weight:600">Open</a>
+      </div>
+      <sc-if value="{{ showReply }}" hint-placeholder-val="{{ true }}">
+        <div style="display:flex;align-items:center;gap:10px;border:1px solid var(--color-border);border-radius:var(--radius-md);padding:10px 14px;font-size:13px" style-hover="background:var(--ink-50)">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--ink-500)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 8-6 4 6 4V8Z"></path><rect x="2" y="6" width="14" height="12" rx="2"></rect></svg>
+          <span style="flex:1;font-weight:500">Screen recording &mdash; expired transfer link</span>
+          <span style="border:1px solid var(--color-border);border-radius:var(--radius-pill);padding:1px 8px;font-size:11px;color:var(--color-fg-muted)">Customer</span>
+          <span style="color:var(--color-fg-subtle);font-size:12px">24 Jul</span>
+          <span style="font-family:var(--font-mono);font-size:11px;color:var(--color-fg-subtle)">31e8&hellip;9a04</span>
+          <a onClick="{{ noop }}" style="cursor:pointer;font-size:12px;font-weight:600">Open</a>
+        </div>
+      </sc-if>
+      <div style="display:flex;align-items:center;gap:10px;border:1px solid var(--color-border);border-radius:var(--radius-md);padding:10px 14px;font-size:13px" style-hover="background:var(--ink-50)">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--ink-500)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"></rect><path d="M3 9h18M9 3v18"></path></svg>
+        <span style="flex:1;font-weight:500">Payment record on Arc</span>
+        <span style="border:1px solid var(--brand-200);background:var(--brand-50);border-radius:var(--radius-pill);padding:1px 8px;font-size:11px;color:var(--brand-800)">Agent</span>
+        <span style="color:var(--color-fg-subtle);font-size:12px">14 Jul</span>
+        <span style="font-family:var(--font-mono);font-size:11px;color:var(--color-fg-subtle)">0x7c9e&hellip;a1f2</span>
+        <a onClick="{{ noop }}" title="View on Arc explorer" style="cursor:pointer;font-size:12px;font-weight:600">&nearr;</a>
+      </div>
+    </div>
+    <sc-for list="{{ evItems }}" as="ev" hint-placeholder-count="0">
+      <div style="display:flex;align-items:flex-start;gap:10px;border:1px solid var(--brand-200);background:var(--brand-50);border-radius:var(--radius-md);padding:10px 14px;font-size:13px;margin-top:8px">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--brand-600)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-top:2px;flex-shrink:0"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
+        <span style="flex:1;line-height:1.55">{{ ev.text }}</span>
+        <span style="border:1px solid var(--brand-200);background:var(--color-surface);border-radius:var(--radius-pill);padding:1px 8px;font-size:11px;color:var(--brand-800);flex-shrink:0">{{ ev.side }} &middot; you</span>
+        <span style="color:var(--color-fg-subtle);font-size:12px;flex-shrink:0">just now</span>
+      </div>
+    </sc-for>
+    <sc-if value="{{ showAddEvidence }}" hint-placeholder-val="{{ false }}">
+      <sc-if value="{{ evPrompt }}" hint-placeholder-val="{{ true }}">
+        <div style="display:flex;align-items:center;gap:12px;margin-top:12px;border:1.5px dashed var(--color-border-strong);border-radius:var(--radius-md);padding:12px 14px">
+          <button onClick="{{ openEv }}" style="border:1.5px solid var(--ink-200);background:var(--color-surface);cursor:pointer;font-family:var(--font-sans);font-weight:600;font-size:13px;padding:8px 14px;border-radius:var(--radius-md);color:var(--color-fg)" style-hover="background:var(--ink-100)">Add evidence</button>
+          <span style="font-size:12px;color:var(--color-fg-subtle)">Anything you add as {{ evidenceAsLabel }} is visible to both sides, dated and fingerprinted. Evidence closes when the case is decided.</span>
+        </div>
+      </sc-if>
+      <sc-if value="{{ evComposerOpen }}" hint-placeholder-val="{{ false }}">
+        <div style="margin-top:12px;border:1.5px solid var(--brand-200);border-radius:var(--radius-md);padding:14px 16px;background:var(--color-surface)">
+          <div style="font-size:12px;color:var(--color-fg-subtle);margin-bottom:8px">Adding as {{ evidenceAsLabel }} &middot; visible to both sides, dated and fingerprinted.</div>
+          <textarea value="{{ evText }}" onChange="{{ onEvText }}" placeholder="Add a message or describe what you&rsquo;re attaching&hellip;" style="width:100%;box-sizing:border-box;min-height:64px;border:1.5px solid var(--ink-200);border-radius:var(--radius-md);padding:10px 12px;font-family:var(--font-sans);font-size:13.5px;resize:vertical;background:var(--color-surface)"></textarea>
+          <div style="display:flex;gap:10px;margin-top:10px;align-items:center">
+            <button style="border:1.5px solid var(--ink-200);background:var(--color-surface);cursor:pointer;font-family:var(--font-sans);font-weight:600;font-size:13px;padding:8px 14px;border-radius:var(--radius-md);color:var(--color-fg)" style-hover="background:var(--ink-100)">Attach file</button>
+            <span style="flex:1"></span>
+            <button onClick="{{ cancelEv }}" style="border:1.5px solid var(--ink-200);background:var(--color-surface);cursor:pointer;font-family:var(--font-sans);font-weight:600;font-size:13px;padding:8px 14px;border-radius:var(--radius-md);color:var(--color-fg)" style-hover="background:var(--ink-100)">Cancel</button>
+            <button onClick="{{ addEv }}" disabled="{{ evSendDisabled }}" style="border:none;cursor:{{ evSendCursor }};background:{{ evSendBg }};color:{{ evSendFg }};font-family:var(--font-sans);font-weight:600;font-size:13px;padding:9px 16px;border-radius:var(--radius-md)">Add to case</button>
+          </div>
+        </div>
+      </sc-if>
+    </sc-if>
+  </div>
+
+  <!-- (c) The agent's brief -->
+  <div style="background:var(--color-surface);border:1px solid var(--color-border);border-radius:var(--radius-lg);box-shadow:var(--shadow-xs);padding:22px 24px;margin-bottom:16px">
+    <div style="font-family:var(--font-mono);font-weight:600;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--brand-600);margin-bottom:12px">The agent's brief</div>
+    <div style="border:1px solid var(--color-border);border-radius:var(--radius-md);overflow:hidden;margin-bottom:14px">
+      <div style="display:grid;grid-template-columns:2fr 1fr 1.3fr .8fr;gap:12px;padding:9px 14px;background:var(--color-surface-2);border-bottom:1px solid var(--color-border);font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--color-fg-subtle)">
+        <span>Check</span><span>Expected</span><span>Found</span><span>Result</span>
+      </div>
+      <div style="display:grid;grid-template-columns:2fr 1fr 1.3fr .8fr;gap:12px;padding:11px 14px;border-bottom:1px solid var(--color-border);font-size:13px;align-items:center">
+        <span>Video 1 file on record</span><span style="color:var(--color-fg-muted)">1 file</span><span style="color:var(--color-fg-muted)">final_hero_v3.mp4</span><span style="color:var(--ok-600);font-weight:600">&#10003; Pass</span>
+      </div>
+      <div style="display:grid;grid-template-columns:2fr 1fr 1.3fr .8fr;gap:12px;padding:11px 14px;border-bottom:1px solid var(--color-border);font-size:13px;align-items:center">
+        <span>Video 2 file on record</span><span style="color:var(--color-fg-muted)">1 file</span><span style="color:var(--color-fg-muted)">feature_walkthrough_final.mp4</span><span style="color:var(--ok-600);font-weight:600">&#10003; Pass</span>
+      </div>
+      <div style="display:grid;grid-template-columns:2fr 1fr 1.3fr .8fr;gap:12px;padding:11px 14px;border-bottom:1px solid var(--color-border);font-size:13px;align-items:center">
+        <span>Video 3 file on record</span><span style="color:var(--color-fg-muted)">1 file</span><span style="color:var(--color-fg-muted)">none</span><span style="color:var(--warn-600);font-weight:600">&#9675; Missing</span>
+      </div>
+      <div style="display:grid;grid-template-columns:2fr 1fr 1.3fr .8fr;gap:12px;padding:11px 14px;font-size:13px;align-items:center">
+        <span>Payment matches work order amount</span><span style="color:var(--color-fg-muted)">100 USDC</span><span style="color:var(--color-fg-muted)">100 USDC on chain</span><span style="color:var(--ok-600);font-weight:600">&#10003; Pass</span>
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:14px">
+      <div>
+        <div style="font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--color-fg-subtle);margin-bottom:6px">Inconsistencies</div>
+        <div style="font-size:13px;line-height:1.6;color:var(--color-fg)">The response states delivery on 11 July; no file or delivery confirmation for Video 3 appears in the evidence record.</div>
+      </div>
+      <div>
+        <div style="font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--color-fg-subtle);margin-bottom:6px">Missing items</div>
+        <div style="font-size:13px;line-height:1.6;color:var(--color-fg)">Video 3 final file &middot; delivery confirmation for Video 3.</div>
+      </div>
+    </div>
+    <div style="font-size:12px;color:var(--color-fg-subtle);border-top:1px solid var(--color-border);padding-top:12px">Prepared by the Finn&eacute; proof agent. It reads and explains; it does not decide.</div>
+  </div>
+
+  <!-- (d) Timeline -->
+  <div style="background:var(--color-surface);border:1px solid var(--color-border);border-radius:var(--radius-lg);box-shadow:var(--shadow-xs);padding:22px 24px;margin-bottom:16px">
+    <div style="font-family:var(--font-mono);font-weight:600;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--brand-600);margin-bottom:14px">Timeline</div>
+    <div style="display:flex;flex-direction:column">
+      <div style="display:flex;gap:14px;font-size:13px;padding:8px 0">
+        <span style="font-family:var(--font-mono);font-size:12px;color:var(--color-fg-subtle);width:96px;flex-shrink:0">14 Jul 14:06</span>
+        <span style="width:8px;height:8px;border-radius:50%;background:var(--brand-500);margin-top:4px;flex-shrink:0"></span>
+        <span style="flex:1"><strong>Payment protected on Arc</strong> &middot; Northbeam Studios <a onClick="{{ noop }}" title="View on Arc explorer" style="cursor:pointer;font-size:12px">tx &nearr;</a></span>
+      </div>
+      <div style="display:flex;gap:14px;font-size:13px;padding:8px 0">
+        <span style="font-family:var(--font-mono);font-size:12px;color:var(--color-fg-subtle);width:96px;flex-shrink:0">22 Jul 09:18</span>
+        <span style="width:8px;height:8px;border-radius:50%;background:var(--warn-500);margin-top:4px;flex-shrink:0"></span>
+        <span style="flex:1"><strong>Dispute opened</strong> &middot; Dana Whitfield, Northbeam Studios</span>
+      </div>
+      <div style="display:flex;gap:14px;font-size:13px;padding:8px 0">
+        <span style="font-family:var(--font-mono);font-size:12px;color:var(--color-fg-subtle);width:96px;flex-shrink:0">22 Jul 09:19</span>
+        <span style="width:8px;height:8px;border-radius:50%;background:var(--brand-500);margin-top:4px;flex-shrink:0"></span>
+        <span style="flex:1"><strong>Case fingerprint anchored on Arc</strong> &middot; Finn&eacute; <a onClick="{{ noop }}" title="View on Arc explorer" style="cursor:pointer;font-size:12px">tx &nearr;</a></span>
+      </div>
+      <sc-if value="{{ stageMoreInfo }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex;gap:14px;font-size:13px;padding:8px 0">
+          <span style="font-family:var(--font-mono);font-size:12px;color:var(--color-fg-subtle);width:96px;flex-shrink:0">26 Jul 10:02</span>
+          <span style="width:8px;height:8px;border-radius:50%;background:var(--brand-500);margin-top:4px;flex-shrink:0"></span>
+          <span style="flex:1"><strong>More information requested</strong> &middot; Dana Whitfield: &ldquo;Please attach the original transfer-link email for Video 3.&rdquo; The reply window has reopened.</span>
+        </div>
+      </sc-if>
+      <sc-if value="{{ showReply }}" hint-placeholder-val="{{ true }}">
+        <div style="display:flex;gap:14px;font-size:13px;padding:8px 0">
+          <span style="font-family:var(--font-mono);font-size:12px;color:var(--color-fg-subtle);width:96px;flex-shrink:0">24 Jul 16:44</span>
+          <span style="width:8px;height:8px;border-radius:50%;background:var(--ok-500);margin-top:4px;flex-shrink:0"></span>
+          <span style="flex:1"><strong>Reply submitted</strong> &middot; Maya Reyes, with 1 evidence item</span>
+        </div>
+        <div style="display:flex;gap:14px;font-size:13px;padding:8px 0">
+          <span style="font-family:var(--font-mono);font-size:12px;color:var(--color-fg-subtle);width:96px;flex-shrink:0">24 Jul 16:45</span>
+          <span style="width:8px;height:8px;border-radius:50%;background:var(--ink-400);margin-top:4px;flex-shrink:0"></span>
+          <span style="flex:1"><strong>Agent brief updated</strong> &middot; Finn&eacute; proof agent</span>
+        </div>
+      </sc-if>
+      <sc-for list="{{ evItems }}" as="ev" hint-placeholder-count="0">
+        <div style="display:flex;gap:14px;font-size:13px;padding:8px 0">
+          <span style="font-family:var(--font-mono);font-size:12px;color:var(--color-fg-subtle);width:96px;flex-shrink:0">29 Jul now</span>
+          <span style="width:8px;height:8px;border-radius:50%;background:var(--ok-500);margin-top:4px;flex-shrink:0"></span>
+          <span style="flex:1"><strong>Evidence added</strong> &middot; {{ ev.side }}: &ldquo;{{ ev.text }}&rdquo;</span>
+        </div>
+      </sc-for>
+      <sc-for list="{{ reqTimeline }}" as="rq" hint-placeholder-count="0">
+        <div style="display:flex;gap:14px;font-size:13px;padding:8px 0">
+          <span style="font-family:var(--font-mono);font-size:12px;color:var(--color-fg-subtle);width:96px;flex-shrink:0">29 Jul now</span>
+          <span style="width:8px;height:8px;border-radius:50%;background:var(--brand-500);margin-top:4px;flex-shrink:0"></span>
+          <span style="flex:1"><strong>Information requested</strong> &middot; Dana Whitfield, directed to {{ rq.targetName }}: &ldquo;{{ rq.text }}&rdquo; &middot; their reply window has reopened</span>
+        </div>
+      </sc-for>
+      <sc-if value="{{ stageDecided }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex;gap:14px;font-size:13px;padding:8px 0">
+          <span style="font-family:var(--font-mono);font-size:12px;color:var(--color-fg-subtle);width:96px;flex-shrink:0">29 Jul 15:42</span>
+          <span style="width:8px;height:8px;border-radius:50%;background:var(--brand-600);margin-top:4px;flex-shrink:0"></span>
+          <span style="flex:1"><strong>Decision signed</strong> &middot; Dana Whitfield &middot; partial refund approved <a onClick="{{ noop }}" title="View on Arc explorer" style="cursor:pointer;font-size:12px">tx &nearr;</a></span>
+        </div>
+      </sc-if>
+    </div>
+  </div>
+
+  <!-- Case actions -->
+  <sc-if value="{{ isReviewer }}" hint-placeholder-val="{{ false }}">
+    <sc-if value="{{ stageAwaiting }}" hint-placeholder-val="{{ false }}">
+      <div style="display:flex;align-items:center;gap:12px;background:var(--color-surface-2);border:1px solid var(--color-border);border-radius:var(--radius-md);padding:14px 18px">
+        <button disabled style="border:none;background:var(--ink-100);color:var(--color-fg-subtle);font-family:var(--font-sans);font-weight:600;font-size:14px;padding:10px 18px;border-radius:var(--radius-md);cursor:not-allowed">Decide this case</button>
+        <span style="font-size:13px;color:var(--color-fg-muted)">Decision opens when the reply arrives or the window closes.</span>
+      </div>
+    </sc-if>
+    <sc-if value="{{ canDecide }}" hint-placeholder-val="{{ true }}">
+      <sc-if value="{{ reqSent }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex;align-items:center;gap:10px;background:var(--brand-50);border:1px solid var(--brand-200);border-radius:var(--radius-md);padding:12px 16px;margin-bottom:12px;font-size:13px;color:var(--brand-800)">
+          <span style="font-weight:600">{{ reqSentLabel }}</span> Each request is on the shared timeline; the named side&rsquo;s reply window has reopened. You can request more at any time before deciding.
+        </div>
+      </sc-if>
+      <sc-if value="{{ showReqComposer }}" hint-placeholder-val="{{ false }}">
+        <div style="background:var(--color-surface);border:1.5px solid var(--brand-200);border-radius:var(--radius-lg);padding:20px 22px;margin-bottom:12px">
+          <div style="font-size:14px;font-weight:600;margin-bottom:4px">Request more information</div>
+          <div style="font-size:12px;color:var(--color-fg-subtle);margin-bottom:12px">Say exactly what you need. Only the side you name is asked to respond &mdash; this is a directed request, not a group chat. The request itself stays on the shared record.</div>
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+            <span style="font-size:12px;font-weight:600;color:var(--color-fg-muted)">From</span>
+            <span onClick="{{ reqToMerchant }}" style="cursor:pointer;border:1.5px solid {{ reqMerBorder }};background:{{ reqMerBg }};border-radius:var(--radius-pill);padding:3px 12px;font-size:12px;font-weight:600">Merchant &middot; Northbeam</span>
+            <span onClick="{{ reqToCustomer }}" style="cursor:pointer;border:1.5px solid {{ reqCusBorder }};background:{{ reqCusBg }};border-radius:var(--radius-pill);padding:3px 12px;font-size:12px;font-weight:600">Customer &middot; Maya</span>
+          </div>
+          <textarea value="{{ reqText }}" onChange="{{ onReqText }}" placeholder="e.g. Attach the original transfer-link email for Video 3, including the send date." style="width:100%;box-sizing:border-box;min-height:72px;border:1.5px solid var(--ink-200);border-radius:var(--radius-md);padding:11px 13px;font-family:var(--font-sans);font-size:13.5px;resize:vertical;background:var(--color-surface)"></textarea>
+          <div style="display:flex;gap:10px;margin-top:10px;justify-content:flex-end">
+            <button onClick="{{ toggleReq }}" style="border:1.5px solid var(--ink-200);background:var(--color-surface);cursor:pointer;font-family:var(--font-sans);font-weight:600;font-size:13px;padding:8px 14px;border-radius:var(--radius-md);color:var(--color-fg)" style-hover="background:var(--ink-100)">Cancel</button>
+            <button onClick="{{ sendReq }}" disabled="{{ reqSendDisabled }}" style="border:none;cursor:{{ reqSendCursor }};background:{{ reqSendBg }};color:{{ reqSendFg }};font-family:var(--font-sans);font-weight:600;font-size:13px;padding:8px 16px;border-radius:var(--radius-md)">Send request</button>
+          </div>
+        </div>
+      </sc-if>
+      <div style="display:flex;justify-content:flex-end;gap:10px">
+        <sc-if value="{{ reqNotSent }}" hint-placeholder-val="{{ true }}">
+          <button onClick="{{ toggleReq }}" style="border:1.5px solid var(--ink-200);background:var(--color-surface);cursor:pointer;font-family:var(--font-sans);font-weight:600;font-size:14px;padding:10px 16px;border-radius:var(--radius-md);color:var(--color-fg)" style-hover="background:var(--ink-100)">{{ reqBtnLabel }}</button>
+        </sc-if>
+        <button onClick="{{ goDecision }}" style="border:none;cursor:pointer;background:var(--brand-600);color:#fff;font-family:var(--font-sans);font-weight:600;font-size:14px;padding:10px 20px;border-radius:var(--radius-md);box-shadow:var(--shadow-sm)" style-hover="background:var(--brand-700)">Decide this case</button>
+      </div>
+    </sc-if>
+  </sc-if>
+  <sc-if value="{{ stageDecided }}" hint-placeholder-val="{{ false }}">
+    <div style="display:flex;align-items:center;gap:12px;background:var(--color-surface);border:1px solid var(--color-border);border-radius:var(--radius-md);padding:14px 18px">
+      <span style="display:inline-flex;align-items:center;gap:6px;border:1px solid var(--color-border);background:var(--color-surface);border-radius:var(--radius-pill);padding:3px 10px;font-size:12px;font-weight:500"><span style="width:7px;height:7px;border-radius:50%;background:var(--risk-500)"></span>Refunded</span>
+      <span style="font-size:13px;color:var(--color-fg-muted);flex:1">This case is closed. The record is locked; corrections are added, never edited.</span>
+      <button onClick="{{ goFinal }}" style="border:1.5px solid var(--ink-200);background:var(--color-surface);cursor:pointer;font-family:var(--font-sans);font-weight:600;font-size:13px;padding:8px 15px;border-radius:var(--radius-md);color:var(--color-fg)" style-hover="background:var(--ink-100)">View final receipt</button>
+    </div>
+  </sc-if>
+</div>
+</sc-if>
+
+<!-- ============ SCREEN 4 · DECISION AND SIGNING ============ -->
+<sc-if value="{{ isDecision }}" hint-placeholder-val="{{ false }}">
+<div style="animation:riseIn .25s ease-out;max-width:820px;margin:0">
+  <a onClick="{{ goCase }}" style="cursor:pointer;font-size:13px;font-weight:600">&larr; Case 0142</a>
+  <h1 style="margin:14px 0 4px;font-family:var(--font-sans);font-weight:700;font-size:24px;letter-spacing:-0.02em">Decide case 0142</h1>
+  <div style="font-size:14px;color:var(--color-fg-muted);margin-bottom:22px">33 USDC contested of the 100 USDC payment to Maya Reyes</div>
+
+  <div style="background:var(--color-surface);border:1px solid var(--color-border);border-radius:var(--radius-lg);box-shadow:var(--shadow-xs);padding:20px 24px;margin-bottom:20px;font-size:13px;line-height:1.6">
+    <div style="display:grid;grid-template-columns:88px 1fr;gap:8px 16px">
+      <span style="font-weight:600;color:var(--color-fg-subtle)">Claim</span><span>Northbeam Studios: Video 3 not delivered; asking for 33 USDC back.</span>
+      <span style="font-weight:600;color:var(--color-fg-subtle)">Reply</span><span>Maya Reyes: sent 11 July via a transfer link that expired; no delivery confirmation kept; offers to re-deliver.</span>
+      <span style="font-weight:600;color:var(--color-fg-subtle)">Agent</span><span>2 of 3 deliverables on file &middot; Video 3 file missing &middot; payment matches the work order. <a onClick="{{ goCase }}" style="cursor:pointer;font-weight:600">Full brief</a></span>
+    </div>
+  </div>
+
+  <sc-if value="{{ decIdle }}" hint-placeholder-val="{{ true }}">
+    <div style="background:var(--color-surface);border:1px solid var(--color-border);border-radius:var(--radius-lg);box-shadow:var(--shadow-xs);padding:24px">
+      <div style="font-size:14px;font-weight:600;margin-bottom:4px">Your reasons</div>
+      <div style="font-size:12px;color:var(--color-fg-subtle);margin-bottom:8px">Both sides will read this.</div>
+      <textarea value="{{ decReason }}" onChange="{{ onReason }}" placeholder="Explain the decision in plain words." style="width:100%;box-sizing:border-box;min-height:88px;border:1.5px solid var(--ink-200);border-radius:var(--radius-md);padding:12px 14px;font-family:var(--font-sans);font-size:14px;resize:vertical;background:var(--color-surface)"></textarea>
+      <sc-if value="{{ reasonEmpty }}" hint-placeholder-val="{{ true }}">
+        <div style="font-size:12px;color:var(--color-fg-muted);margin-top:8px">The options below unlock once you've written your reasons &mdash; the decision and the reasons are recorded together.</div>
+      </sc-if>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin:18px 0;opacity:{{ optionsOpacity }};pointer-events:{{ optionsPointer }}">
+        <div onClick="{{ selectApprove }}" style="border:1.5px solid {{ approveBorder }};background:{{ approveBg }};border-radius:var(--radius-md);padding:15px 16px;cursor:pointer" style-hover="border-color:var(--ink-400)">
+          <div style="font-size:14px;font-weight:600;margin-bottom:3px">Approve refund</div>
+          <div style="font-size:12px;color:var(--color-fg-muted);line-height:1.5">33 USDC returns to Northbeam's refund address, fixed when the payment was made.</div>
+        </div>
+        <div onClick="{{ selectReject }}" style="border:1.5px solid {{ rejectBorder }};background:{{ rejectBg }};border-radius:var(--radius-md);padding:15px 16px;cursor:pointer" style-hover="border-color:var(--ink-400)">
+          <div style="font-size:14px;font-weight:600;margin-bottom:3px">Reject refund and release</div>
+          <div style="font-size:12px;color:var(--color-fg-muted);line-height:1.5">The payout stands; Maya can withdraw when the protection window ends.</div>
+        </div>
+        <div onClick="{{ selectClose }}" style="border:1.5px solid {{ closeBorder }};background:{{ closeBg }};border-radius:var(--radius-md);padding:15px 16px;cursor:pointer" style-hover="border-color:var(--ink-400)">
+          <div style="font-size:14px;font-weight:600;margin-bottom:3px">Close with no action</div>
+          <div style="font-size:12px;color:var(--color-fg-muted);line-height:1.5">The dispute ends; the payout continues on its original schedule.</div>
+        </div>
+      </div>
+      <sc-if value="{{ showPreview }}" hint-placeholder-val="{{ false }}">
+        <div style="background:var(--color-surface-2);border:1px solid var(--color-border);border-radius:var(--radius-md);padding:14px 16px;margin-bottom:18px;font-size:13px;line-height:1.6">
+          <div style="font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--color-fg-subtle);margin-bottom:6px">What happens if you confirm</div>
+          {{ previewText }}
+          <sc-if value="{{ approveSelected }}" hint-placeholder-val="{{ false }}">
+            <div style="margin-top:8px">Destination: <span onClick="{{ copyTech }}" data-copy="0x4B2109cE55aa10bd3F41c0e88a7cD10a5f9E9d3E" title="Copy" style="font-family:var(--font-mono);font-size:12px;background:var(--ink-100);border-radius:6px;padding:1px 7px;cursor:pointer;color:var(--ink-700)">0x4B21&hellip;9d3E</span> &middot; fixed at payment time</div>
+          </sc-if>
+        </div>
+      </sc-if>
+      <div style="display:flex;align-items:center;gap:12px">
+        <button onClick="{{ recordDecision }}" disabled="{{ recordDisabled }}" style="border:none;cursor:{{ recordCursor }};background:{{ recordBg }};color:{{ recordFg }};font-family:var(--font-sans);font-weight:600;font-size:14px;padding:11px 20px;border-radius:var(--radius-md)" style-hover="background:{{ recordHoverBg }}">Record decision</button>
+        <sc-if value="{{ approveSelected }}" hint-placeholder-val="{{ false }}">
+          <span style="font-size:12px;color:var(--color-fg-subtle)">Next step: sign with your wallet &mdash; the signature is what moves the money.</span>
+        </sc-if>
+      </div>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{ decAwaiting }}" hint-placeholder-val="{{ false }}">
+    <div style="background:var(--color-surface);border:1px solid var(--color-border);border-radius:var(--radius-lg);box-shadow:var(--shadow-md);padding:36px;text-align:center">
+      <div style="width:44px;height:44px;border-radius:50%;border:3px solid var(--brand-200);border-top-color:var(--brand-600);margin:0 auto 18px;animation:spin 1s linear infinite"></div>
+      <div style="font-family:var(--font-sans);font-weight:700;font-size:17px;margin-bottom:6px">Waiting for your wallet signature</div>
+      <div style="font-size:13px;color:var(--color-fg-muted);max-width:400px;margin:0 auto 20px;line-height:1.6">Your wallet is asking you to sign the refund of 33 USDC to <span style="font-family:var(--font-mono);font-size:12px">0x4B21&hellip;9d3E</span>. Nothing moves until you sign.</div>
+      <button onClick="{{ cancelSignature }}" style="border:1.5px solid var(--ink-200);background:var(--color-surface);cursor:pointer;font-family:var(--font-sans);font-weight:600;font-size:13px;padding:9px 16px;border-radius:var(--radius-md);color:var(--color-fg)" style-hover="background:var(--ink-100)">Cancel</button>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{ decSigRejected }}" hint-placeholder-val="{{ false }}">
+    <div style="background:var(--color-surface);border:1px solid var(--warn-border);border-radius:var(--radius-lg);box-shadow:var(--shadow-xs);padding:28px;text-align:center">
+      <div style="font-family:var(--font-sans);font-weight:700;font-size:17px;margin-bottom:6px">Signature declined in your wallet</div>
+      <div style="font-size:13px;color:var(--color-fg-muted);max-width:420px;margin:0 auto 20px;line-height:1.6">Nothing was recorded on chain and no money moved. Your decision text is kept &mdash; you can sign again or go back and change it.</div>
+      <div style="display:flex;gap:10px;justify-content:center">
+        <button onClick="{{ retrySign }}" style="border:none;cursor:pointer;background:var(--brand-600);color:#fff;font-family:var(--font-sans);font-weight:600;font-size:13px;padding:9px 16px;border-radius:var(--radius-md)" style-hover="background:var(--brand-700)">Sign with your wallet</button>
+        <button onClick="{{ cancelSignature }}" style="border:1.5px solid var(--ink-200);background:var(--color-surface);cursor:pointer;font-family:var(--font-sans);font-weight:600;font-size:13px;padding:9px 16px;border-radius:var(--radius-md);color:var(--color-fg)" style-hover="background:var(--ink-100)">Back to the decision</button>
+      </div>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{ decPending }}" hint-placeholder-val="{{ false }}">
+    <div style="background:var(--color-surface);border:1px solid var(--color-border);border-radius:var(--radius-lg);box-shadow:var(--shadow-md);padding:36px;text-align:center">
+      <div style="width:44px;height:44px;border-radius:50%;border:3px solid var(--brand-100);border-top-color:var(--brand-600);margin:0 auto 18px;animation:spin 1s linear infinite"></div>
+      <div style="font-family:var(--font-sans);font-weight:700;font-size:17px;margin-bottom:6px">Signed &middot; watching for confirmation on Arc</div>
+      <div style="font-size:13px;color:var(--color-fg-muted);max-width:400px;margin:0 auto;line-height:1.6">Transaction submitted: <span onClick="{{ copyTech }}" data-copy="0x2e61aa04cd97f1b3805592e0c11da6b47f30918ce2ab5d6f01c744e5a90ab8c4" title="Copy" style="font-family:var(--font-mono);font-size:12px;background:var(--ink-100);border-radius:6px;padding:1px 7px;cursor:pointer;color:var(--ink-700)">0x2e61&hellip;b8c4</span> <a onClick="{{ noop }}" title="View on Arc explorer" style="font-size:11px;cursor:pointer">&nearr;</a></div>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{ decFailed }}" hint-placeholder-val="{{ false }}">
+    <div style="background:var(--color-surface);border:1px solid var(--risk-border);border-radius:var(--radius-lg);box-shadow:var(--shadow-xs);padding:28px;text-align:center">
+      <div style="font-family:var(--font-sans);font-weight:700;font-size:17px;margin-bottom:6px">The refund transaction didn't go through</div>
+      <div style="font-size:13px;color:var(--color-fg-muted);max-width:440px;margin:0 auto 20px;line-height:1.6">The network rejected it before any money moved &mdash; the 100 USDC is still protected in the payment contract. This usually clears on a retry.</div>
+      <div style="display:flex;gap:10px;justify-content:center">
+        <button onClick="{{ retrySign }}" style="border:none;cursor:pointer;background:var(--brand-600);color:#fff;font-family:var(--font-sans);font-weight:600;font-size:13px;padding:9px 16px;border-radius:var(--radius-md)" style-hover="background:var(--brand-700)">Try again</button>
+        <button onClick="{{ cancelSignature }}" style="border:1.5px solid var(--ink-200);background:var(--color-surface);cursor:pointer;font-family:var(--font-sans);font-weight:600;font-size:13px;padding:9px 16px;border-radius:var(--radius-md);color:var(--color-fg)" style-hover="background:var(--ink-100)">Back to the decision</button>
+      </div>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{ decConfirmed }}" hint-placeholder-val="{{ false }}">
+    <div style="background:var(--color-surface);border:1px solid var(--ok-border);border-radius:var(--radius-lg);box-shadow:var(--shadow-xs);padding:32px;text-align:center">
+      <div style="width:44px;height:44px;border-radius:50%;background:var(--ok-soft);border:1px solid var(--ok-border);display:flex;align-items:center;justify-content:center;margin:0 auto 14px;color:var(--ok-600);font-size:20px;font-weight:700">&#10003;</div>
+      <div style="font-family:var(--font-sans);font-weight:700;font-size:17px;margin-bottom:6px">Refund confirmed on Arc</div>
+      <div style="font-size:13px;color:var(--color-fg-muted);margin-bottom:4px">Decision recorded by <strong style="color:var(--color-fg)">Dana Whitfield &middot; wallet 0x4B21&hellip;9d3E</strong></div>
+      <div style="font-size:13px;color:var(--color-fg-subtle)">Taking you to the final receipt&hellip;</div>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{ decRecordedNoRefund }}" hint-placeholder-val="{{ false }}">
+    <div style="background:var(--color-surface);border:1px solid var(--ok-border);border-radius:var(--radius-lg);box-shadow:var(--shadow-xs);padding:32px;text-align:center">
+      <div style="width:44px;height:44px;border-radius:50%;background:var(--ok-soft);border:1px solid var(--ok-border);display:flex;align-items:center;justify-content:center;margin:0 auto 14px;color:var(--ok-600);font-size:20px;font-weight:700">&#10003;</div>
+      <div style="font-family:var(--font-sans);font-weight:700;font-size:17px;margin-bottom:6px">Decision recorded</div>
+      <div style="font-size:13px;color:var(--color-fg-muted);margin-bottom:18px">Recorded by <strong style="color:var(--color-fg)">Dana Whitfield &middot; wallet 0x4B21&hellip;9d3E</strong>. Both sides can now read it, with your reasons, in the case room.</div>
+      <button onClick="{{ goCase }}" style="border:1.5px solid var(--ink-200);background:var(--color-surface);cursor:pointer;font-family:var(--font-sans);font-weight:600;font-size:13px;padding:9px 16px;border-radius:var(--radius-md);color:var(--color-fg)" style-hover="background:var(--ink-100)">Back to the case</button>
+    </div>
+  </sc-if>
+</div>
+</sc-if>
+
+<!-- ============ SCREEN 5 · RECIPIENT HOME ============ -->
+<sc-if value="{{ isHome }}" hint-placeholder-val="{{ false }}">
+<div style="animation:riseIn .25s ease-out">
+  <h1 style="margin:0 0 24px;font-family:var(--font-sans);font-weight:700;font-size:24px;letter-spacing:-0.02em">Your payouts</h1>
+
+  <sc-if value="{{ stageAwaiting }}" hint-placeholder-val="{{ false }}">
+    <div style="background:var(--color-surface);border:1.5px solid var(--warn-border);border-radius:var(--radius-lg);box-shadow:var(--shadow-sm);padding:20px 24px;margin-bottom:24px">
+      <div style="display:flex;align-items:flex-start;gap:14px">
+        <span style="width:9px;height:9px;border-radius:50%;background:var(--warn-500);margin-top:6px;animation:pulseDot 1.6s infinite"></span>
+        <div style="flex:1">
+          <div style="font-size:15px;font-weight:600;margin-bottom:4px">A case needs your reply &middot; due in {{ countdown }}</div>
+          <div style="font-size:13px;color:var(--color-fg-muted);line-height:1.6">Northbeam Studios says Video 3 of your spring-launch order wasn't delivered, and is asking for <strong style="color:var(--color-fg)">33 USDC</strong> of the 100 USDC payment back. Your side of the story, and anything you attach, carries equal weight.</div>
+        </div>
+        <button onClick="{{ goCase }}" style="border:none;cursor:pointer;background:var(--ink-900);color:#fff;font-family:var(--font-sans);font-weight:600;font-size:13px;padding:9px 16px;border-radius:var(--radius-md);flex-shrink:0" style-hover="background:var(--ink-800)">See the case and reply</button>
+      </div>
+    </div>
+  </sc-if>
+  <sc-if value="{{ stageReviewOrInfo }}" hint-placeholder-val="{{ true }}">
+    <div style="background:var(--brand-50);border:1px solid var(--brand-200);border-radius:var(--radius-lg);padding:16px 24px;margin-bottom:24px;display:flex;align-items:center;gap:12px">
+      <span style="color:var(--ok-600);font-weight:700">&#10003;</span>
+      <span style="font-size:14px;color:var(--brand-900);flex:1">Reply received &middot; the arbiter at Northbeam will decide. You'll see their name and their written reasons.</span>
+      <a onClick="{{ goCase }}" style="cursor:pointer;font-size:13px;font-weight:600">View the case</a>
+    </div>
+  </sc-if>
+  <sc-if value="{{ stageDecided }}" hint-placeholder-val="{{ false }}">
+    <div style="background:var(--color-surface);border:1px solid var(--color-border);border-radius:var(--radius-lg);box-shadow:var(--shadow-xs);padding:22px 24px;margin-bottom:24px">
+      <div style="font-size:15px;font-weight:600;margin-bottom:6px">The case about your spring-launch videos has been decided</div>
+      <div style="font-size:13px;color:var(--color-fg-muted);line-height:1.65;margin-bottom:12px">Dana Whitfield at Northbeam approved a partial refund: <strong style="color:var(--color-fg)">33 USDC returned to Northbeam; 67 USDC stays with you</strong> and unlocks on 13 August. The written reasons: two videos were on file and confirmed; no file or delivery confirmation for Video 3 was in the record by the deadline.</div>
+      <div style="display:flex;gap:14px">
+        <a onClick="{{ goFinal }}" style="cursor:pointer;font-size:13px;font-weight:600">Read the full decision</a>
+        <a onClick="{{ noop }}" style="cursor:pointer;font-size:13px;font-weight:600">How to add a correction</a>
+      </div>
+    </div>
+  </sc-if>
+
+  <div style="background:var(--color-surface);border:1px solid var(--color-border);border-radius:var(--radius-lg);box-shadow:var(--shadow-xs);overflow:hidden">
+    <div style="display:grid;grid-template-columns:1.2fr .8fr 1.6fr 1.1fr 1.3fr;gap:12px;padding:12px 20px;border-bottom:1px solid var(--color-border);font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--color-fg-subtle)">
+      <span>From</span><span style="text-align:right">Amount</span><span>For</span><span>Status</span><span></span>
+    </div>
+    <div style="display:grid;grid-template-columns:1.2fr .8fr 1.6fr 1.1fr 1.3fr;gap:12px;padding:11px 20px;border-bottom:1px solid var(--color-border);font-size:13.5px;align-items:center" style-hover="background:var(--ink-50)">
+      <span style="font-weight:600">Northbeam Studios</span>
+      <span style="font-family:var(--font-mono);font-size:13px;font-variant-numeric:tabular-nums;text-align:right">100 USDC</span>
+      <span>Three product videos &mdash; spring launch</span>
+      <span><span style="display:inline-flex;align-items:center;gap:6px;border:1px solid var(--color-border);background:var(--color-surface);border-radius:var(--radius-pill);padding:3px 10px;font-size:12px;font-weight:500"><span style="width:7px;height:7px;border-radius:50%;background:{{ mayaRowDot }}"></span>{{ mayaRowStatus }}</span></span>
+      <span style="text-align:right"><a onClick="{{ goReceipt }}" style="cursor:pointer;font-size:13px;font-weight:600">Receipt</a></span>
+    </div>
+    <div style="display:grid;grid-template-columns:1.2fr .8fr 1.6fr 1.1fr 1.3fr;gap:12px;padding:11px 20px;border-bottom:1px solid var(--color-border);font-size:13.5px;align-items:center" style-hover="background:var(--ink-50)">
+      <span style="font-weight:600">Halcyon Press</span>
+      <span style="font-family:var(--font-mono);font-size:13px;font-variant-numeric:tabular-nums;text-align:right">140 USDC</span>
+      <span>Author interview edit</span>
+      <span><span style="display:inline-flex;align-items:center;gap:6px;border:1px solid var(--color-border);background:var(--color-surface);border-radius:var(--radius-pill);padding:3px 10px;font-size:12px;font-weight:500"><span style="width:7px;height:7px;border-radius:50%;background:var(--ok-500)"></span>Ready to withdraw</span></span>
+      <span style="display:flex;justify-content:flex-end;align-items:center;gap:12px"><span style="font-size:12px;color:var(--color-fg-subtle)">unlocked 24 Jul</span><button style="border:none;cursor:pointer;background:var(--brand-600);color:#fff;font-family:var(--font-sans);font-weight:600;font-size:13px;padding:7px 14px;border-radius:var(--radius-md)" style-hover="background:var(--brand-700)">Withdraw</button></span>
+    </div>
+    <div style="padding:10px 20px;border-bottom:1px solid var(--color-border);font-size:12px;color:var(--color-fg-subtle);background:var(--color-surface-2)">Withdrawal goes straight from the payment contract to your wallet &mdash; Finn&eacute; never holds your money.</div>
+    <div style="display:grid;grid-template-columns:1.2fr .8fr 1.6fr 1.1fr 1.3fr;gap:12px;padding:11px 20px;font-size:13.5px;align-items:center" style-hover="background:var(--ink-50)">
+      <span style="font-weight:600">Northbeam Studios</span>
+      <span style="font-family:var(--font-mono);font-size:13px;font-variant-numeric:tabular-nums;text-align:right">90 USDC</span>
+      <span>Teaser cutdowns</span>
+      <span><span style="display:inline-flex;align-items:center;gap:6px;border:1px solid var(--color-border);background:var(--color-surface);border-radius:var(--radius-pill);padding:3px 10px;font-size:12px;font-weight:500"><span style="width:7px;height:7px;border-radius:50%;background:var(--ink-400)"></span>Withdrawn</span></span>
+      <span style="text-align:right"><a onClick="{{ noop }}" style="cursor:pointer;font-size:13px;font-weight:600">Receipt</a></span>
+    </div>
+  </div>
+</div>
+</sc-if>
+
+</div>
+</div>
+
+<!-- ============ SCREEN 7 · DEMO STATUS STRIP ============ -->
+<sc-if value="{{ showStrip }}" hint-placeholder-val="{{ false }}">
+  <div style="position:fixed;left:20px;bottom:20px;z-index:60;display:flex;flex-direction:column;gap:8px;max-width:380px">
+    <div style="display:flex;align-items:center;gap:8px;font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--color-fg-subtle)">
+      <span style="flex:1">Chain activity &middot; demo</span>
+      <button onClick="{{ dismissStrip }}" title="Hide" style="border:none;background:none;cursor:pointer;color:var(--color-fg-subtle);font-size:14px;line-height:1;padding:2px">&times;</button>
+    </div>
+    <div style="display:flex;align-items:center;gap:10px;background:var(--ink-900);color:#fff;border-radius:var(--radius-md);padding:10px 14px;font-size:12px;box-shadow:var(--shadow-lg)">
+      <span style="width:7px;height:7px;border-radius:50%;background:var(--brand-300)"></span>
+      <span style="flex:1">Payment protected on Arc &middot; <span style="font-family:var(--font-mono)">tx &hellip;a1f2</span></span>
+      <a onClick="{{ noop }}" title="View on Arc explorer" style="color:var(--brand-300);cursor:pointer;font-size:12px">&nearr;</a>
+    </div>
+    <div style="display:flex;align-items:center;gap:10px;background:var(--ink-900);color:#fff;border-radius:var(--radius-md);padding:10px 14px;font-size:12px;box-shadow:var(--shadow-lg)">
+      <span style="width:7px;height:7px;border-radius:50%;background:var(--brand-300)"></span>
+      <span style="flex:1">Case fingerprint anchored</span>
+      <a onClick="{{ noop }}" title="View on Arc explorer" style="color:var(--brand-300);cursor:pointer;font-size:12px">&nearr;</a>
+    </div>
+    <div style="display:flex;align-items:center;gap:10px;background:var(--ink-900);color:#fff;border-radius:var(--radius-md);padding:10px 14px;font-size:12px;box-shadow:var(--shadow-lg)">
+      <span style="width:7px;height:7px;border-radius:50%;background:var(--brand-300)"></span>
+      <span style="flex:1">Refund signed by arbiter wallet</span>
+      <a onClick="{{ noop }}" title="View on Arc explorer" style="color:var(--brand-300);cursor:pointer;font-size:12px">&nearr;</a>
+    </div>
+    <div style="display:flex;align-items:center;gap:10px;background:var(--ink-900);color:#fff;border-radius:var(--radius-md);padding:10px 14px;font-size:12px;box-shadow:var(--shadow-lg)">
+      <span style="width:7px;height:7px;border-radius:50%;background:var(--brand-300);animation:pulseDot 1.6s infinite"></span>
+      <span style="flex:1">Refund confirmed &middot; 33 USDC to the fixed refund address</span>
+      <a onClick="{{ noop }}" title="View on Arc explorer" style="color:var(--brand-300);cursor:pointer;font-size:12px">&nearr;</a>
+    </div>
+  </div>
+</sc-if>
+
+<sc-if value="{{ exportToast }}" hint-placeholder-val="{{ false }}">
+  <div style="position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:70;background:var(--ink-900);color:#fff;border-radius:var(--radius-pill);padding:8px 18px;font-size:13px;box-shadow:var(--shadow-lg)">Audit export prepared &middot; receipts, cases, decisions and chain anchors</div>
+</sc-if>
+
+<sc-if value="{{ copied }}" hint-placeholder-val="{{ false }}">
+  <div style="position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:70;background:var(--ink-900);color:#fff;border-radius:var(--radius-pill);padding:8px 18px;font-size:13px;box-shadow:var(--shadow-lg)">Copied to clipboard</div>
+</sc-if>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{
+  &quot;role&quot;: {&quot;editor&quot;: &quot;enum&quot;, &quot;default&quot;: &quot;arbiter&quot;, &quot;options&quot;: [&quot;arbiter&quot;, &quot;merchant&quot;, &quot;customer&quot;, &quot;platform&quot;], &quot;tsType&quot;: &quot;string&quot;, &quot;section&quot;: &quot;Session&quot;},
+  &quot;caseStage&quot;: {&quot;editor&quot;: &quot;enum&quot;, &quot;default&quot;: &quot;under_review&quot;, &quot;options&quot;: [&quot;awaiting_response&quot;, &quot;under_review&quot;, &quot;more_info&quot;, &quot;decided&quot;], &quot;tsType&quot;: &quot;string&quot;, &quot;section&quot;: &quot;Case state&quot;},
+  &quot;ledgerState&quot;: {&quot;editor&quot;: &quot;enum&quot;, &quot;default&quot;: &quot;normal&quot;, &quot;options&quot;: [&quot;normal&quot;, &quot;empty&quot;, &quot;loading&quot;, &quot;chain_stale&quot;, &quot;error&quot;], &quot;tsType&quot;: &quot;string&quot;, &quot;section&quot;: &quot;Case state&quot;},
+  &quot;walletSim&quot;: {&quot;editor&quot;: &quot;enum&quot;, &quot;default&quot;: &quot;approves&quot;, &quot;options&quot;: [&quot;approves&quot;, &quot;rejects_signature&quot;, &quot;transaction_fails&quot;], &quot;tsType&quot;: &quot;string&quot;, &quot;section&quot;: &quot;Demo&quot;},
+  &quot;demoMode&quot;: {&quot;editor&quot;: &quot;boolean&quot;, &quot;default&quot;: false, &quot;tsType&quot;: &quot;boolean&quot;, &quot;section&quot;: &quot;Demo&quot;}
+}">
+class Component extends DCLogic {
+  state = { screen: null, roleOverride: null, stripDismissed: false, copied: false,
+            reqOpen: false, reqLog: [], reqTarget: 'customer', reqText: '',
+            evOpen: false, evText: '', evItems: [],
+            decOption: null, decReason: '', decPhase: 'idle',
+            deadline: Date.now() + (6 * 3600 + 11 * 60) * 1000, now: Date.now() };
+  componentDidMount() {
+    this._t = setInterval(() => this.setState({ now: Date.now() }), 30000);
+    if (!document.getElementById('spin-kf')) {
+      const s = document.createElement('style');
+      s.id = 'spin-kf';
+      s.textContent = '@keyframes spin{to{transform:rotate(360deg)}}';
+      document.head.appendChild(s);
+    }
+  }
+  componentWillUnmount() { clearInterval(this._t); clearTimeout(this._sim); clearTimeout(this._fwd); }
+  go(screen) { this.setState({ screen }); window.scrollTo(0, 0); }
+  startSim() {
+    const sim = this.props.walletSim ?? 'approves';
+    this.setState({ decPhase: 'awaiting' });
+    this._sim = setTimeout(() => {
+      if (sim === 'rejects_signature') { this.setState({ decPhase: 'sig_rejected' }); return; }
+      this.setState({ decPhase: 'pending' });
+      this._sim = setTimeout(() => {
+        if (sim === 'transaction_fails') { this.setState({ decPhase: 'failed' }); return; }
+        this.setState({ decPhase: 'confirmed' });
+        this._fwd = setTimeout(() => this.go('final'), 1600);
+      }, 2400);
+    }, 2200);
+  }
+  renderVals() {
+    const role = this.state.roleOverride ?? this.props.role ?? 'arbiter';
+    const isReviewer = role === 'arbiter', isClaimant = role === 'merchant', isRecipient = role === 'customer';
+    const isPlatformSide = isReviewer || isClaimant;
+    const screen = this.state.screen ?? (isRecipient ? 'home' : role === 'platform' ? 'platform' : isReviewer ? 'disputes' : 'ledger');
+    const stage = this.props.caseStage ?? 'under_review';
+    const stageAwaiting = stage === 'awaiting_response';
+    const stageReview = stage === 'under_review';
+    const stageMoreInfo = stage === 'more_info';
+    const stageDecided = stage === 'decided';
+    const ledger = this.props.ledgerState ?? 'normal';
+    const rem = Math.max(0, this.state.deadline - this.state.now);
+    const h = Math.floor(rem / 3600000), m = Math.floor((rem % 3600000) / 60000);
+    const countdown = h + 'h ' + String(m).padStart(2, '0') + 'm';
+    const p = this.state.decPhase, opt = this.state.decOption;
+    const reasonEmpty = this.state.decReason.trim().length === 0;
+    const recordDisabled = reasonEmpty || !opt;
+    const previews = {
+      approve: '33 USDC reverts from escrow to Northbeam\u2019s refund address, fixed when the payment was made; the remaining 67 USDC stays protected for Maya until 13 August. If the money had already been withdrawn, the refund draws on the arbiter reserve and is clawed back from Maya\u2019s future payouts.',
+      reject: 'The payout stands; Maya can withdraw the full 100 USDC when the protection window ends on 13 August. Your reasons are shown to both sides.',
+      close: 'The dispute ends with no refund. The payout continues on its original schedule and the case record is locked.'
+    };
+    const optStyle = (name) => ({
+      border: opt === name ? 'var(--brand-700)' : 'var(--ink-200)',
+      bg: opt === name ? 'var(--brand-50)' : 'var(--color-surface)'
+    });
+    const a = optStyle('approve'), r = optStyle('reject'), i = optStyle('info'), c = optStyle('close');
+    const reqLog = this.state.reqLog;
+    const reqSent = reqLog.length > 0;
+    const lastReq = reqLog[reqLog.length - 1];
+    const nameFor = (t) => t === 'merchant' ? 'the merchant (Northbeam Studios)' : 'the customer (Maya Reyes)';
+    const reqSentLabel = !reqSent ? '' : reqLog.length === 1
+      ? 'Request sent to ' + nameFor(lastReq.target) + '.'
+      : reqLog.length + ' requests sent \u00b7 most recently to ' + nameFor(lastReq.target) + '.';
+    const myReqs = reqLog.filter(rq => (rq.target === 'merchant' && isClaimant) || (rq.target === 'customer' && isRecipient));
+    const myLastReq = myReqs[myReqs.length - 1];
+    const evItems = this.state.evItems;
+    return {
+      isReviewer, isRecipient, isClaimant, isPlatformSide,
+      roleBadge: isReviewer ? 'Arbiter \u00b7 Dana Whitfield \u00b7 Northbeam Studios' : isClaimant ? 'Merchant \u00b7 Northbeam Studios' : role === 'platform' ? 'Platform \u00b7 Parkline Market \u00b7 view access' : 'Customer \u00b7 Maya Reyes',
+      roleDotColor: isReviewer ? 'var(--brand-500)' : isClaimant ? 'var(--warn-500)' : role === 'platform' ? 'var(--brand-400)' : 'var(--ok-500)',
+      revTabBg: isReviewer ? 'var(--ink-900)' : 'var(--color-surface)',
+      revTabFg: isReviewer ? '#fff' : 'var(--color-fg-muted)',
+      claTabBg: isClaimant ? 'var(--ink-900)' : 'var(--color-surface)',
+      claTabFg: isClaimant ? '#fff' : 'var(--color-fg-muted)',
+      recTabBg: isRecipient ? 'var(--ink-900)' : 'var(--color-surface)',
+      recTabFg: isRecipient ? '#fff' : 'var(--color-fg-muted)',
+      asReviewer: () => this.setState({ roleOverride: 'arbiter', screen: null, decPhase: 'idle' }),
+      asClaimant: () => this.setState({ roleOverride: 'merchant', screen: null, decPhase: 'idle' }),
+      asRecipient: () => this.setState({ roleOverride: 'customer', screen: null, decPhase: 'idle' }),
+      isLedger: screen === 'ledger', isNewPayout: screen === 'newpayout',
+      isReceipt: screen === 'receipt', isFinal: screen === 'final',
+      showReceipt: screen === 'receipt' || screen === 'final',
+      isCase: screen === 'case', isDecision: screen === 'decision', isHome: screen === 'home',
+      goLedger: () => this.go('ledger'), goNewPayout: () => this.go('newpayout'),
+      goReceipt: () => this.go('receipt'), goCase: () => this.go('case'),
+      goDecision: () => { this.setState({ decPhase: 'idle', decOption: null }); this.go('decision'); },
+      goFinal: () => this.go('final'), goHome: () => this.go('home'),
+      goBackHome: () => this.go(isReviewer ? 'case' : isClaimant ? 'ledger' : role === 'platform' ? 'platform' : 'home'),
+      backLabel: isReviewer ? 'Back to the case' : isClaimant ? 'All payouts' : role === 'platform' ? 'All transactions' : 'Your payouts',
+      isDisputesList: screen === 'disputes',
+      goDisputes: () => this.go('disputes'),
+      disputesSubtitle: isReviewer ? 'Cases waiting on your decision. The receipt for each payment is linked inside the case as evidence.' : isClaimant ? 'Cases you opened or that concern your payouts.' : isRecipient ? 'Cases that concern payments made to you.' : 'All cases across Parkline merchants \u00b7 view access.',
+      disputeDeadlineCell: stageAwaiting ? 'in ' + countdown : stageDecided ? 'Closed 29 Jul' : '\u2014',
+      doExport: () => {
+        this.setState({ exportToast: true });
+        clearTimeout(this._ex);
+        this._ex = setTimeout(() => this.setState({ exportToast: false }), 2200);
+      },
+      exportToast: this.state.exportToast,
+      navSectionLabel: isRecipient ? 'Maya Reyes' : role === 'platform' ? 'Parkline Market' : 'Northbeam Studios',
+      navItems: (isReviewer ? [
+        { label: 'Disputes', s: 'disputes', act: ['disputes', 'case', 'decision', 'receipt', 'final'] }
+      ] : isClaimant ? [
+        { label: 'Payouts', s: 'ledger', act: ['ledger', 'receipt', 'final'] },
+        { label: 'Disputes', s: 'disputes', act: ['disputes', 'case'] }
+      ] : role === 'platform' ? [
+        { label: 'Transactions', s: 'platform', act: ['platform', 'receipt', 'final'] },
+        { label: 'Disputes', s: 'disputes', act: ['disputes', 'case'] }
+      ] : [
+        { label: 'Your payouts', s: 'home', act: ['home', 'receipt', 'final'] },
+        { label: 'Disputes', s: 'disputes', act: ['disputes', 'case'] }
+      ]).map(n => ({
+        label: n.label, go: () => this.go(n.s),
+        bg: n.act.includes(screen) ? 'var(--brand-50)' : 'transparent',
+        fg: n.act.includes(screen) ? 'var(--brand-700)' : 'var(--ink-600)',
+        weight: n.act.includes(screen) ? '600' : '500'
+      })),
+      stageAwaiting, stageReview, stageMoreInfo, stageDecided,
+      notAwaiting: !stageAwaiting, notDecided: !stageDecided,
+      stageReviewOrInfo: stageReview || stageMoreInfo,
+      showComposer: isRecipient && (stageAwaiting || stageMoreInfo) && screen === 'case',
+      showReply: !stageAwaiting,
+      canDecide: (stageReview || stageMoreInfo) && isReviewer,
+      caseChipColor: stageDecided ? 'var(--risk-500)' : stageMoreInfo ? 'var(--brand-500)' : 'var(--warn-500)',
+      caseChipLabel: stageDecided ? 'Refunded' : stageMoreInfo ? 'More information requested' : 'Under review',
+      receiptTitle: screen === 'final' ? 'Final receipt' : 'Payment receipt',
+      receiptChipColor: stageDecided || screen === 'final' ? 'var(--risk-500)' : 'var(--warn-500)',
+      receiptChipLabel: stageDecided || screen === 'final' ? 'Refunded' : 'Disputed',
+      showDisputeBanner: screen === 'receipt' && !stageDecided,
+      showOutcome: screen === 'final',
+      mayaRowDot: stageDecided ? 'var(--risk-500)' : 'var(--warn-500)',
+      mayaRowStatus: stageDecided ? 'Refunded' : 'Disputed',
+      ledgerNormal: ledger === 'normal', ledgerEmpty: ledger === 'empty',
+      ledgerLoading: ledger === 'loading', ledgerStale: ledger === 'chain_stale',
+      ledgerError: ledger === 'error',
+      skeletonRows: [1, 2, 3, 4, 5],
+      countdown,
+      decReason: this.state.decReason,
+      onReason: (e) => this.setState({ decReason: e.target.value }),
+      reasonEmpty,
+      optionsOpacity: reasonEmpty ? '.45' : '1',
+      optionsPointer: reasonEmpty ? 'none' : 'auto',
+      selectApprove: () => this.setState({ decOption: 'approve' }),
+      selectReject: () => this.setState({ decOption: 'reject' }),
+      selectInfo: () => this.setState({ decOption: 'info' }),
+      selectClose: () => this.setState({ decOption: 'close' }),
+      approveBorder: a.border, approveBg: a.bg, rejectBorder: r.border, rejectBg: r.bg,
+      infoBorder: i.border, infoBg: i.bg, closeBorder: c.border, closeBg: c.bg,
+      approveSelected: opt === 'approve',
+      isPlatform: role === 'platform',
+      plaTabBg: role === 'platform' ? 'var(--ink-900)' : 'var(--color-surface)',
+      plaTabFg: role === 'platform' ? '#fff' : 'var(--color-fg-muted)',
+      asPlatform: () => this.setState({ roleOverride: 'platform', screen: null, decPhase: 'idle' }),
+      goPlatform: () => this.go('platform'),
+      goRequestInfo: () => { this.setState({ reqOpen: true }); this.go('case'); },
+      reqSent, reqNotSent: !this.state.reqOpen,
+      reqBtnLabel: reqSent ? 'Request more information' : 'Request information',
+      showReqComposer: this.state.reqOpen,
+      reqTimeline: reqLog.map(rq => ({ targetName: nameFor(rq.target), text: rq.text })),
+      reqSentLabel,
+      toggleReq: () => this.setState({ reqOpen: !this.state.reqOpen }),
+      reqToMerchant: () => this.setState({ reqTarget: 'merchant' }),
+      reqToCustomer: () => this.setState({ reqTarget: 'customer' }),
+      reqMerBorder: this.state.reqTarget === 'merchant' ? 'var(--brand-600)' : 'var(--ink-200)',
+      reqMerBg: this.state.reqTarget === 'merchant' ? 'var(--brand-50)' : 'var(--color-surface)',
+      reqCusBorder: this.state.reqTarget === 'customer' ? 'var(--brand-600)' : 'var(--ink-200)',
+      reqCusBg: this.state.reqTarget === 'customer' ? 'var(--brand-50)' : 'var(--color-surface)',
+      reqText: this.state.reqText,
+      onReqText: (e) => this.setState({ reqText: e.target.value }),
+      reqSendDisabled: !this.state.reqText.trim(),
+      reqSendCursor: this.state.reqText.trim() ? 'pointer' : 'not-allowed',
+      reqSendBg: this.state.reqText.trim() ? 'var(--brand-600)' : 'var(--ink-100)',
+      reqSendFg: this.state.reqText.trim() ? '#fff' : 'var(--color-fg-subtle)',
+      sendReq: () => { const t = this.state.reqText.trim(); if (t) this.setState(s => ({ reqLog: [...s.reqLog, { target: s.reqTarget, text: t }], reqText: '', reqOpen: false })); },
+      reqTargetName: reqSent ? nameFor(lastReq.target) : nameFor(this.state.reqTarget),
+      showReqCard: !!myLastReq && !stageDecided,
+      reqCardText: myLastReq ? myLastReq.text : '',
+      showAddEvidence: (isClaimant || isRecipient) && !stageDecided,
+      evidenceAsLabel: isClaimant ? 'the merchant' : 'the service provider',
+      evSideLabel: isClaimant ? 'Merchant' : 'Customer',
+      evItems,
+      evComposerOpen: this.state.evOpen,
+      evPrompt: !this.state.evOpen,
+      evText: this.state.evText,
+      onEvText: (e) => this.setState({ evText: e.target.value }),
+      openEv: () => this.setState({ evOpen: true }),
+      cancelEv: () => this.setState({ evOpen: false, evText: '' }),
+      evSendDisabled: !this.state.evText.trim(),
+      evSendCursor: this.state.evText.trim() ? 'pointer' : 'not-allowed',
+      evSendBg: this.state.evText.trim() ? 'var(--brand-600)' : 'var(--ink-100)',
+      evSendFg: this.state.evText.trim() ? '#fff' : 'var(--color-fg-subtle)',
+      addEv: () => { const t = this.state.evText.trim(); if (t) this.setState(s => ({ evItems: [...s.evItems, { text: t, side: isClaimant ? 'Merchant' : 'Customer' }], evText: '', evOpen: false })); },
+      targetMerchant: () => this.setState({ infoTarget: 'merchant' }),
+      targetProvider: () => this.setState({ infoTarget: 'provider' }),
+      targetBoth: () => this.setState({ infoTarget: 'both' }),
+      tgtMerBorder: (this.state.infoTarget ?? 'provider') === 'merchant' ? 'var(--brand-600)' : 'var(--ink-200)',
+      tgtMerBg: (this.state.infoTarget ?? 'provider') === 'merchant' ? 'var(--brand-50)' : 'var(--color-surface)',
+      tgtProBorder: (this.state.infoTarget ?? 'provider') === 'provider' ? 'var(--brand-600)' : 'var(--ink-200)',
+      tgtProBg: (this.state.infoTarget ?? 'provider') === 'provider' ? 'var(--brand-50)' : 'var(--color-surface)',
+      tgtBothBorder: (this.state.infoTarget ?? 'provider') === 'both' ? 'var(--brand-600)' : 'var(--ink-200)',
+      tgtBothBg: (this.state.infoTarget ?? 'provider') === 'both' ? 'var(--brand-50)' : 'var(--color-surface)',
+      infoTargetLabel: (this.state.infoTarget ?? 'provider') === 'merchant' ? "the merchant's" : (this.state.infoTarget ?? 'provider') === 'both' ? "both sides'" : "the provider's",
+      showPreview: !!opt && !reasonEmpty,
+      previewText: opt ? previews[opt] : '',
+      recordDisabled,
+      recordCursor: recordDisabled ? 'not-allowed' : 'pointer',
+      recordBg: recordDisabled ? 'var(--ink-100)' : 'var(--brand-600)',
+      recordHoverBg: recordDisabled ? 'var(--ink-100)' : 'var(--brand-700)',
+      recordFg: recordDisabled ? 'var(--color-fg-subtle)' : '#fff',
+      recordDecision: () => {
+        if (recordDisabled) return;
+        if (opt === 'approve') this.startSim();
+        else this.setState({ decPhase: 'recorded' });
+      },
+      cancelSignature: () => { clearTimeout(this._sim); this.setState({ decPhase: 'idle' }); },
+      retrySign: () => this.startSim(),
+      decIdle: p === 'idle', decAwaiting: p === 'awaiting', decSigRejected: p === 'sig_rejected',
+      decPending: p === 'pending', decFailed: p === 'failed', decConfirmed: p === 'confirmed',
+      decRecordedNoRefund: p === 'recorded',
+      showStrip: (this.props.demoMode ?? false) && !this.state.stripDismissed,
+      dismissStrip: () => this.setState({ stripDismissed: true }),
+      copied: this.state.copied,
+      copyTech: (e) => {
+        const v = e.currentTarget.dataset.copy;
+        if (v && navigator.clipboard) navigator.clipboard.writeText(v);
+        this.setState({ copied: true });
+        clearTimeout(this._cp);
+        this._cp = setTimeout(() => this.setState({ copied: false }), 1400);
+      },
+      noop: (e) => e.preventDefault(),
+      printPage: () => window.print()
+    };
+  }
+}
+</script>
+</body>
+</html>
