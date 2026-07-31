@@ -1,0 +1,158 @@
+/* Global base + shared utilities (ported from the prototype's <style> block) */
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--color-bg);
+}
+
+body {
+  font-family: var(--font-sans);
+  color: var(--color-fg);
+  -webkit-font-smoothing: antialiased;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+a {
+  color: var(--brand-600);
+  text-decoration: none;
+}
+a:hover {
+  color: var(--brand-700);
+  text-decoration: underline;
+}
+
+button {
+  font-family: var(--font-sans);
+}
+
+/* ---- Animations -------------------------------------------------------- */
+@keyframes riseIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes pulseDot {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: -400px 0;
+  }
+  100% {
+    background-position: 400px 0;
+  }
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ---- Helpers used across screens -------------------------------------- */
+.rise-in {
+  animation: riseIn 0.25s ease-out;
+}
+
+.hoverable:hover {
+  background: var(--ink-50);
+}
+
+/* Standard row hover affordance for tables */
+.row-hover:hover {
+  background: var(--ink-50);
+}
+
+/* Inputs / textareas that match the prototype look */
+.finne-input,
+.finne-textarea {
+  border: 1.5px solid var(--ink-200);
+  border-radius: var(--radius-md);
+  padding: 10px 12px;
+  font-family: var(--font-sans);
+  font-size: 14px;
+  color: var(--color-fg);
+  background: var(--color-surface);
+}
+
+.finne-textarea {
+  width: 100%;
+  min-height: 72px;
+  padding: 12px 14px;
+  font-size: 14px;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.finne-input:focus,
+.finne-textarea:focus {
+  outline: none;
+  border-color: var(--brand-400);
+  box-shadow: var(--shadow-focus);
+}
+
+/* Print: only the receipt is meant to be saved as PDF */
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  .print-area,
+  .print-area * {
+    visibility: visible;
+  }
+  .print-area {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+  }
+  .no-print {
+    display: none !important;
+  }
+}
+
+/* ---- Responsive: collapse sidebar to a top bar on narrow screens ---- */
+.sidebar-mobile {
+  display: none;
+}
+
+@media (max-width: 860px) {
+  .sidebar-desktop {
+    display: none !important;
+  }
+  .sidebar-mobile {
+    display: block !important;
+  }
+  /* let tables and grids scroll horizontally instead of overflowing */
+  .topbar > div {
+    padding: "9px 16px";
+  }
+}
+
+@media (max-width: 720px) {
+  /* shrink the main padding on phones */
+  .app-main {
+    padding: 20px 16px 110px !important;
+  }
+  .hide-sm {
+    display: none !important;
+  }
+}

@@ -1,0 +1,3 @@
+[submodule "contracts/refund-protocol"]
+	path = contracts/refund-protocol
+	url = https://github.com/Finne-Payments/refund-protocol.git

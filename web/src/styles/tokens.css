@@ -1,0 +1,126 @@
+/* ============================================================================
+   Entente — Colors & Type  (ported verbatim from the design-system tokens)
+   Direction: Concord · Slate Indigo (#3C4C82)
+   Modern, fintech-clean, all-sans. Cool navy ink, slate-indigo primary,
+   amber for inflated/flagged, calm green for settled/agreed.
+   ========================================================================== */
+
+@import url("https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap");
+
+:root {
+  /* ---- Font families ----------------------------------------------------- */
+  --font-sans: "Hanken Grotesk", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* ---- Brand: Slate Indigo ---------------------------------------------- */
+  --brand-50: #eef0f7;
+  --brand-100: #e2e5f1;
+  --brand-200: #c7cce3;
+  --brand-300: #9ca5cd;
+  --brand-400: #6f7bb0;
+  --brand-500: #515f97;
+  --brand-600: #3c4c82; /* PRIMARY */
+  --brand-700: #313e6b;
+  --brand-800: #283255;
+  --brand-900: #1d2541;
+
+  /* ---- Ink: cool, navy-tinted neutrals ---------------------------------- */
+  --ink-900: #0e1b2e; /* headings, highest-contrast text */
+  --ink-800: #1e2c42;
+  --ink-700: #2c3b53;
+  --ink-600: #42526b; /* body text */
+  --ink-500: #5c6a82;
+  --ink-400: #8190a6; /* muted / placeholder / captions */
+  --ink-300: #aeb8c8;
+  --ink-200: #d3d9e2;
+  --ink-150: #e4e8ef; /* default border */
+  --ink-100: #edf0f4; /* subtle divider / track */
+  --ink-50: #f7f8fa; /* app canvas background */
+  --white: #ffffff;
+
+  /* ---- Semantic status -------------------------------------------------- */
+  /* Settled / agreed / within range (calm green) */
+  --ok-600: #1f7a5a;
+  --ok-500: #2e8e6c;
+  --ok-soft: #e4f1eb;
+  --ok-border: #c5e3d6;
+
+  /* Inflated / flagged / needs attention (amber) */
+  --warn-600: #b5660b;
+  --warn-500: #c2710c;
+  --warn-soft: #fbf1e2;
+  --warn-border: #f0ddbe;
+
+  /* Litigation risk / rejected (red) */
+  --risk-600: #b23329;
+  --risk-500: #c0362c;
+  --risk-soft: #fbeae8;
+  --risk-border: #f1cbc6;
+
+  /* ---- Semantic role tokens --------------------------------------------- */
+  --color-bg: var(--ink-50);
+  --color-surface: var(--white);
+  --color-surface-2: var(--ink-50);
+  --color-border: var(--ink-150);
+  --color-border-strong: var(--ink-200);
+  --color-fg: var(--ink-900);
+  --color-fg-muted: var(--ink-600);
+  --color-fg-subtle: var(--ink-400);
+  --color-primary: var(--brand-600);
+  --color-primary-hover: var(--brand-700);
+  --color-primary-fg: var(--white);
+  --color-primary-soft: var(--brand-100);
+  --color-focus-ring: rgba(60, 76, 130, 0.32);
+
+  /* ---- Radii ------------------------------------------------------------- */
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-2xl: 22px;
+  --radius-pill: 999px;
+
+  /* ---- Spacing (4px base) ----------------------------------------------- */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
+  --space-20: 80px;
+
+  /* ---- Shadows (cool, navy-tinted, soft) -------------------------------- */
+  --shadow-xs: 0 1px 2px rgba(14, 27, 46, 0.05);
+  --shadow-sm: 0 1px 2px rgba(14, 27, 46, 0.04), 0 2px 6px rgba(14, 27, 46, 0.05);
+  --shadow-md: 0 1px 2px rgba(14, 27, 46, 0.04), 0 8px 24px rgba(14, 27, 46, 0.07);
+  --shadow-lg: 0 4px 12px rgba(14, 27, 46, 0.06), 0 16px 44px rgba(14, 27, 46, 0.1);
+  --shadow-focus: 0 0 0 3px var(--color-focus-ring);
+
+  /* ---- Type scale (px) --------------------------------------------------- */
+  --text-xs: 12px;
+  --text-sm: 13px;
+  --text-base: 15px;
+  --text-md: 16px;
+  --text-lg: 18px;
+  --text-xl: 22px;
+  --text-2xl: 28px;
+  --text-3xl: 36px;
+  --text-4xl: 46px;
+  --text-5xl: 60px;
+
+  --leading-tight: 1.15;
+  --leading-snug: 1.3;
+  --leading-normal: 1.5;
+  --leading-relaxed: 1.65;
+
+  --tracking-tight: -0.02em;
+  --tracking-snug: -0.01em;
+  --tracking-normal: 0;
+  --tracking-wide: 0.04em;
+  --tracking-caps: 0.12em;
+}
