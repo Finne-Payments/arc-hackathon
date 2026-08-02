@@ -1,0 +1,14 @@
+# Keep the backend build context lean and keep secrets out of the image.
+.env
+.env.*
+!.env.example
+node_modules
+npm-debug.log*
+.npm
+coverage
+dist
+.git
+.gitignore
+*.md
+README.md
+test

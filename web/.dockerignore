@@ -1,0 +1,11 @@
+# Keep the web build context lean and keep local artifacts out of the image.
+.env
+.env.*
+node_modules
+npm-debug.log*
+.npm
+dist
+.git
+.gitignore
+*.md
+README.md

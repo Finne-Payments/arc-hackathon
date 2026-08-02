@@ -1,5 +1,8 @@
 import type { Role, Screen } from "../types";
 import type { FinneActions } from "../useFinne";
+import { useState, useEffect } from "react";
+import { connectWallet } from "../wallet";
+import { api } from "../api";
 
 interface NavDef {
   label: string;
@@ -67,6 +70,33 @@ export function Sidebar({
 }) {
   const items = navForRole(role);
   const { session, label, dot } = roleBadge(role);
+
+  // --- Wallet connection state ---
+  const [walletAddr, setWalletAddr] = useState<string | null>(user?.walletAddress ?? null);
+  const [walletConnecting, setWalletConnecting] = useState(false);
+  const [walletError, setWalletError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setWalletAddr(user?.walletAddress ?? null);
+  }, [user?.walletAddress]);
+
+  const handleConnectWallet = async () => {
+    setWalletConnecting(true);
+    setWalletError(null);
+    try {
+      const client = await connectWallet();
+      const addr = client.account?.address ?? null;
+      setWalletAddr(addr);
+      // Link the wallet to the user's account on the backend
+      if (addr && user) {
+        await api.linkWallet(addr).catch(() => {});
+      }
+    } catch (e) {
+      setWalletError(e instanceof Error ? e.message : "Could not connect wallet.");
+    } finally {
+      setWalletConnecting(false);
+    }
+  };
 
   return (
     <>
@@ -166,16 +196,81 @@ export function Sidebar({
         <div className="e-label" style={{ padding: "0 10px 6px" }}>
           Account
         </div>
+        {/* Demo seat switcher — preview another role's view without logging out.
+            `actions.asRole` resets the ViewModel to that role's home screen. */}
+        <label
+          className="e-label"
+          style={{ padding: "0 10px 4px", display: "block", cursor: "pointer" }}
+          htmlFor="seat-switcher"
+        >
+          View as
+        </label>
+        <select
+          id="seat-switcher"
+          value={role}
+          onChange={(e) => actions.asRole(e.target.value as Role)}
+          style={{
+            width: "calc(100% - 4px)",
+            margin: "0 2px 12px",
+            padding: "7px 9px",
+            borderRadius: "var(--radius-md)",
+            border: "1px solid var(--color-border)",
+            background: "var(--color-surface)",
+            fontSize: 12.5,
+            color: "var(--color-fg)",
+            fontFamily: "var(--font-sans)",
+            cursor: "pointer",
+          }}
+        >
+          <option value="arbiter">Arbiter (reviewer)</option>
+          <option value="merchant">Merchant (reviewer)</option>
+          <option value="customer">Customer (recipient)</option>
+          <option value="platform">Platform (viewer)</option>
+        </select>
         <div style={{ border: "1px solid var(--color-border)", borderRadius: "var(--radius-md)", padding: "10px 12px", marginBottom: 8 }}>
           <div style={{ fontSize: 13, fontWeight: 600, color: "var(--color-fg)" }}>{user?.displayName ?? "User"}</div>
           <div style={{ fontSize: 11, color: "var(--color-fg-subtle)", marginTop: 2 }}>{user?.email}</div>
-          {user?.walletAddress ? (
-            <div style={{ fontSize: 11, fontFamily: "var(--font-mono)", color: "var(--ok-600)", marginTop: 4 }}>
-              Wallet: {user.walletAddress.slice(0, 6)}…{user.walletAddress.slice(-4)}
-            </div>
-          ) : (
-            <div style={{ fontSize: 11, color: "var(--color-fg-subtle)", marginTop: 4 }}>No wallet connected</div>
-          )}
+          {/* Wallet connection */}
+          <div style={{ marginTop: 8, paddingTop: 8, borderTop: "1px solid var(--color-border)" }}>
+            {walletAddr ? (
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <span style={{ width: 7, height: 7, borderRadius: "50%", background: "var(--ok-500)", flexShrink: 0 }} />
+                <span style={{ fontSize: 11, fontFamily: "var(--font-mono)", color: "var(--ok-600)" }}>
+                  {walletAddr.slice(0, 6)}…{walletAddr.slice(-4)}
+                </span>
+              </div>
+            ) : (
+              <button
+                onClick={handleConnectWallet}
+                disabled={walletConnecting}
+                style={{
+                  width: "100%",
+                  border: "1.5px solid var(--brand-600)",
+                  background: walletConnecting ? "var(--brand-50)" : "var(--color-surface)",
+                  color: "var(--brand-700)",
+                  cursor: walletConnecting ? "not-allowed" : "pointer",
+                  padding: "6px 10px",
+                  fontSize: 12,
+                  fontWeight: 600,
+                  fontFamily: "var(--font-sans)",
+                  borderRadius: "var(--radius-sm)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: 6,
+                }}
+              >
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M19 7V4a1 1 0 0 0-1-1H5a2 2 0 0 0 0 4h15a1 1 0 0 1 1 1v4h-3a2 2 0 0 0 0 4h3a1 1 0 0 0 1-1v-2a1 1 0 0 0-1-1" />
+                  <path d="M3 5v14a2 2 0 0 0 2 2h15a1 1 0 0 0 1-1v-4" />
+                </svg>
+                {walletConnecting ? "Connecting…" : "Connect Arc Wallet"}
+              </button>
+            )}
+            {walletError && (
+              <div style={{ fontSize: 10, color: "var(--risk-600)", marginTop: 4, lineHeight: 1.3 }}>{walletError}</div>
+            )}
+          </div>
         </div>
         {onLogout && (
           <button

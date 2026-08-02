@@ -34,4 +34,14 @@ describe("env boot-fail assertions", () => {
       assertNoMoneyKeys({ REGISTRY_OPERATOR_PRIVATE_KEY: "0xok", ARBITER_PRIVATE_KEY: "0xbad" }),
     ).toThrow();
   });
+
+  // GAP-S1: recovery key material must also be rejected (agent already does this).
+  it("fails on MNEMONIC / SEED_PHRASE / KEYSTORE (GAP-S1)", () => {
+    expect(() => assertNoMoneyKeys({ MNEMONIC: "abandon abandon about" })).toThrow(/money-moving key/);
+    expect(() => assertNoMoneyKeys({ SEED_PHRASE: "abandon abandon about" })).toThrow();
+    expect(() => assertNoMoneyKeys({ USER_KEYSTORE: "0x{" })).toThrow();
+    // case-insensitive
+    expect(() => assertNoMoneyKeys({ my_mnemonic: "x" })).toThrow();
+    expect(() => assertNoMoneyKeys({ wallet_seed_phrase: "x" })).toThrow();
+  });
 });

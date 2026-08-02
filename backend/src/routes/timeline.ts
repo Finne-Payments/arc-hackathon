@@ -19,6 +19,17 @@ function fmtDate(iso: string): string {
   }
 }
 
+/**
+ * @openapi
+ * /cases/{id}/timeline:
+ *   get:
+ *     tags: [Timeline]
+ *     summary: Case timeline (assembled from real lifecycle data)
+ *     security: [{ bearerAuth: [] }]
+ *     parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+ *     responses: { 200: { description: "{ events: [{ time, type, label, txHash? }] }" } }
+ *     notes: Requires `case:read`.
+ */
 // GET /cases/:id/timeline — assembled from real case lifecycle data.
 extraRoutes.get("/cases/:id/timeline", requirePermission("case:read"), async (req, res, next) => {
   try {
@@ -51,6 +62,18 @@ extraRoutes.get("/cases/:id/timeline", requirePermission("case:read"), async (re
   }
 });
 
+/**
+ * @openapi
+ * /cases/{id}/decision-preview:
+ *   post:
+ *     tags: [Timeline]
+ *     summary: Decision consequence preview (built from real payout data)
+ *     security: [{ bearerAuth: [] }]
+ *     parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+ *     requestBody: { required: true, content: { application/json: { schema: { type: object, required: [outcome], properties: { outcome: {type: string, enum: [refund, release, no_action]} } } } } }
+ *     responses: { 200: { description: "{ preview: string }" } }
+ *     notes: Requires `case:read`. Pure read — no mutation.
+ */
 // POST /cases/:id/decision-preview — outcome consequence text built from real data.
 extraRoutes.post("/cases/:id/decision-preview", requirePermission("case:read"), async (req, res, next) => {
   try {

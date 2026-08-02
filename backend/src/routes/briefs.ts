@@ -13,6 +13,17 @@ import { loadEnv } from "../env.ts";
 
 export const briefRoutes = Router();
 
+/**
+ * @openapi
+ * /agent/briefs/{caseId}:
+ *   get:
+ *     tags: [Briefs]
+ *     summary: Get agent brief versions for a case (findings only — no verdicts)
+ *     security: [{ bearerAuth: [] }]
+ *     parameters: [{ name: caseId, in: path, required: true, schema: { type: string } }]
+ *     responses: { 200: { description: "{ latest, versions }" } }
+ *     notes: Requires `brief:read`.
+ */
 briefRoutes.get("/agent/briefs/:caseId", requirePermission("brief:read"), async (req, res, next) => {
   try {
     const versions = await Brief.find({ caseRef: req.params.caseId }).sort({ version: 1 }).lean();
@@ -22,6 +33,17 @@ briefRoutes.get("/agent/briefs/:caseId", requirePermission("brief:read"), async 
   }
 });
 
+/**
+ * @openapi
+ * /agent/briefs:
+ *   post:
+ *     tags: [Briefs]
+ *     summary: Write an agent brief (findings only — verdict-shaped keys rejected → 422)
+ *     security: [{ bearerAuth: [] }]
+ *     requestBody: { required: true, content: { application/json: { schema: { type: object, required: [payoutRef, checks], properties: { caseRef: {type: string}, payoutRef: {type: string}, checks: {type: array}, inconsistencies: {type: array}, missingItems: {type: array} } } } } }
+ *     responses: { 201: { description: "Brief written (version = count + 1)" }, 422: { description: "Forbidden verdict field or invalid brief" } }
+ *     notes: Requires `brief:write` (agent_service only).
+ */
 briefRoutes.post("/agent/briefs", requirePermission("brief:write"), async (req, res, next) => {
   try {
     validateBriefPayload(req.body); // throws ForbiddenFindingFieldError / InvalidBriefError → 422

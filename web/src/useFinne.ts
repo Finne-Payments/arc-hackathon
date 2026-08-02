@@ -21,6 +21,13 @@ import type {
 
 const SIX_HOURS_ELEVEN_MIN = (6 * 3600 + 11 * 60) * 1000;
 
+// Mirrors the backend decision rule (PRD §11.2: reason ≥ 20 chars). No shared
+// @finne/domain package exists yet, so this is a local mirror of the constant
+// (GAP-W1's shared-package half stays out of scope).
+const MIN_DECISION_REASON = 20;
+// Backend caps info requests at 2 per case (PRD §10.2, MAX_INFO_REQUESTS).
+const MAX_INFO_REQUESTS = 2;
+
 export interface FinneState {
   /* props (demo-controllable) */
   role: Role;
@@ -166,7 +173,10 @@ export function useFinne(initialRole: Role = "arbiter") {
 
     const opt = state.decOption;
     const reasonEmpty = state.decReason.trim().length === 0;
-    const recordDisabled = reasonEmpty || !opt;
+    // Backend requires reason ≥ 20 chars (route + Mongo minlength, PRD §11.2).
+    // Enforce client-side so the user sees the rule before the API rejects it.
+    const reasonTooShort = !reasonEmpty && state.decReason.trim().length < MIN_DECISION_REASON;
+    const recordDisabled = reasonEmpty || reasonTooShort || !opt;
 
     const previews: Record<string, string> = {
       approve:
@@ -220,6 +230,9 @@ export function useFinne(initialRole: Role = "arbiter") {
       decReason: state.decReason,
       onReason: (val: string) => patch({ decReason: val }),
       reasonEmpty,
+      reasonHint: reasonTooShort
+        ? `Reason must be at least ${MIN_DECISION_REASON} characters (${state.decReason.trim().length}/${MIN_DECISION_REASON}).`
+        : "",
       optionsOpacity: reasonEmpty ? ".45" : "1",
       optionsPointer: reasonEmpty ? "none" : "auto",
       selectApprove: () => patch({ decOption: "approve" }),
@@ -266,13 +279,16 @@ export function useFinne(initialRole: Role = "arbiter") {
       reqCusBg: state.reqTarget === "customer" ? "var(--brand-50)" : "var(--color-surface)",
       reqText: state.reqText,
       onReqText: (val: string) => patch({ reqText: val }),
-      reqSendDisabled: !state.reqText.trim(),
-      reqSendCursor: state.reqText.trim() ? "pointer" : "not-allowed",
-      reqSendBg: state.reqText.trim() ? "var(--brand-600)" : "var(--ink-100)",
-      reqSendFg: state.reqText.trim() ? "#fff" : "var(--color-fg-subtle)",
+      // Backend caps at MAX_INFO_REQUESTS per case (PRD §10.2). Disable the
+      // button once the limit is reached so the UI matches the rule.
+      reqCapReached: state.reqLog.length >= MAX_INFO_REQUESTS,
+      reqSendDisabled: state.reqLog.length >= MAX_INFO_REQUESTS || !state.reqText.trim(),
+      reqSendCursor: state.reqLog.length >= MAX_INFO_REQUESTS || !state.reqText.trim() ? "not-allowed" : "pointer",
+      reqSendBg: state.reqLog.length >= MAX_INFO_REQUESTS || !state.reqText.trim() ? "var(--ink-100)" : "var(--brand-600)",
+      reqSendFg: state.reqLog.length >= MAX_INFO_REQUESTS || !state.reqText.trim() ? "var(--color-fg-subtle)" : "#fff",
       sendReq: () => {
         const t = state.reqText.trim();
-        if (t)
+        if (t && state.reqLog.length < MAX_INFO_REQUESTS)
           setState((s) => ({
             ...s,
             reqLog: [...s.reqLog, { target: s.reqTarget, text: t }],

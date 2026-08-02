@@ -1,20 +1,31 @@
+import { randomUUID } from "node:crypto";
 import type { Address, Hash } from "viem";
 import { getWalletClient, caseRegistryAddress, refundProtocolAddress, getPublicClient } from "./chain/client.ts";
 import { CASE_REGISTRY_ABI } from "./chain/abis.ts";
 import { AnchorJob, Payout, Case, Decision } from "./models/index.ts";
 
 /* ============================================================================
-   Anchor worker (PRD §9.4, NEW-1 → now real). Drains the AnchorJob queue and
+   Anchor worker (PRD §9.4, NEW-1 → real). Drains the AnchorJob queue and
    posts keccak256 hashes to the FinneCaseRegistry via the operator key — the
    one Finné-held key, which can only anchor hashes and can never move USDC.
 
-   On confirmation: sets AnchorJob.anchorTx + status:"done" and backfills the
-   matching registryAnchorTx on the Payout/Case/Decision. Bounded retries via
-   the existing attempts/lastError fields (max 8, then status:"failed").
+   Reliability (GAP-B5, PH-4):
+   - Job leasing: a replica claims a job atomically (findOneAndUpdate to
+     status:"in_flight" + leaseOwner=this) before processing, so two replicas
+     cannot double-anchor the same hash. Leases expire (LEASE_MS), so a crashed
+     replica's jobs are re-picked up.
+   - Exponential backoff: on failure the job's nextAttemptAt is set to
+     now + BACKOFF_BASE * 2^(attempts-1); it is only eligible again after that.
+   - Dead letter: after MAX_ATTEMPTS the job is status:"failed" and logged at
+     ERROR (no longer silent) — the prior build terminal-failed silently.
    ========================================================================== */
 
 const POLL_MS = 3000;
 const MAX_ATTEMPTS = 8;
+const LEASE_MS = 30_000; // a job held longer than this is considered abandoned
+const BACKOFF_BASE_MS = 2000; // 2s, 4s, 8s … capped at 5 min
+
+const WORKER_ID = `worker-${randomUUID().slice(0, 8)}`;
 
 let running = false;
 let timer: ReturnType<typeof setInterval> | null = null;
@@ -33,14 +44,30 @@ export function stopAnchorWorker(): void {
   timer = null;
 }
 
+/** A job is eligible if queued and past its backoff window (or no window set). */
+function eligibleQuery() {
+  const now = new Date().toISOString();
+  return {
+    status: "queued",
+    $or: [{ nextAttemptAt: null }, { nextAttemptAt: { $lte: now } }],
+  };
+}
+
 async function drain(): Promise<void> {
   try {
     const wallet = getWalletClient();
     const registry = caseRegistryAddress();
     if (!wallet || !registry) return; // no operator key or registry configured — jobs wait
 
-    const jobs = await AnchorJob.find({ status: "queued" }).limit(10);
-    for (const job of jobs) {
+    // Claim up to N jobs atomically. Leasing prevents double-anchor across replicas.
+    for (let i = 0; i < 10; i++) {
+      const leaseUntil = new Date(Date.now() + LEASE_MS).toISOString();
+      const job = await AnchorJob.findOneAndUpdate(
+        { ...eligibleQuery(), leasedUntil: { $lt: leaseUntil } },
+        { $set: { status: "in_flight", leaseOwner: WORKER_ID, leasedUntil: leaseUntil } },
+        { sort: { _id: 1 }, new: true },
+      );
+      if (!job) break;
       await processJob(job, registry, wallet.account!.address);
     }
   } catch (e) {
@@ -84,24 +111,48 @@ async function processJob(job: typeof AnchorJob.prototype, registry: Address, op
       });
     }
 
-    if (!txHash) return;
+    if (!txHash) {
+      // Nothing to anchor (unknown kind) — release without retry.
+      job.status = "queued";
+      job.leaseOwner = null;
+      job.leasedUntil = null;
+      await job.save();
+      return;
+    }
 
-    // wait for receipt
+    // wait for receipt (swallow — the tx hash is still recorded; a dropped node
+    // retry is safer than blocking the whole drain)
     await client.waitForTransactionReceipt({ hash: txHash }).catch(() => {});
 
     job.anchorTx = txHash;
     job.status = "done";
+    job.leaseOwner = null;
+    job.leasedUntil = null;
+    job.nextAttemptAt = null;
     await job.save();
 
-    // backfill the registryAnchorTx on the owning entity
     await backfillAnchor(job, txHash);
     console.log(`[anchor-worker] ${job.kind} anchored: ${job.entityId} → ${txHash}`);
   } catch (e) {
-    job.attempts += 1;
+    // Failure → exponential backoff. Re-queue with nextAttemptAt in the future so
+    // the job isn't immediately retried; dead-letter after MAX_ATTEMPTS.
+    const attempts = job.attempts + 1;
+    const backoff = Math.min(BACKOFF_BASE_MS * 2 ** (attempts - 1), 5 * 60_000);
+    job.attempts = attempts;
     job.lastError = e instanceof Error ? e.message : String(e);
-    if (job.attempts >= MAX_ATTEMPTS) {
+    job.leaseOwner = null;
+    job.leasedUntil = null;
+    if (attempts >= MAX_ATTEMPTS) {
       job.status = "failed";
-      console.error(`[anchor-worker] job ${job.entityId} FAILED after ${MAX_ATTEMPTS} attempts: ${job.lastError}`);
+      console.error(
+        `[anchor-worker] DEAD-LETTER ${job.kind} ${job.entityId} after ${MAX_ATTEMPTS} attempts: ${job.lastError}`,
+      );
+    } else {
+      job.status = "queued";
+      job.nextAttemptAt = new Date(Date.now() + backoff).toISOString();
+      console.warn(
+        `[anchor-worker] ${job.kind} ${job.entityId} attempt ${attempts} failed (retry in ${backoff}ms): ${job.lastError}`,
+      );
     }
     await job.save();
   }

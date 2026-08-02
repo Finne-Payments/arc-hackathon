@@ -3,6 +3,7 @@ import { loadEnv } from "./env.ts";
 import { connectDb } from "./db.ts";
 import { startIndexer } from "./indexer.ts";
 import { startAnchorWorker } from "./anchorWorker.ts";
+import { startDeadlineScheduler } from "./scheduler.ts";
 
 /* ============================================================================
    Server entry. Boot order (PRD §16.2):
@@ -38,6 +39,10 @@ async function main(): Promise<void> {
   } else {
     console.warn("[backend] no chain addresses configured — indexer + anchor worker idle");
   }
+
+  // The deadline scheduler advances cases whose response window has lapsed
+  // (GAP-B13). It runs whenever the DB is up — not chain-dependent.
+  startDeadlineScheduler();
 
   const app = createApp();
   app.listen(env.backendPort, () => {

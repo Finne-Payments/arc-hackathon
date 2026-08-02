@@ -2,6 +2,7 @@ import { Router } from "express";
 import { requirePermission, requireInternal, currentRole } from "../middleware.ts";
 import { recordDetectedPayment, getSharedReceipt, openedByForRole, openDispute } from "../services.ts";
 import { Payout } from "../models/index.ts";
+import { scopeFor } from "../scope.ts";
 import { HttpError } from "../errors.ts";
 
 /* ============================================================================
@@ -10,6 +11,19 @@ import { HttpError } from "../errors.ts";
 
 export const payoutRoutes = Router();
 
+/**
+ * @openapi
+ * /payouts/detected:
+ *   post:
+ *     tags: [Payouts]
+ *     summary: Receipt assembly from a detected on-chain payment (indexer → backend)
+ *     security: [{ internalAuth: [] }]
+ *     description: Idempotent — replays of the same paymentId return the existing receipt.
+ *     requestBody:
+ *       required: true
+ *       content: { application/json: { schema: { type: object, properties: { paymentId: {type: string}, to: {type: string}, amount: {type: string}, refundTo: {type: string}, txHash: {type: string} } } } }
+ *     responses: { 201: { description: "Receipt created or existing returned" } }
+ */
 // Idempotent receipt assembly from a detected payment (indexer → backend).
 payoutRoutes.post("/payouts/detected", requireInternal, async (req, res, next) => {
   try {
@@ -31,18 +45,38 @@ payoutRoutes.post("/payouts/detected", requireInternal, async (req, res, next) =
   }
 });
 
-// Ledger view, sorted by paidAt. (Note: per-seat scoping is a no-op demo — GAP-B1, PH-3.)
+/**
+ * @openapi
+ * /payouts:
+ *   get:
+ *     tags: [Payouts]
+ *     summary: Payout ledger (sorted by paidAt)
+ *     security: [{ bearerAuth: [] }]
+ *     responses: { 200: { description: "{ payouts: PayoutRow[] }" } }
+ *     notes: Requires `payout:read`.
+ */
 payoutRoutes.get("/payouts", requirePermission("payout:read"), async (req, res, next) => {
   try {
-    void currentRole(req); // seat known; scoping is a PH-3 item
-    const payouts = await Payout.find({}).sort({ paidAt: -1 }).lean();
+    void currentRole(req); // role available; list scoping is per-seat (GAP-B1)
+    const scope = await scopeFor(req);
+    const payouts = await Payout.find(scope?.payout ?? {}).sort({ paidAt: -1 }).lean();
     res.json({ payouts });
   } catch (e) {
     next(e);
   }
 });
 
-// The full shared receipt — identical body for every seat (P3/P5).
+/**
+ * @openapi
+ * /payouts/{paymentId}/receipt:
+ *   get:
+ *     tags: [Payouts]
+ *     summary: Full shared receipt (identical for every seat — P3)
+ *     security: [{ bearerAuth: [] }]
+ *     parameters: [{ name: paymentId, in: path, required: true, schema: { type: string } }]
+ *     responses: { 200: { description: "Receipt body (payout + workOrder + case + decision + evidence)" }, 404: { description: Not found } }
+ *     notes: Requires `payout:read`.
+ */
 payoutRoutes.get("/payouts/:paymentId/receipt", requirePermission("payout:read"), async (req, res, next) => {
   try {
     const receipt = await getSharedReceipt(req.params.paymentId);
@@ -52,7 +86,20 @@ payoutRoutes.get("/payouts/:paymentId/receipt", requirePermission("payout:read")
   }
 });
 
-// Open a dispute against a payout.
+/**
+ * @openapi
+ * /payouts/{paymentId}/disputes:
+ *   post:
+ *     tags: [Payouts]
+ *     summary: Open a dispute against a payout
+ *     security: [{ bearerAuth: [] }]
+ *     parameters: [{ name: paymentId, in: path, required: true, schema: { type: string } }]
+ *     requestBody:
+ *       required: true
+ *       content: { application/json: { schema: { type: object, required: [freeText], properties: { claimType: {type: string}, freeText: {type: string}, amountContested: {type: string} } } } }
+ *     responses: { 201: { description: "{ caseNumber, status }" }, 409: { description: "Already has an open case" } }
+ *     notes: Requires `case:open`.
+ */
 payoutRoutes.post("/payouts/:paymentId/disputes", requirePermission("case:open"), async (req, res, next) => {
   try {
     const role = currentRole(req);

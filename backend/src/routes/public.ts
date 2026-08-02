@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { loadEnv } from "../env.ts";
 import { Platform, Recipient, ChainEvent, Meta } from "../models/index.ts";
-import { currentSeat } from "../middleware.ts";
+import { currentSeat, requirePermission } from "../middleware.ts";
 import { can } from "../rbac.ts";
 
 /* ============================================================================
@@ -11,9 +11,28 @@ import { can } from "../rbac.ts";
 
 export const publicRoutes = Router();
 
+/**
+ * @openapi
+ * /healthz:
+ *   get:
+ *     tags: [Public]
+ *     summary: Liveness probe
+ *     security: []
+ *     responses: { 200: { description: "{ ok: true }" } }
+ */
 publicRoutes.get("/healthz", (_req, res) => {
   res.json({ ok: true }); // liveness only, no DB
 });
+
+/**
+ * @openapi
+ * /config:
+ *   get:
+ *     tags: [Public]
+ *     summary: Chain wiring + platform/recipient config
+ *     security: []
+ *     responses: { 200: { description: Chain ID, RPC, contract addresses, platform policy } }
+ */
 
 publicRoutes.get("/config", async (_req, res, next) => {
   try {
@@ -50,6 +69,15 @@ publicRoutes.get("/config", async (_req, res, next) => {
   }
 });
 
+/**
+ * @openapi
+ * /status:
+ *   get:
+ *     tags: [Public]
+ *     summary: Indexer heartbeat + live chain figures (arbiter reserve, recipient debt)
+ *     security: []
+ *     responses: { 200: { description: "Indexer liveness + chain state (degrades to null on RPC failure)" } }
+ */
 publicRoutes.get("/status", async (_req, res, next) => {
   try {
     const env = loadEnv();
@@ -88,7 +116,17 @@ publicRoutes.get("/status", async (_req, res, next) => {
   }
 });
 
-publicRoutes.get("/chain/events", async (_req, res, next) => {
+/**
+ * @openapi
+ * /chain/events:
+ *   get:
+ *     tags: [Public]
+ *     summary: Last 12 chain events (demo status strip)
+ *     security: [{ bearerAuth: [] }]
+ *     responses: { 200: { description: "Array of { txHash, eventName, contract, block }" } }
+ *     notes: Requires payout:read permission.
+ */
+publicRoutes.get("/chain/events", requirePermission("payout:read"), async (_req, res, next) => {
   try {
     const events = await ChainEvent.find({}).sort({ seenAt: -1 }).limit(12).lean();
     res.json(
@@ -104,9 +142,20 @@ publicRoutes.get("/chain/events", async (_req, res, next) => {
   }
 });
 
+/**
+ * @openapi
+ * /session:
+ *   get:
+ *     tags: [Public]
+ *     summary: Current session info + permission list
+ *     security: [{ bearerAuth: [] }]
+ *     responses:
+ *       200: { description: "{ seat, displayName, role, permissions[] }" }
+ *       401: { description: Not authenticated }
+ */
 publicRoutes.get("/session", (req, res) => {
   const seat = currentSeat(req);
-  if (!seat || !req.session.role) return res.status(401).json({ error: "Pick a session first — use the x-finne-session header." });
+  if (!seat || !req.session.role) return res.status(401).json({ error: "Log in first — authentication required." });
   const role = req.session.role;
   // List the permissions for this seat so the UI can gate locally.
   const allPerms = [

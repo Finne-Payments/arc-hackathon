@@ -2,6 +2,7 @@ import type { Request, Response, NextFunction, RequestHandler } from "express";
 import { can, type Permission, type SessionSeat, type Role } from "./rbac.ts";
 import { HttpError } from "./errors.ts";
 import { verifyToken } from "./auth.ts";
+import { loadEnv } from "./env.ts";
 
 /* ============================================================================
    Middleware (PRD §11). Chain: express.json → resolveSession →
@@ -64,23 +65,20 @@ export function requirePermission(p: Permission): RequestHandler {
   };
 }
 
-/** Internal-channel guard (indexer → backend). */
+/** Require any authenticated user (no specific permission). For routes like /auth/me. */
+export function requireAuthenticated(req: Request, _res: Response, next: NextFunction): void {
+  const ctx = req.session;
+  if (!ctx?.userId) {
+    return next(new HttpError(401, "Log in first — authentication required."));
+  }
+  next();
+}
+
+/** Internal-channel guard (indexer → backend). Always uses the real env loader. */
 export function requireInternal(req: Request, _res: Response, next: NextFunction): void {
   const token = req.header("x-finne-internal");
-  const env = (() => {
-    // lazy import to avoid circular dep at module load
-    return (globalThis as { __finneEnv?: { internalToken: string } }).__finneEnv ?? { internalToken: "dev-internal" };
-  })();
-  if (!token || token !== env.internalToken) {
-    // fall back to the real env loader
-    import("./env.ts").then(({ loadEnv }) => {
-      if (token !== loadEnv().internalToken) {
-        next(new HttpError(403, "Internal endpoint."));
-      } else {
-        next();
-      }
-    });
-    return;
+  if (!token || token !== loadEnv().internalToken) {
+    return next(new HttpError(403, "Internal endpoint."));
   }
   next();
 }

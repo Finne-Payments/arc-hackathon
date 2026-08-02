@@ -301,10 +301,15 @@ export interface AnchorJobDoc {
   hash: string;
   disputeDeadline: number;
   outcome: number;
-  status: "queued" | "done" | "failed";
+  status: "queued" | "in_flight" | "done" | "failed";
   attempts: number;
   lastError: string | null;
   anchorTx: string | null;
+  // Reliability fields (GAP-B5): leasing prevents two replicas double-anchoring;
+  // nextAttemptAt implements exponential backoff on failure.
+  leaseOwner: string | null;
+  leasedUntil: string | null;
+  nextAttemptAt: string | null;
 }
 const anchorJobSchema = new Schema<AnchorJobDoc>(
   {
@@ -318,6 +323,9 @@ const anchorJobSchema = new Schema<AnchorJobDoc>(
     attempts: { type: Number, default: 0 },
     lastError: { type: String, default: null },
     anchorTx: { type: String, default: null },
+    leaseOwner: { type: String, default: null },
+    leasedUntil: { type: String, default: null },
+    nextAttemptAt: { type: String, default: null },
   },
   { collection: "anchorjobs" },
 );

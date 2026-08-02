@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useNavigate, useLocation } from "react-router-dom";
 import { useFinne } from "./useFinne";
 import { useApi } from "./useApi";
 import { Sidebar } from "./components/Sidebar";
@@ -18,7 +19,8 @@ import { api, getToken, setToken, type PublicUser } from "./api";
 import type { Role } from "./types";
 import type { ViewModel } from "./useFinne";
 
-/** Map the backend user role to the frontend's Role union. */
+/** Map the backend user role to the frontend's Role union (fallback when no
+    explicit frontend role was chosen at login). */
 function userRoleToFrontend(role: string): Role {
   switch (role) {
     case "reviewer":
@@ -32,16 +34,57 @@ function userRoleToFrontend(role: string): Role {
   }
 }
 
+const FRONTEND_ROLE_KEY = "finne-frontend-role";
+
+/** Valid frontend roles (must match the Role type in types.ts). */
+const VALID_ROLES: Role[] = ["arbiter", "merchant", "customer", "platform"];
+
+function isValidRole(r: string | null): r is Role {
+  return !!r && VALID_ROLES.includes(r as Role);
+}
+
+/* ============================================================================
+   URL ↔ screen sync (GAP-W5). useFinne remains the source of truth for the
+   ViewModel; this keeps the browser URL in step so screens are deep-linkable
+   and shareable. Each Screen maps to a path segment.
+   ========================================================================== */
+const SCREEN_PATH: Record<string, string> = {
+  ledger: "/ledger",
+  newpayout: "/new-payout",
+  receipt: "/receipt",
+  final: "/receipt",
+  case: "/case",
+  decision: "/decision",
+  home: "/home",
+  disputes: "/disputes",
+  platform: "/platform",
+};
+
+const PATH_SCREEN: Record<string, string> = Object.fromEntries(
+  Object.entries(SCREEN_PATH).map(([s, p]) => [p, s]),
+);
+
 export default function App() {
   const [user, setUser] = useState<PublicUser | null>(null);
+  const [frontendRole, setFrontendRole] = useState<Role | null>(null);
   const [authChecked, setAuthChecked] = useState(false);
 
-  // Boot: if a token exists in localStorage, restore the session.
+  // Boot: if a token exists in localStorage, restore the session + chosen role.
   useEffect(() => {
     const token = getToken();
     if (token) {
       api.getMe()
-        .then((res) => setUser(res.user))
+        .then((res) => {
+          setUser(res.user);
+          // Restore the frontend role from localStorage (chosen at login), or
+          // fall back to deriving it from the backend role.
+          const saved = localStorage.getItem(FRONTEND_ROLE_KEY);
+          if (isValidRole(saved)) {
+            setFrontendRole(saved);
+          } else {
+            setFrontendRole(userRoleToFrontend(res.user.role));
+          }
+        })
         .catch(() => setToken(null))
         .finally(() => setAuthChecked(true));
     } else {
@@ -54,24 +97,66 @@ export default function App() {
   }
 
   // Not logged in → show the login screen.
-  if (!user) {
-    return <Login onLogin={(u) => setUser(u)} />;
+  if (!user || !frontendRole) {
+    return (
+      <Login
+        onLogin={(u, chosenRole) => {
+          setUser(u);
+          // Use the chosen frontend role if provided (e.g. "merchant"), else derive.
+          const role = isValidRole(chosenRole ?? null)
+            ? (chosenRole as Role)
+            : userRoleToFrontend(u.role);
+          setFrontendRole(role);
+          localStorage.setItem(FRONTEND_ROLE_KEY, role);
+        }}
+      />
+    );
   }
 
-  return <AuthenticatedApp user={user} onLogout={() => { setToken(null); setUser(null); }} />;
+  return (
+    <AuthenticatedApp
+      user={user}
+      frontendRole={frontendRole}
+      onLogout={() => {
+        setToken(null);
+        setUser(null);
+        setFrontendRole(null);
+        localStorage.removeItem(FRONTEND_ROLE_KEY);
+      }}
+    />
+  );
 }
 
-function AuthenticatedApp({ user, onLogout }: { user: PublicUser; onLogout: () => void }) {
-  const frontendRole = userRoleToFrontend(user.role);
+function AuthenticatedApp({ user, frontendRole, onLogout }: { user: PublicUser; frontendRole: Role; onLogout: () => void }) {
   const finne = useFinne(frontendRole);
   const { v, actions, state } = finne;
   const [controlsOpen, setControlsOpen] = useState(false);
+  const navigate = useNavigate();
+  const location = useLocation();
 
   const { data: apiData, actions: apiActions } = useApi(frontendRole);
 
   useEffect(() => {
     apiActions.setRole(frontendRole);
   }, [frontendRole, apiActions]);
+
+  // URL ↔ screen sync (GAP-W5). On mount, jump to the screen the URL names (if
+  // any); thereafter keep the URL in step with the active screen so it is
+  // shareable/bookmarkable. `screen: null` (role-switch reset) maps to home.
+  const didInit = useRef(false);
+  useEffect(() => {
+    if (!didInit.current) {
+      didInit.current = true;
+      const fromPath = PATH_SCREEN[location.pathname];
+      if (fromPath) actions.go(fromPath as never);
+      return;
+    }
+    if (v.screen) {
+      const path = SCREEN_PATH[v.screen];
+      if (path && path !== location.pathname) navigate(path, { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [v.screen, location.pathname]);
 
   useEffect(() => {
     if (v.screen === "case") {

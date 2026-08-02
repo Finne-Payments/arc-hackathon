@@ -10,14 +10,19 @@
 
 const PERMITTED_PRIVATE_KEY = "REGISTRY_OPERATOR_PRIVATE_KEY";
 
+// Any name matching these patterns is money-moving key material. Covers raw
+// private keys plus recovery material (mnemonic/seed phrase/keystore) the agent
+// service already rejects (GAP-S1) — the backend must reject them too.
+const FORBIDDEN_KEY_PATTERN = /PRIVATE_KEY|MNEMONIC|SEED_PHRASE|KEYSTORE/i;
+
 /** Throws if a forbidden key appears in the environment. */
 export function assertNoMoneyKeys(env: NodeJS.ProcessEnv = process.env): void {
   for (const name of Object.keys(env)) {
-    if (!/PRIVATE_KEY/i.test(name)) continue;
+    if (!FORBIDDEN_KEY_PATTERN.test(name)) continue;
     if (name === PERMITTED_PRIVATE_KEY) continue; // the single hash-anchor key
     throw new Error(
       `boot-fail: money-moving key "${name}" present in backend environment. ` +
-        `Backend holds only the registry operator key. (PRD §16.2, P4)`,
+        `Backend holds only the registry operator key. (PRD §16.2, P4, GAP-S1)`,
     );
   }
 }

@@ -32,7 +32,7 @@ export type Role =
   | "agent_service"
   | "registry_operator";
 
-/** Session seat as named by the `x-finne-session` header (D7). */
+/** Transport seat derived from the authenticated role (PH-1: JWT, was D7 header). */
 export type SessionSeat = "reviewer" | "recipient" | "platform" | "agent";
 
 export const MATRIX: Record<Role, Permission[]> = {
@@ -58,7 +58,7 @@ export function can(role: Role, permission: Permission): boolean {
   return MATRIX[role]?.includes(permission) ?? false;
 }
 
-/** Map a transport seat (from the session header) to a Role for auth checks. */
+/** Map a transport seat to a Role (the inverse of middleware.roleToSeat). */
 export function seatToRole(seat: SessionSeat): Role {
   switch (seat) {
     case "reviewer":

@@ -8,6 +8,7 @@ import {
   recordDecision,
 } from "../services.ts";
 import { Case } from "../models/index.ts";
+import { scopeFor } from "../scope.ts";
 import type { DecisionOutcome } from "../statusVocabulary.ts";
 import { HttpError } from "../errors.ts";
 
@@ -18,16 +19,37 @@ import { HttpError } from "../errors.ts";
 
 export const caseRoutes = Router();
 
-caseRoutes.get("/cases", requirePermission("case:read"), async (_req, res, next) => {
+/**
+ * @openapi
+ * /cases:
+ *   get:
+ *     tags: [Cases]
+ *     summary: List all cases (newest first)
+ *     security: [{ bearerAuth: [] }]
+ *     responses: { 200: { description: "{ cases: CaseRow[] }" } }
+ *     notes: Requires `case:read`.
+ */
+caseRoutes.get("/cases", requirePermission("case:read"), async (req, res, next) => {
   try {
-    const cases = await Case.find({}).sort({ openedAt: -1 }).lean();
+    const scope = await scopeFor(req);
+    const cases = await Case.find(scope?.case ?? {}).sort({ openedAt: -1 }).lean();
     res.json({ cases });
   } catch (e) {
     next(e);
   }
 });
 
-// The shared case body (P3).
+/**
+ * @openapi
+ * /cases/{id}:
+ *   get:
+ *     tags: [Cases]
+ *     summary: Shared case body (byte-identical across seats — P3)
+ *     security: [{ bearerAuth: [] }]
+ *     parameters: [{ name: id, in: path, required: true, schema: { type: string }, description: "Case number e.g. CASE-0142" }]
+ *     responses: { 200: { description: "Full shared case body" }, 404: { description: Not found } }
+ *     notes: Requires `case:read`.
+ */
 caseRoutes.get("/cases/:id", requirePermission("case:read"), async (req, res, next) => {
   try {
     res.json(await getSharedCase(req.params.id));
@@ -36,7 +58,18 @@ caseRoutes.get("/cases/:id", requirePermission("case:read"), async (req, res, ne
   }
 });
 
-// Recipient right of reply.
+/**
+ * @openapi
+ * /cases/{id}/responses:
+ *   post:
+ *     tags: [Cases]
+ *     summary: Recipient right of reply
+ *     security: [{ bearerAuth: [] }]
+ *     parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+ *     requestBody: { required: true, content: { application/json: { schema: { type: object, required: [text], properties: { text: {type: string}, evidence: {type: array} } } } } }
+ *     responses: { 201: { description: "Reply recorded, case → UNDER_REVIEW" }, 409: { description: "Not awaiting response" } }
+ *     notes: Requires `case:respond` (recipient only).
+ */
 caseRoutes.post("/cases/:id/responses", requirePermission("case:respond"), async (req, res, next) => {
   try {
     const { text, evidence } = req.body ?? {};
@@ -50,7 +83,18 @@ caseRoutes.post("/cases/:id/responses", requirePermission("case:respond"), async
   }
 });
 
-// Add evidence (merchant or recipient).
+/**
+ * @openapi
+ * /cases/{id}/evidence:
+ *   post:
+ *     tags: [Cases]
+ *     summary: Add evidence to a case
+ *     security: [{ bearerAuth: [] }]
+ *     parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+ *     requestBody: { required: true, content: { application/json: { schema: { type: object, required: [title, fileOrText], properties: { type: {type: string}, title: {type: string}, fileOrText: {type: string} } } } } }
+ *     responses: { 201: { description: "Evidence added (sha256 fingerprinted)" }, 409: { description: "Case closed" } }
+ *     notes: Requires `case:add_evidence`.
+ */
 caseRoutes.post("/cases/:id/evidence", requirePermission("case:add_evidence"), async (req, res, next) => {
   try {
     const role = currentRole(req);
@@ -66,7 +110,18 @@ caseRoutes.post("/cases/:id/evidence", requirePermission("case:add_evidence"), a
   }
 });
 
-// Reviewer requests more information (max 2 — enforced in the machine).
+/**
+ * @openapi
+ * /cases/{id}/requests:
+ *   post:
+ *     tags: [Cases]
+ *     summary: Reviewer requests more information (max 2 per case)
+ *     security: [{ bearerAuth: [] }]
+ *     parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+ *     requestBody: { required: true, content: { application/json: { schema: { type: object, required: [target, text], properties: { target: {type: string, enum: [platform, recipient]}, text: {type: string} } } } } }
+ *     responses: { 201: { description: "{ caseNumber, status, infoRequestCount }" }, 409: { description: "Max requests used or not under review" } }
+ *     notes: Requires `case:request_info` (reviewer only).
+ */
 caseRoutes.post("/cases/:id/requests", requirePermission("case:request_info"), async (req, res, next) => {
   try {
     const { target, text } = req.body ?? {};
@@ -84,7 +139,22 @@ caseRoutes.post("/cases/:id/requests", requirePermission("case:request_info"), a
   }
 });
 
-// Reviewer decision. Refund returns an unsigned tx for the browser wallet.
+/**
+ * @openapi
+ * /cases/{id}/decisions:
+ *   post:
+ *     tags: [Cases]
+ *     summary: Reviewer decision (refund returns unsigned tx for wallet signing)
+ *     description: "Refund outcome requires a linked wallet; returns { unsignedTx } for the browser wallet to sign refundByArbiter. Release/no-action close the case directly (no wallet needed)."
+ *     security: [{ bearerAuth: [] }]
+ *     parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+ *     requestBody: { required: true, content: { application/json: { schema: { type: object, required: [outcome, reason], properties: { outcome: {type: string, enum: [refund, release, no_action]}, reason: {type: string, minLength: 20} } } } } }
+ *     responses:
+ *       201: { description: "{ decision, unsignedTx } — unsignedTx is null for non-refund outcomes" }
+ *       400: { description: "Reason too short or no wallet linked for refund" }
+ *       409: { description: "Case not under review" }
+ *     notes: Requires `case:decide` (reviewer only). Refund additionally requires a connected wallet.
+ */
 caseRoutes.post("/cases/:id/decisions", requirePermission("case:decide"), async (req, res, next) => {
   try {
     const { outcome, reason } = req.body ?? {};

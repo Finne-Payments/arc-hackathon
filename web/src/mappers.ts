@@ -8,35 +8,14 @@ import type {
   WorkOrderRow,
 } from "./api";
 import type { CaseStage, LedgerState, Role } from "./types";
+import { PAYMENT_DOT, PAYMENT_WORD } from "./domain/statusVocabulary";
 
 /* ============================================================================
    Mappers — translate API responses into the shapes the screens render.
    This keeps the screens unchanged: they keep importing from data.ts types,
-   but the *content* now comes from the live backend. Status words + dots are
-   derived here so the UI stays in sync with the server's state machines.
+   but the *content* now comes from the live backend. Status words + dots come
+   from the shared statusVocabulary module (PRD §10.3, GAP-W1).
    ========================================================================== */
-
-const PAYMENT_DOT: Record<string, "warn" | "brand" | "ok" | "risk" | "ink"> = {
-  ESCROWED: "brand",
-  DISPUTED: "warn",
-  REFUNDED: "risk",
-  CLEARED: "ok",
-  WITHDRAWABLE: "ok",
-  WITHDRAWN: "ink",
-  DEBT_OUTSTANDING: "risk",
-  DEBT_SETTLED: "ok",
-};
-
-const PAYMENT_WORD: Record<string, string> = {
-  ESCROWED: "Protected",
-  DISPUTED: "Disputed",
-  REFUNDED: "Refunded",
-  CLEARED: "Cleared",
-  WITHDRAWABLE: "Ready to withdraw",
-  WITHDRAWN: "Withdrawn",
-  DEBT_OUTSTANDING: "Debt outstanding",
-  DEBT_SETTLED: "Debt settled",
-};
 
 /** Map a backend case status to the frontend's CaseStage union (demo control). */
 export function caseStatusToStage(status: string): CaseStage {

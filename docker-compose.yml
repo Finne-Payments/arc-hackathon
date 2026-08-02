@@ -1,0 +1,41 @@
+# Finné — local Docker deployment of the backend + web app.
+#
+# MongoDB stays external (Atlas via MONGO_URL, as in scripts/demo.sh); only the
+# two app services run here. Secrets are read from a .env file next to this
+# compose file (see .env.example) — compose injects them into the backend.
+#
+# Usage:
+#   cp .env.example .env        # fill in MONGO_URL, contract addresses, operator key
+#   docker compose up --build   # web on :5173, backend on :4000
+#
+# One-command rebuild of the demo world (idempotent) once the backend is up:
+#   docker compose run --rm backend npm run seed
+#
+# Money path is unchanged from the non-Docker build (PRD §4.1): Finné services
+# are read-only against the chain; the only key in these containers is the
+# registry operator key, which can only anchor hashes and cannot move USDC.
+services:
+  backend:
+    build: ./backend
+    container_name: finne-backend
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      # Force a sensible default if .env omits it; NODE_ENV is set in the image.
+      BACKEND_PORT: 4000
+    ports:
+      - "4000:4000"
+    # The Express API, the indexer, and the anchor worker all run in-process
+    # (PRD §7.2); this one container is the whole backend.
+
+  web:
+    build: ./web
+    container_name: finne-web
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "5173:80"
+    # nginx inside this container proxies /api/* → host "backend" on :4000
+    # (the BACKEND_HOST build arg in web/Dockerfile defaults to "backend").
