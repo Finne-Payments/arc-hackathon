@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { requirePermission, requireInternal, requireChainConfigured, currentRole } from "../middleware.ts";
 import { recordDetectedPayment, getSharedReceipt, openedByForRole, openDispute } from "../services.ts";
-import { Payout } from "../models/index.ts";
+import { Payout, WorkOrder, User } from "../models/index.ts";
 import { scopeFor } from "../scope.ts";
 import { HttpError } from "../errors.ts";
 
@@ -54,15 +54,6 @@ payoutRoutes.post("/payouts/detected", requireInternal, async (req, res, next) =
  *     security: [{ bearerAuth: [] }]
  *     responses: { 200: { description: "{ payouts: PayoutRow[] }" } }
  *     notes: Requires `payout:read`.
- *
- *   post:
- *     tags: [Payouts]
- *     summary: (Removed) payouts are created only by the indexer on pay()
- *     description: >
- *       A Payout row is created ONLY by the indexer when it detects an on-chain
- *       `pay()` on the RefundProtocol — there is no POST endpoint. The merchant's
- *       browser wallet signs approve()+pay() directly (see wallet.ts
- *       approveAndPay); the indexer then builds the receipt.
  */
 payoutRoutes.get("/payouts", requirePermission("payout:read"), async (req, res, next) => {
   try {
@@ -74,6 +65,17 @@ payoutRoutes.get("/payouts", requirePermission("payout:read"), async (req, res, 
     next(e);
   }
 });
+
+/**
+ * @openapi
+ * /payouts:
+ *   get:
+ *     tags: [Payouts]
+ *     summary: Payout ledger (sorted by paidAt desc)
+ *     security: [{ bearerAuth: [] }]
+ *     responses: { 200: { description: "{ payouts: PayoutRow[] }" } }
+ *     notes: Requires `payout:read`. Payouts are created ONLY by the indexer from on-chain pay() events — there is no POST endpoint.
+ */
 
 /**
  * @openapi
@@ -90,6 +92,98 @@ payoutRoutes.get("/payouts/:paymentId/receipt", requirePermission("payout:read")
   try {
     const receipt = await getSharedReceipt(req.params.paymentId);
     res.json(receipt);
+  } catch (e) {
+    next(e);
+  }
+});
+
+/**
+ * @openapi
+ * /payouts/{paymentId}/metadata:
+ *   post:
+ *     tags: [Payouts]
+ *     summary: Attach work-order metadata to an existing on-chain payout
+ *     description: >
+ *       Chain-first: the on-chain pay() must have already happened (the indexer
+ *       created the Payout row from the PaymentCreated event). This endpoint
+ *       attaches the off-chain metadata — description, deliverables, work order —
+ *       to that real payout. It 404s if the payout doesn't exist yet, so metadata
+ *       can never be saved without a confirmed on-chain payment behind it.
+ *     security: [{ bearerAuth: [] }]
+ *     parameters: [{ name: paymentId, in: path, required: true, schema: { type: string } }]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               description: { type: string }
+ *               deliverables: { type: array, items: { type: object, properties: { name: {type: string}, due: {type: string}, acceptanceCriteria: {type: string} } } }
+ *     responses:
+ *       200: { description: "{ payout, workOrder } — metadata saved" }
+ *       404: { description: "Payout not found — the on-chain pay() hasn't been detected yet" }
+ *     notes: "Requires workorder:create. The payout MUST already exist (indexer-created from a real pay())."
+ */
+payoutRoutes.post("/payouts/:paymentId/metadata", requirePermission("workorder:create"), async (req, res, next) => {
+  try {
+    const { paymentId } = req.params;
+    const { description, deliverables, settleImmediately } = req.body ?? {};
+
+    // Chain-first gate: the payout must already exist in the DB. The indexer
+    // creates it only when it detects a real on-chain PaymentCreated event, so
+    // its presence PROVES the chain confirmed pay(). No payout → 404.
+    const payout = await Payout.findOne({ paymentId });
+    if (!payout) {
+      throw new HttpError(404, `No payout ${paymentId} — the on-chain pay() hasn't been detected yet. Wait for the indexer to confirm it, then attach metadata.`);
+    }
+
+    const caller = req.session.userId ? await User.findById(req.session.userId).lean() : null;
+    const platformKey = caller?.platformKey ?? payout.platformKey ?? "unknown";
+    const rKey = payout.recipientKey || payout.recipientWallet.toLowerCase().slice(0, 10);
+
+    // Create / update the work order and link it to the payout via paymentId.
+    const desc = String(description ?? "").trim();
+    let workOrder: typeof WorkOrder.prototype | null = null;
+    if (desc || (deliverables && deliverables.length > 0)) {
+      workOrder = await WorkOrder.findOneAndUpdate(
+        { paymentId },
+        {
+          $set: {
+            platformKey,
+            recipientKey: rKey,
+            description: desc || "Protected payout",
+            deliverables: (deliverables ?? []).map((d: { name?: string; due?: string; acceptanceCriteria?: string }) => ({
+              name: String(d.name ?? ""),
+              due: String(d.due ?? ""),
+              acceptanceCriteria: String(d.acceptanceCriteria ?? ""),
+            })),
+            amount: String(payout.amount),
+            currency: "USDC",
+            status: "open",
+            paymentId,
+          },
+        },
+        { upsert: true, new: true },
+      );
+    }
+
+    // "Settle immediately": the merchant confirms the deliverables are already
+    // delivered, so the protection window is skipped. Transition the payout
+    // ESCROWED → WITHDRAWABLE so the recipient can claim the funds right away.
+    // The on-chain lockup (set by the arbiter at deploy) still applies — the
+    // recipient calls withdraw() once the contract's releaseTimestamp passes.
+    if (settleImmediately && payout.status === "ESCROWED") {
+      try {
+        const { applyPaymentEvent } = await import("../stateMachines.ts");
+        payout.status = applyPaymentEvent(payout.status as never, "lockup_end_no_dispute");
+      } catch {
+        // Already past ESCROWED (e.g. disputed) — the transition is a no-op.
+      }
+      await payout.save();
+    }
+
+    res.status(200).json({ payout, workOrder });
   } catch (e) {
     next(e);
   }

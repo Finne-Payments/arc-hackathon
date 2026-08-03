@@ -16,8 +16,9 @@ import { RecipientHome } from "./screens/RecipientHome";
 import { Login } from "./screens/Login";
 import { roleBadge, roleLabel } from "./mappers";
 import { api, getToken, setToken, type PublicUser } from "./api";
-import type { Role } from "./types";
+import type { Role, Screen } from "./types";
 import type { ViewModel } from "./useFinne";
+import { isAllowed, homeScreenForRole } from "./domain/access";
 
 /** Map the backend user role to the frontend's Role union (fallback when no
     explicit frontend role was chosen at login). */
@@ -97,6 +98,7 @@ export default function App() {
   const [user, setUser] = useState<PublicUser | null>(null);
   const [frontendRole, setFrontendRole] = useState<Role | null>(null);
   const [authChecked, setAuthChecked] = useState(false);
+  const navigate = useNavigate();
 
   // Boot: if a token exists in localStorage, restore the session + chosen role.
   useEffect(() => {
@@ -140,6 +142,10 @@ export default function App() {
             : userRoleToFrontend(u.role);
           setFrontendRole(role);
           localStorage.setItem(FRONTEND_ROLE_KEY, role);
+          // Always land the freshly-signed-in user on THEIR home screen — never
+          // inherit the previous user's URL. This is the route guard for login.
+          const home = SCREEN_PATH[homeScreenForRole(role)];
+          navigate(home, { replace: true });
         }}
       />
     );
@@ -154,7 +160,8 @@ export default function App() {
         setUser(null);
         setFrontendRole(null);
         localStorage.removeItem(FRONTEND_ROLE_KEY);
-        window.history.replaceState({}, "", "/");
+        // Reset to the login route so the next user starts clean (no stale URL).
+        navigate("/", { replace: true });
       }}
     />
   );
@@ -172,23 +179,24 @@ function AuthenticatedApp({ user, frontendRole, onLogout }: { user: PublicUser; 
     apiActions.setRole(frontendRole);
   }, [frontendRole, apiActions]);
 
-  // URL ↔ screen sync with role-based route guards.
-  // - On mount: parse the deep link (e.g. /case/CASE-0142) and set the screen
-  //   + selected entity so the right data loads. Bare screens (e.g. /disputes)
-  //   just set the screen.
-  // - Thereafter: keep the URL in step with the active screen + entity, so every
-  //   dispute and receipt has its own shareable URL.
+  // URL ↔ screen sync WITH role-based route guards.
+  // - On mount: only honor a deep link if its screen is ALLOWED for this role.
+  //   Otherwise land on the role's home. This closes the "previous user's route
+  //   shows for the new user" bug.
+  // - Thereafter: keep the URL in step with the active screen + entity.
   const didInit = useRef(false);
   useEffect(() => {
     if (!didInit.current) {
       didInit.current = true;
       const parsed = parsePath(location.pathname);
-      if (parsed.screen) {
-        // Carry the entity ID from the URL into useFinne state so the data-load
-        // effect fetches the right case/receipt.
+      if (parsed.screen && isAllowed(frontendRole, parsed.screen)) {
+        // Allowed deep link — carry the entity ID into useFinne state.
         if (parsed.caseId) actions.viewCase(parsed.caseId);
         else if (parsed.paymentId) actions.viewReceipt(parsed.paymentId);
         else actions.go(parsed.screen as never);
+      } else {
+        // Disallowed or bare URL → the role's home screen.
+        actions.go(homeScreenForRole(frontendRole));
       }
       return;
     }
@@ -199,35 +207,58 @@ function AuthenticatedApp({ user, frontendRole, onLogout }: { user: PublicUser; 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [v.screen, v.selectedCaseId, v.selectedPaymentId, location.pathname]);
 
-  // When the role changes (view-as dropdown or role switch), redirect to the
-  // home screen for the new role.
+  // When the role changes, redirect to the new role's home screen and reset the
+  // in-memory screen state so no stale screen from the previous role lingers.
   useEffect(() => {
-    const homePath = SCREEN_PATH[
-      frontendRole === "arbiter" ? "disputes"
-      : frontendRole === "merchant" ? "ledger"
-      : frontendRole === "customer" ? "home"
-      : "platform"
-    ];
+    const home = homeScreenForRole(frontendRole);
+    const homePath = SCREEN_PATH[home];
+    actions.go(home);
     if (homePath && location.pathname !== homePath) {
       navigate(homePath, { replace: true });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [frontendRole]);
 
+  // On screen change: reload the list data (payouts, cases, notifications) and
+  // load the detail for the active entity. No interval polling — this only
+  // fires when the user actually navigates.
   useEffect(() => {
+    void apiActions.refresh();
     if (v.screen === "case") {
       const caseNumber = v.selectedCaseId ?? activeCaseNumber(apiData.cases);
       apiActions.loadCase(caseNumber);
     } else if (v.screen === "receipt" || v.screen === "final") {
-      // Use the specific payout the user clicked, not the first one in the list.
       const paymentId = v.selectedPaymentId ?? activePaymentId(apiData.payouts);
       if (paymentId) apiActions.loadReceipt(paymentId);
     }
-  }, [v.screen, v.selectedPaymentId, v.selectedCaseId, apiData.cases, apiData.payouts, apiActions]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [v.screen]);
+
+  // Sync caseStage + reqLog from the live case data so the UI reflects the
+  // real server state (e.g. case moved to AWAITING_RESPONSE after info request).
+  useEffect(() => {
+    if (!apiData.activeCase?.case) return;
+    const c = apiData.activeCase.case as { status?: string; infoRequests?: { target: string; text: string }[] };
+    const status = c.status ?? "UNDER_REVIEW";
+    const newStage = status === "AWAITING_RESPONSE" ? "awaiting_response"
+      : status === "UNDER_REVIEW" ? "under_review"
+      : status === "CLOSED" || status === "EXECUTED" ? "decided"
+      : "under_review";
+    if (newStage !== v.stage) {
+      actions.setCaseStage(newStage);
+    }
+  }, [apiData.activeCase]);
+
+  // Render-time route guard: if the active screen isn't allowed for this role
+  // (e.g. a customer somehow on "decision"), render the home screen instead.
+  // Belt-and-suspenders with the init + role-change effects above.
+  const safeScreen: Screen = isAllowed(frontendRole, v.screen)
+    ? (v.screen as Screen)
+    : homeScreenForRole(frontendRole);
 
   return (
     <div style={{ minHeight: "100vh", display: "flex", alignItems: "stretch" }}>
-      <Sidebar role={v.role} screen={v.screen} actions={actions} user={user} onLogout={onLogout} apiData={apiData} />
+      <Sidebar role={v.role} screen={safeScreen} actions={actions} user={user} onLogout={onLogout} />
 
       <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
         <TopBar
@@ -241,14 +272,14 @@ function AuthenticatedApp({ user, frontendRole, onLogout }: { user: PublicUser; 
         />
 
         <div className="app-main" style={{ flex: 1, width: "100%", maxWidth: 1100, margin: 0, padding: "28px 32px 110px", boxSizing: "border-box" }}>
-          {v.screen === "ledger" && <Ledger v={v} actions={actions} apiData={apiData} />}
-          {v.screen === "newpayout" && <NewPayout actions={actions} apiData={apiData} />}
-          {(v.screen === "receipt" || v.screen === "final") && <Receipt v={v} actions={actions} apiData={apiData} />}
-          {v.screen === "case" && <CaseRoom v={v} actions={actions} apiData={apiData} />}
-          {v.screen === "decision" && <Decision v={v} actions={actions} apiData={apiData} />}
-          {v.screen === "disputes" && <Disputes v={v} actions={actions} apiData={apiData} />}
-          {v.screen === "platform" && <Platform v={v} actions={actions} apiData={apiData} />}
-          {v.screen === "home" && <RecipientHome v={v} actions={actions} apiData={apiData} />}
+          {safeScreen === "ledger" && <Ledger v={v} actions={actions} apiData={apiData} />}
+          {safeScreen === "newpayout" && <NewPayout actions={actions} apiData={apiData} />}
+          {(safeScreen === "receipt" || safeScreen === "final") && <Receipt v={v} actions={actions} apiData={apiData} />}
+          {safeScreen === "case" && <CaseRoom v={v} actions={actions} apiData={apiData} />}
+          {safeScreen === "decision" && <Decision v={v} actions={actions} apiData={apiData} />}
+          {safeScreen === "disputes" && <Disputes v={v} actions={actions} apiData={apiData} />}
+          {safeScreen === "platform" && <Platform v={v} actions={actions} apiData={apiData} />}
+          {safeScreen === "home" && <RecipientHome v={v} actions={actions} apiData={apiData} />}
         </div>
       </div>
 

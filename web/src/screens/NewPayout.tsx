@@ -3,19 +3,22 @@ import type { FinneActions } from "../useFinne";
 import type { ApiData } from "../useApi";
 import { BackLink, PrimaryButton, SecondaryButton, TechChip, SpinnerLabel } from "../components/primitives";
 import { shortHex } from "../mappers";
-import { sameAddress, useAddressBook, type AddressEntry } from "../useAddressBook";
+import { sameAddress, uid, useAddressBook, type AddressEntry } from "../useAddressBook";
 
 /* ============================================================================
-   New protected payout — essentials only.
+   New protected payout — essentials + work-order metadata, fully on-chain.
 
-   The payer's wallet signs ONE action: approve the RefundProtocol to spend the
-   USDC, then call pay(). Both go through the wallet (the backend holds no payer
-   key by design). The receipt is awaited, so the screen reflects the REAL
-   on-chain outcome — a reverted pay() (e.g. no approval, no balance) shows as a
-   failure, never a false "submitted".
+   Chain-first order (the contract side is involved FIRST):
+     1. The payer's wallet signs approve() + pay() on the RefundProtocol.
+     2. We WAIT for the on-chain receipt (real confirmation).
+     3. ONLY then do we save the off-chain metadata (description, deliverables)
+        to the database, linked to the real on-chain payment ID.
+     4. The payout row itself is created by the indexer from the PaymentCreated
+        event — never by this screen.
 
-   The payout row itself is created ONLY by the indexer when it detects the
-   PaymentCreated event (chain-first). This screen never writes to the DB.
+   No metadata is written before the chain confirms. If pay() reverts, nothing
+   is saved. The payment ID, tx hash, and contract address are all real on-chain
+   values — nothing is fabricated.
    ========================================================================== */
 
 const CONFIG_FROM_ID = "__config_refund__";
@@ -56,12 +59,20 @@ export function NewPayout({ actions, apiData }: { actions: FinneActions; apiData
   const recipientAddress = toEntry?.address ?? "";
 
   const [amount, setAmount] = useState("");
+  const [description, setDescription] = useState("");
+  const [deliverables, setDeliverables] = useState<{ id: string; name: string; due: string }[]>([]);
+  const [settleImmediately, setSettleImmediately] = useState(false);
   const [status, setStatus] = useState<{ kind: "working" | "ok" | "err"; text: string } | null>(null);
   const [paying, setPaying] = useState(false);
 
   const numericAmount = Number(amount);
   const hasChain = !!rpAddress && rpAddress !== "0x0000000000000000000000000000000000000000";
   const valid = !!recipientAddress && !!refundAddress && amount !== "" && numericAmount > 0 && !!usdcAddress;
+
+  const addDeliverable = () => setDeliverables((d) => [...d, { id: uid(), name: "", due: "" }]);
+  const updateDeliverable = (id: string, field: "name" | "due", value: string) =>
+    setDeliverables((d) => d.map((x) => (x.id === id ? { ...x, [field]: value } : x)));
+  const removeDeliverable = (id: string) => setDeliverables((d) => d.filter((x) => x.id !== id));
 
   const payAndProtect = async () => {
     if (!valid || !rpAddress || !usdcAddress) {
@@ -77,6 +88,7 @@ export function NewPayout({ actions, apiData }: { actions: FinneActions; apiData
     };
     setStatus({ kind: "working", text: phaseText.connecting });
     try {
+      // ---- 1. The contract side acts FIRST. ----
       const { approveAndPay } = await import("../wallet.ts");
       const amountBase = BigInt(Math.round(numericAmount * 1_000_000));
       const { paymentId } = await approveAndPay(
@@ -87,11 +99,41 @@ export function NewPayout({ actions, apiData }: { actions: FinneActions; apiData
         refundAddress as `0x${string}`,
         (phase) => setStatus({ kind: "working", text: phaseText[phase] ?? "Working…" }),
       );
+
+      // ---- 2. Chain confirmed. Save the off-chain metadata (non-blocking). ----
+      // The indexer may take a moment to create the payout row; the backend
+      // metadata endpoint 404s until it exists, so we retry a few times. This
+      // runs in the background — the user proceeds to the receipt immediately.
+      const id = paymentId !== null ? String(paymentId) : "";
+      const desc = description.trim();
+      const deliv = deliverables.filter((d) => d.name.trim()).map((d) => ({ name: d.name.trim(), due: d.due.trim() }));
+      if (id) {
+        // Fire-and-forget: don't block the UI on metadata saving. If it fails,
+        // the payout still exists on chain; the user can re-add details later.
+        (async () => {
+          const { api, ApiError } = await import("../api.ts");
+          for (let attempt = 0; attempt < 8; attempt++) {
+            try {
+              await api.savePayoutMetadata(id, { description: desc || undefined, deliverables: deliv, settleImmediately });
+              return; // saved
+            } catch (err) {
+              if (err instanceof ApiError && err.status === 404) {
+                await new Promise((r) => setTimeout(r, 1000)); // indexer hasn't caught up
+              } else {
+                return; // real error — give up silently (payout is safe on chain)
+              }
+            }
+          }
+        })();
+      }
+
       setStatus({
         kind: "ok",
-        text: `Payment confirmed on Arc${paymentId !== null ? ` · payment #${paymentId}` : ""}. The receipt is being built — opening the ledger.`,
+        text: id
+          ? `Payment submitted on Arc · payment #${id}. Opening the receipt.`
+          : "Payment submitted on Arc. Opening the ledger.",
       });
-      setTimeout(() => actions.go("ledger"), 3500);
+      setTimeout(() => (id ? actions.viewReceipt(id) : actions.go("ledger")), 800);
     } catch (e) {
       const { isUserRejection } = await import("../wallet.ts");
       if (isUserRejection(e)) {
@@ -168,6 +210,46 @@ export function NewPayout({ actions, apiData }: { actions: FinneActions; apiData
             <span style={{ fontSize: 13, fontWeight: 600, color: "var(--color-fg-muted)" }}>USDC</span>
           </div>
         </div>
+
+        {/* description / purpose */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          <label style={{ fontSize: 13, fontWeight: 600 }}>What it's for</label>
+          <input
+            className="finne-input"
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            placeholder="e.g. Product videos — hero, demo, testimonial"
+            style={{ padding: "9px 12px", fontSize: 14 }}
+          />
+        </div>
+
+        {/* deliverables */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <label style={{ fontSize: 13, fontWeight: 600 }}>Deliverables</label>
+          {deliverables.length === 0 && (
+            <div style={{ fontSize: 12.5, color: "var(--color-fg-subtle)" }}>No deliverables yet. Add what the recipient owes you.</div>
+          )}
+          {deliverables.map((d) => (
+            <div key={d.id} style={{ display: "grid", gridTemplateColumns: "1fr 140px auto", gap: 8, alignItems: "center" }}>
+              <input className="finne-input" placeholder="Deliverable (e.g. Video 1 — product hero)" value={d.name} onChange={(e) => updateDeliverable(d.id, "name", e.target.value)} style={{ padding: "9px 12px" }} />
+              <input type="date" className="finne-input" value={d.due} onChange={(e) => updateDeliverable(d.id, "due", e.target.value)} style={{ padding: "9px 12px", color: "var(--color-fg-muted)" }} />
+              <a onClick={() => removeDeliverable(d.id)} title="Remove" style={{ cursor: "pointer", fontSize: 16, color: "var(--risk-600)", padding: "4px 8px" }}>×</a>
+            </div>
+          ))}
+          <a onClick={addDeliverable} style={{ cursor: "pointer", fontSize: 13, fontWeight: 600, alignSelf: "flex-start" }}>+ Add a deliverable</a>
+        </div>
+
+        {/* settle immediately */}
+        <label style={{ display: "flex", gap: 10, alignItems: "flex-start", border: settleImmediately ? "1.5px solid var(--brand-600)" : "1.5px solid var(--ink-200)", background: settleImmediately ? "var(--brand-50)" : "var(--color-surface)", borderRadius: "var(--radius-md)", padding: "12px 14px", cursor: "pointer" }}>
+          <input type="checkbox" checked={settleImmediately} onChange={(e) => setSettleImmediately(e.target.checked)} style={{ marginTop: 2, accentColor: "var(--brand-600)" }} />
+          <span>
+            <span style={{ fontSize: 14, fontWeight: 600 }}>Settle immediately</span>
+            <br />
+            <span style={{ fontSize: 13, color: "var(--color-fg-muted)" }}>
+              The deliverables are already delivered. The recipient can withdraw the funds right away — no 30-day protection window.
+            </span>
+          </span>
+        </label>
 
         {/* status */}
         {status && (

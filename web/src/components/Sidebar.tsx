@@ -1,6 +1,5 @@
 import type { Role, Screen } from "../types";
 import type { FinneActions } from "../useFinne";
-import type { ApiData } from "../useApi";
 
 interface NavDef {
   label: string;
@@ -61,19 +60,18 @@ export function Sidebar({
   actions,
   user,
   onLogout,
-  apiData,
 }: {
   role: Role;
   screen: Screen;
   actions: FinneActions;
   user?: { displayName: string; email: string; walletAddress: string | null } | null;
   onLogout?: () => void;
-  apiData?: ApiData;
 }) {
   const items = navForRole(role);
-  const { session, label, dot } = roleBadge(role);
+  const badge = roleBadge(role);
+  const label = badge.label;
+  const dot = badge.dot;
   const walletAddr = user?.walletAddress ?? null;
-  const wb = apiData?.walletBalance ?? null;
 
   return (
     <>
@@ -119,9 +117,6 @@ export function Sidebar({
           </span>
         </div>
 
-        <div className="e-label" style={{ padding: "0 10px 8px" }}>
-          {session}
-        </div>
 
         <nav style={{ display: "flex", flexDirection: "column" }}>
           {items.map((n) => {
@@ -167,36 +162,9 @@ export function Sidebar({
             color: "var(--color-fg-muted)",
           }}
         >
-          <strong style={{ color: "var(--color-fg)" }}>Arc testnet</strong> · demonstration environment
+          <strong style={{ color: "var(--color-fg)" }}>Arc testnet</strong>
         </div>
 
-        {/* Signed-in wallet — balance + address. The role indicator used to live
-            here; it moved to the TopBar profile. The wallet amount is the at-a-
-            glance context that belongs in the nav. */}
-        <div style={{ padding: "12px 10px 2px", minWidth: 0 }}>
-          <div style={{ fontSize: 10, color: "var(--color-fg-subtle)", textTransform: "uppercase", letterSpacing: ".04em", marginBottom: 6 }}>
-            Wallet
-          </div>
-          {wb?.usdc != null ? (
-            <div style={{ fontFamily: "var(--font-mono)", fontWeight: 600, fontSize: 15, color: "var(--color-fg)", marginBottom: 2 }}>
-              {wb.usdc}
-              <span style={{ fontSize: 10.5, color: "var(--color-fg-muted)", marginLeft: 4, fontWeight: 500 }}>USDC</span>
-            </div>
-          ) : (
-            <div style={{ fontSize: 13, color: "var(--color-fg-subtle)", marginBottom: 2 }}>—</div>
-          )}
-          {wb?.protected != null && Number(wb.protected) > 0 && (
-            <div style={{ fontSize: 10.5, color: "var(--color-fg-subtle)", marginBottom: 6 }}>{wb.protected} USDC protected</div>
-          )}
-          {walletAddr && (
-            <div style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-              <span style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--ok-500)", flexShrink: 0 }} />
-              <span style={{ fontSize: 11, fontFamily: "var(--font-mono)", color: "var(--ok-600)" }}>
-                {walletAddr.slice(0, 6)}…{walletAddr.slice(-4)}
-              </span>
-            </div>
-          )}
-        </div>
       </aside>
 
       {/* mobile top brand + nav (account/notifications/sign-out live in TopBar) */}

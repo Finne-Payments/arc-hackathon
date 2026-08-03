@@ -55,7 +55,7 @@ interface TLBuild {
  *   get:
  *     tags: [Timeline]
  *     summary: Case timeline (assembled from real lifecycle data)
- * security: [{ bearerAuth: [] }]
+ *     security: [{ bearerAuth: [] }]
  *     parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
  *     responses: { 200: { description: "{ events: [{ time, type, label, detail?, txHash? }] }" } }
  *     notes: Requires `case:read`.

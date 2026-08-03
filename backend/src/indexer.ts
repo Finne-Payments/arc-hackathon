@@ -6,19 +6,27 @@ import { loadEnv } from "./env.ts";
 import { fromBaseUnitsDisplay } from "./usdc.ts";
 
 /* ============================================================================
-   Indexer (PRD §12, C3). A 2-second poll loop that watches chain events and
-   drives the backend state machines — the chain is the source of truth.
+   Indexer (PRD §12, C3). A poll loop that watches a ROLLING WINDOW of recent
+   contract activity and drives the backend state machines — the chain is the
+   source of truth.
 
-   Pipeline per tick:
-     getLogs(fromCursor) → sort → dedupe via ChainEvent unique index →
-     dispatch by eventName → advance cursor → write heartbeat
+   Each tick scans the last INDEXER_LOOKBACK_BLOCKS for any pay/refund/withdraw/
+   anchor events from the contracts — NOT the whole chain from deploy. This
+   catches every fresh action over the window; the {txHash, logIndex} unique
+   index dedupes anything already seen, so overlapping windows are safe.
 
-   Idempotent: the {txHash, logIndex} unique index means replays create no
-   duplicates (PRD §12.2). Backend hook 409/404 are expected chatter.
+   This avoids walking the entire chain (the contract was deployed millions of
+   blocks ago) and instead follows recent activity — exactly what's needed for a
+   live system: new pays, refunds, withdrawals, and anchors, recorded as they
+   happen. A one-shot backfill (backfill.ts) is used when historical catch-up is
+   explicitly needed.
    ========================================================================== */
 
-const POLL_MS = 2000;
-const STALE_THRESHOLD_MS = 15_000;
+// Poll interval — Arc testnet's public RPC rate-limits aggressively, so we poll
+// every 30s. Events are idempotent (the unique txHash+logIndex index dedupes),
+// so a slower poll loses no data.
+const POLL_MS = 30_000;
+const STALE_THRESHOLD_MS = 90_000;
 
 let running = false;
 let timer: ReturnType<typeof setInterval> | null = null;
@@ -27,32 +35,16 @@ export function startIndexer(): void {
   if (running) return;
   running = true;
   timer = setInterval(tick, POLL_MS);
-  // fire one immediately so we don't wait 2s on boot
+  // fire one immediately so we don't wait on boot
   void tick();
-  console.log("[indexer] watching chain events every", POLL_MS, "ms");
+  const lookback = loadEnv().indexerLookbackBlocks;
+  console.log("[indexer] scanning last", lookback.toString(), "blocks every", POLL_MS, "ms");
 }
 
 export function stopIndexer(): void {
   running = false;
   if (timer) clearInterval(timer);
   timer = null;
-}
-
-async function getCursor(): Promise<bigint> {
-  const meta = await Meta.findOne({ key: "indexer:cursor" });
-  const saved = meta && meta.value?.block ? BigInt(meta.value.block as number) : 0n;
-  // Never start before INDEXER_START_BLOCK (the contract deploy block) — otherwise
-  // a fresh backend whose cursor was advanced past the payments would miss them.
-  const start = loadEnv().indexerStartBlock;
-  return saved > start ? saved : start;
-}
-
-async function setCursor(block: bigint): Promise<void> {
-  await Meta.findOneAndUpdate(
-    { key: "indexer:cursor" },
-    { value: { block: Number(block) }, updatedAt: new Date().toISOString() },
-    { upsert: true },
-  );
 }
 
 async function writeHeartbeat(block: bigint): Promise<void> {
@@ -70,14 +62,15 @@ async function tick(): Promise<void> {
 
     const client = await import("./chain/client.ts");
     const publicClient = client.getPublicClient();
-    const fromBlock = await getCursor();
-    const latestBlock = await publicClient.getBlockNumber().catch(() => fromBlock);
-    if (latestBlock <= fromBlock) {
-      await writeHeartbeat(latestBlock);
-      return;
-    }
+    const latestBlock = await publicClient.getBlockNumber().catch(() => 0n);
 
-    const logs = await fetchChainLogs(fromBlock + 1n);
+    // Rolling window: scan the last LOOKBACK_BLOCKS for any contract activity.
+    // No persistent cursor — the window is the safety net. The {txHash, logIndex}
+    // unique index dedupes events seen in overlapping windows.
+    const lookback = env.indexerLookbackBlocks;
+    const fromBlock = latestBlock > lookback ? latestBlock - lookback : 0n;
+
+    const logs = await fetchChainLogs(fromBlock);
 
     for (const log of logs) {
       const decoded = decodeLog(log as Log);
@@ -98,22 +91,26 @@ async function tick(): Promise<void> {
           seenAt: new Date().toISOString(),
         });
       } catch {
-        continue; // E11000 duplicate — already dispatched
+        continue; // E11000 duplicate — already seen in an earlier window
       }
 
-      await dispatch(decoded.eventName, decoded.args, txHash);
+      await dispatch(decoded.eventName, decoded.args, txHash, log.blockNumber ?? null);
     }
 
-    await setCursor(latestBlock);
     await writeHeartbeat(latestBlock);
   } catch (e) {
     console.error("[indexer] tick error:", e instanceof Error ? e.message : e);
-    // backoff is implicit — next tick retries; cursor untouched
+    // next tick re-scans the same rolling window — nothing to recover
   }
 }
 
 /** Dispatch a decoded chain event to the appropriate backend service call. */
-export async function dispatch(eventName: string, args: Record<string, unknown>, txHash: string): Promise<void> {
+export async function dispatch(
+  eventName: string,
+  args: Record<string, unknown>,
+  txHash: string,
+  blockNumber: bigint | null,
+): Promise<void> {
   switch (eventName) {
     case "PaymentCreated": {
       const paymentID = String(args.paymentID ?? args[0] ?? "");
@@ -121,6 +118,30 @@ export async function dispatch(eventName: string, args: Record<string, unknown>,
       const amountBase = BigInt((args.amount ?? args[2] ?? 0) as bigint | number | string);
       const amount = fromBaseUnitsDisplay(amountBase); // base units → "33.34"
       const refundTo = String(args.refundTo ?? args[4] ?? "");
+      // The real on-chain release timestamp (block.timestamp + lockupSeconds[recipient]).
+      // Snapshotted in the contract at pay() time — the source of truth for when the
+      // recipient may withdraw. Carried through to lockupEnd so the UI never shows a
+      // bogus 30-day window for an instant-settlement (lockup=0) recipient.
+      const releaseTimestamp = (args.releaseTimestamp ?? args[3] ?? null) as bigint | null;
+      // The REAL block timestamp — not wall-clock time. This is what the chain
+      // recorded, so it must be what the receipt shows as paidAt. Fetch the
+      // block; fall back to now only if the RPC fails (rare, and better than
+      // blocking the indexer). Also fetch the tx sender (the payer) so
+      // recordDetectedPayment can resolve their platformKey for scoping.
+      let blockTimestamp = new Date().toISOString();
+      let txSender = "";
+      if (blockNumber !== null) {
+        try {
+          const client = (await import("./chain/client.ts")).getPublicClient();
+          const block = await client.getBlock({ blockNumber });
+          blockTimestamp = new Date(Number(block.timestamp) * 1000).toISOString();
+          // Get the sender from the transaction (who called pay()).
+          const tx = await client.getTransaction({ hash: txHash as `0x${string}` }).catch(() => null);
+          if (tx?.from) txSender = tx.from;
+        } catch {
+          // RPC failure — keep the wall-clock fallback (PRD §13.4: never crash).
+        }
+      }
       await recordDetectedPayment({
         paymentId: paymentID,
         chain: loadEnv().arc.chainName,
@@ -129,8 +150,9 @@ export async function dispatch(eventName: string, args: Record<string, unknown>,
         to,
         amount,
         refundTo,
-        blockTimestamp: new Date().toISOString(),
-        txSender: "",
+        blockTimestamp,
+        txSender,
+        releaseTimestamp: releaseTimestamp !== null ? String(releaseTimestamp) : undefined,
       }).catch(() => {});
       break;
     }

@@ -206,8 +206,12 @@ export async function approveAndPay(
   await ensureArcChain();
 
   // 1. Approve the RefundProtocol to spend exactly this amount of USDC.
+  //    The wallet handles nonce sequencing — approve (nonce N) is always mined
+  //    before pay (nonce N+1) — so we do NOT wait for the approve receipt here.
+  //    Previously we waited up to 45s via the rate-limited Arc public RPC,
+  //    which froze the UI between the two signatures.
   onProgress?.("approving");
-  const approveHash = await client.writeContract({
+  await client.writeContract({
     address: usdcAddress,
     abi: [
       {
@@ -226,17 +230,25 @@ export async function approveAndPay(
     account: client.account!,
     chain: arcTestnet,
   });
-  await waitForReceipt(approveHash);
 
-  // 2. Call pay() — the RefundProtocol now pulls the approved USDC via
-  //    transferFrom. Read the nonce BEFORE pay() to learn the payment ID.
-  const publicClient = getPublicReader();
-  const nonceBefore = (await publicClient.readContract({
-    address: refundProtocolAddress,
-    abi: [{ type: "function", name: "nonce", stateMutability: "view", inputs: [], outputs: [{ name: "", type: "uint256" }] }],
-    functionName: "nonce",
-  })) as bigint;
+  // 2. Immediately read the nonce BEFORE pay() — that value is the payment ID.
+  //    This is a view call (no signature), so it's fast. If the RPC rate-limits,
+  //    pay() still works — we just don't know the ID up front.
+  let nonceBefore: bigint | null = null;
+  try {
+    const publicClient = getPublicReader();
+    nonceBefore = (await publicClient.readContract({
+      address: refundProtocolAddress,
+      abi: [{ type: "function", name: "nonce", stateMutability: "view", inputs: [], outputs: [{ name: "", type: "uint256" }] }],
+      functionName: "nonce",
+    })) as bigint;
+  } catch {
+    nonceBefore = null; // RPC rate-limited — pay() still works
+  }
 
+  // 3. Call pay() right away. MetaMask queues this as nonce N+1 after the
+  //    approve, so it won't be mined until the approve confirms. The wallet
+  //    prompts for the second signature immediately.
   onProgress?.("paying");
   const payHash = await client.writeContract({
     address: refundProtocolAddress,
@@ -259,13 +271,12 @@ export async function approveAndPay(
     chain: arcTestnet,
   });
 
-  // 3. Wait for the receipt — this is the real confirmation. If pay() reverted
-  //    (e.g. insufficient balance, blocklist), waitForTransactionReceipt throws
-  //    and the caller shows the failure instead of a false "submitted".
+  // 4. Done — the wallet has broadcast pay(). Return immediately; the indexer
+  //    detects PaymentCreated server-side and builds the payout row. We do NOT
+  //    wait for the receipt here — that was causing a 20-45s delay while the
+  //    rate-limited Arc RPC was polled. The user proceeds to the ledger right
+  //    away; the payout appears once the indexer processes it (30s cycle).
   onProgress?.("confirming");
-  await waitForReceipt(payHash);
-
-  // The payment ID is the nonce we read before pay() incremented it.
   return { hash: payHash, paymentId: nonceBefore };
 }
 
@@ -275,12 +286,6 @@ function getPublicReader() {
     chain: arcTestnet,
     transport: http(arcTestnet.rpcUrls.default.http[0], { timeout: 30_000 }),
   });
-}
-
-/** Await a tx receipt, reusing the wallet's chain definition. */
-async function waitForReceipt(hash: Hash): Promise<void> {
-  const publicClient = getPublicReader();
-  await publicClient.waitForTransactionReceipt({ hash, confirmations: 1, timeout: 60_000 });
 }
 
 /** Check if a thrown error is a user-rejected signature. */

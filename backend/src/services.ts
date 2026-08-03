@@ -12,8 +12,8 @@ import {
   Evidence,
   Payout,
   Platform,
-  Recipient,
   Response as ResponseModel,
+  User,
   WorkOrder,
   type PayoutDoc,
   type CaseDoc,
@@ -85,6 +85,10 @@ export interface DetectedPayment {
   refundTo: string;
   blockTimestamp: string;
   txSender: string;
+  /** The REAL on-chain release timestamp (block.timestamp + lockupSeconds[recipient]),
+   *  snapshotted in the contract at pay() time. When present this is the source of
+   *  truth for lockupEnd — never the hardcoded 30-day demo window. */
+  releaseTimestamp?: string;
 }
 
 /** Idempotent: a replay of a known paymentId returns the existing payout. */
@@ -92,16 +96,32 @@ export async function recordDetectedPayment(det: DetectedPayment): Promise<{ pay
   const existing = await Payout.findOne({ paymentId: det.paymentId });
   if (existing) return { payout: existing, created: false };
 
-  const recipient = await Recipient.findOne({
-    walletAddress: { $regex: new RegExp(`^${escapeRegex(det.to)}$`, "i") },
-  });
-  const platform = recipient
-    ? await Platform.findOne({ key: recipient.platformKey })
-    : await Platform.findOne({ payWallet: { $regex: new RegExp(`^${escapeRegex(det.txSender)}$`, "i") } });
+  // Derive the recipient key from the real on-chain recipient address. Do NOT
+  // look up seeded Recipient/Platform/work-order records (which would stamp
+  // hardcoded demo names onto real payouts). The off-chain metadata
+  // (description, deliverables) is attached later by the user via the metadata
+  // endpoint, linked to the real paymentId.
+  const recipientKey = det.to.toLowerCase().slice(0, 10);
 
-  const workOrder = recipient ? await WorkOrder.findOne({ recipientKey: recipient.key }) : null;
+  // Resolve the platformKey from the SENDER's User record so the per-seat scope
+  // filter (scopeFor: { platformKey: caller.platformKey }) matches. If the
+  // sender isn't a known user, fall back to the address-derived key.
+  let platformKey = det.txSender ? det.txSender.toLowerCase().slice(0, 10) : "unknown";
+  if (det.txSender) {
+    const senderUser = await User.findOne({
+      walletAddress: { $regex: new RegExp(`^${det.txSender.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i") },
+    }).lean();
+    if (senderUser?.platformKey) platformKey = senderUser.platformKey;
+  }
 
-  const lockupEnd = new Date(new Date(det.blockTimestamp).getTime() + 30 * 86400 * 1000).toISOString();
+  // lockupEnd = the REAL on-chain release timestamp when the indexer provides it
+  // (from the PaymentCreated event). Falls back to paidAt + 30 days only when the
+  // release timestamp isn't available — never silently invents a window that
+  // contradicts the contract. disputeDeadline tracks lockupEnd (the dispute window
+  // closes when the lockup ends).
+  const lockupEnd = det.releaseTimestamp
+    ? new Date(Number(BigInt(det.releaseTimestamp)) * 1000).toISOString()
+    : new Date(new Date(det.blockTimestamp).getTime() + 30 * 86400 * 1000).toISOString();
   const disputeDeadline = lockupEnd;
 
   const receiptBody = {
@@ -111,9 +131,9 @@ export async function recordDetectedPayment(det: DetectedPayment): Promise<{ pay
     txHash: det.txHash,
     amount: det.amount,
     refundTo: det.refundTo,
-    recipientKey: recipient?.key ?? "unknown",
-    platformKey: platform?.key ?? "unknown",
-    workOrderRef: workOrder ? `${workOrder.recipientKey}:${workOrder.description}` : null,
+    recipientKey,
+    platformKey,
+    workOrderRef: null,
     paidAt: det.blockTimestamp,
     lockupEnd,
     disputeDeadline,
@@ -338,16 +358,18 @@ export async function requestInfo(
   await caseDoc.save();
 
   const payoutForReq = await Payout.findOne({ paymentId: caseDoc.payoutRef }).lean();
-  const audienceRole = target === "recipient" ? "recipient" : "reviewer";
   await notify({
     type: "info_request",
     title: "More information requested",
     body: `Reviewer needs: ${text}`,
     caseNumber,
     paymentId: caseDoc.payoutRef,
-    audience: audienceRole === "recipient"
+    audience: target === "recipient"
       ? [{ role: "recipient", recipientWallet: payoutForReq?.recipientWallet }]
-      : [{ role: "reviewer", platformKey: payoutForReq?.platformKey ?? null }],
+      : [
+          { role: "reviewer", platformKey: payoutForReq?.platformKey ?? null },
+          { role: "platform_viewer", platformKey: payoutForReq?.platformKey ?? null },
+        ],
   });
 
   return { caseDoc };
@@ -584,18 +606,14 @@ async function enqueueAnchor(
   // No real anchor worker in this build — see docs/REMAINING_ISSUES.md (PH-4).
 }
 
-function escapeRegex(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
 /* ---- shared case body assembly (P3 — byte-identical across seats) ---- */
 export async function getSharedCase(caseNumber: string): Promise<SharedCaseBody> {
   const caseDoc = await Case.findOne({ caseNumber }).lean();
   if (!caseDoc) throw new HttpError(404, `No case ${caseNumber} found.`);
 
   const payout = await Payout.findOne({ paymentId: caseDoc.payoutRef }).lean();
-  const workOrder = payout?.workOrderRef
-    ? await WorkOrder.findOne({ recipientKey: payout.recipientKey, description: payout.workOrderRef.split(":").slice(1).join(":") }).lean()
+  const workOrder = payout
+    ? await WorkOrder.findOne({ paymentId: payout.paymentId }).lean()
     : null;
   const responses = await ResponseModel.find({ caseRef: caseNumber }).lean();
   const evidence = await Evidence.find({ caseRef: caseNumber }).lean();
@@ -627,9 +645,10 @@ export interface SharedCaseBody {
 export async function getSharedReceipt(paymentId: string): Promise<SharedReceiptBody> {
   const payout = await Payout.findOne({ paymentId }).lean();
   if (!payout) throw new HttpError(404, `No payout ${paymentId} found.`);
-  const workOrder = payout.workOrderRef
-    ? await WorkOrder.findOne({ recipientKey: payout.recipientKey, description: payout.workOrderRef.split(":").slice(1).join(":") }).lean()
-    : null;
+  // Resolve the work order by its direct link to this payment — not by
+  // name-matching against seeded recipient records (which stamped hardcoded
+  // demo descriptions onto real payouts).
+  const workOrder = await WorkOrder.findOne({ paymentId }).lean();
   const caseDoc = await Case.findOne({ payoutRef: paymentId, status: { $ne: "CLOSED" } }).lean();
   const decision = caseDoc ? await Decision.findOne({ caseRef: (caseDoc as { caseNumber: string }).caseNumber }).lean() : null;
   const evidence = await Evidence.find({ payoutRef: paymentId }).lean();

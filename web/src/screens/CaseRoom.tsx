@@ -139,36 +139,38 @@ export function CaseRoom({ v, actions, apiData }: { v: ViewModel; actions: Finne
         </div>
       </Card>
 
-      {/* directed information request (target side) */}
+      {/* directed information request reply (target side) */}
       {v.showReqCard && (
         <div style={{ background: "var(--warn-soft)", border: "1.5px solid var(--warn-border)", borderRadius: "var(--radius-lg)", padding: "20px 22px", marginBottom: 16 }}>
           <Eyebrow color="var(--warn-600)" style={{ marginBottom: 8 }}>
             The arbiter needs something from you
           </Eyebrow>
           <div style={{ fontSize: 14, lineHeight: 1.6, marginBottom: 12 }}>“{v.reqCardText}”</div>
-          <textarea className="finne-textarea" placeholder="Write your answer…" style={{ marginBottom: 10 }} />
+          <textarea className="finne-textarea" placeholder="Write your answer…" value={v.replyText} onChange={(e) => v.onReplyText(e.target.value)} style={{ marginBottom: 10, minHeight: 80 }} />
           <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-            <SecondaryButton style={{ fontSize: 13, padding: "8px 14px" }}>Attach document</SecondaryButton>
-            <PrimaryButton style={{ fontSize: 13, padding: "9px 16px" }}>Send to the case</PrimaryButton>
+            <PrimaryButton onClick={v.submitReply} disabled={v.replySending || !v.replyText.trim()} style={{ fontSize: 13, padding: "9px 16px" }}>
+              {v.replySending ? "Sending…" : "Send your reply"}
+            </PrimaryButton>
             <span style={{ fontSize: 12, color: "var(--color-fg-subtle)" }}>Your answer joins the shared evidence record.</span>
           </div>
         </div>
       )}
 
-      {/* reply composer (recipient, awaiting) */}
-      {v.showComposer && (
+      {/* reply composer (recipient, awaiting response or info request) */}
+      {v.showComposer && !v.showReqCard && (
         <div style={{ background: "var(--brand-50)", border: "1.5px solid var(--brand-200)", borderRadius: "var(--radius-lg)", padding: "22px 24px", marginBottom: 16 }}>
           <Eyebrow color="var(--brand-700)" style={{ marginBottom: 6 }}>
             Your reply
           </Eyebrow>
           <div style={{ fontSize: 13, color: "var(--color-fg-muted)", marginBottom: 12 }}>
-            This is your right of reply — your statement and anything you attach appear alongside the claim, with equal weight, before anyone decides. Due in {v.countdown}.
+            This is your right of reply — your statement and anything you attach appear alongside the claim, with equal weight, before anyone decides.
           </div>
-          <textarea className="finne-textarea" placeholder="Tell your side plainly. What happened with Video 3?" style={{ minHeight: 96 }} />
+          <textarea className="finne-textarea" placeholder="Tell your side plainly…" value={v.replyText} onChange={(e) => v.onReplyText(e.target.value)} style={{ minHeight: 96 }} />
           <div style={{ display: "flex", gap: 10, marginTop: 12, alignItems: "center", flexWrap: "wrap" }}>
-            <SecondaryButton style={{ fontSize: 13, padding: "8px 14px" }}>Attach evidence</SecondaryButton>
             <span style={{ flex: 1 }} />
-            <PrimaryButton style={{ fontSize: 13, padding: "9px 16px" }}>Submit reply</PrimaryButton>
+            <PrimaryButton onClick={v.submitReply} disabled={v.replySending || !v.replyText.trim()} style={{ fontSize: 13, padding: "9px 16px" }}>
+              {v.replySending ? "Submitting…" : "Submit reply"}
+            </PrimaryButton>
           </div>
         </div>
       )}

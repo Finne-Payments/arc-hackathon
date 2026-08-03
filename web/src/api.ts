@@ -225,10 +225,18 @@ export const api = {
   chainEvents: () => request<{ txHash: string; eventName: string; contract: string; block: number }[]>("/chain/events"),
 
   payouts: () => request<{ payouts: PayoutRow[] }>("/payouts"),
-  // No createPayout endpoint: payouts are created ONLY by the indexer when it
-  // detects an on-chain pay(). The merchant signs approve()+pay() in the browser
-  // (wallet.ts approveAndPay); the indexer builds the receipt row.
+  // No createPayout endpoint: a Payout row is created ONLY by the indexer when
+  // it detects an on-chain pay(). The payer signs approve()+pay() in the browser
+  // (wallet.ts approveAndPay); the indexer builds the receipt row from real
+  // chain data. There is no off-chain payout path.
   receipt: (paymentId: string) => request<SharedReceipt>(`/payouts/${paymentId}/receipt`),
+
+  // Attach work-order metadata (description, deliverables) to an EXISTING
+  // on-chain payout — called only after approveAndPay confirms. The backend
+  // 404s if the payout doesn't exist yet, so metadata can never precede the
+  // chain commitment.
+  savePayoutMetadata: (paymentId: string, body: { description?: string; deliverables?: { name: string; due?: string; acceptanceCriteria?: string }[]; settleImmediately?: boolean }) =>
+    request<{ payout: PayoutRow }>(`/payouts/${paymentId}/metadata`, { method: "POST", body: JSON.stringify(body) }),
 
   cases: () => request<{ cases: CaseRow[] }>("/cases"),
   case: (caseNumber: string) => request<SharedCase>(`/cases/${caseNumber}`),

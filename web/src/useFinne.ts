@@ -11,6 +11,7 @@ import type {
   Screen,
   WalletSim,
 } from "./types";
+import { ROLE_ALLOWED, ROLE_HOME } from "./domain/access";
 
 /**
  * useFinne is the single source of truth for the prototype.
@@ -52,6 +53,9 @@ export interface FinneState {
   reqTarget: InfoTarget;
   reqText: string;
 
+  replyText: string;
+  replySending: boolean;
+
   evOpen: boolean;
   evText: string;
   evItems: AddedEvidence[];
@@ -82,6 +86,8 @@ export function useFinne(initialRole: Role = "arbiter") {
     reqLog: [],
     reqTarget: "customer",
     reqText: "",
+    replyText: "",
+    replySending: false,
     evOpen: false,
     evText: "",
     evItems: [],
@@ -175,19 +181,8 @@ export function useFinne(initialRole: Role = "arbiter") {
     // Route guard: if the current screen is not allowed for this role, redirect
     // to the role's home screen. This prevents e.g. a customer accessing /ledger
     // or a merchant accessing /decision (arbiter-only).
-    const allowedScreens: Screen[] = role === "arbiter"
-      ? ["disputes", "case", "decision", "receipt", "final"]
-      : role === "merchant"
-        ? ["ledger", "newpayout", "disputes", "case", "receipt", "final"]
-        : role === "customer"
-          ? ["home", "disputes", "case", "receipt", "final"]
-          : ["platform", "disputes", "case", "receipt", "final"]; // platform
-
-    const homeScreen: Screen =
-      role === "arbiter" ? "disputes"
-      : role === "merchant" ? "ledger"
-      : role === "customer" ? "home"
-      : "platform";
+    const allowedScreens: Screen[] = ROLE_ALLOWED[role];
+    const homeScreen: Screen = ROLE_HOME[role];
 
     const screen: Screen =
       (state.screen && allowedScreens.includes(state.screen))
@@ -322,15 +317,27 @@ export function useFinne(initialRole: Role = "arbiter") {
       reqSendCursor: state.reqLog.length >= MAX_INFO_REQUESTS || !state.reqText.trim() ? "not-allowed" : "pointer",
       reqSendBg: state.reqLog.length >= MAX_INFO_REQUESTS || !state.reqText.trim() ? "var(--ink-100)" : "var(--brand-600)",
       reqSendFg: state.reqLog.length >= MAX_INFO_REQUESTS || !state.reqText.trim() ? "var(--color-fg-subtle)" : "#fff",
-      sendReq: () => {
+      sendReq: async () => {
         const t = state.reqText.trim();
-        if (t && state.reqLog.length < MAX_INFO_REQUESTS)
+        if (!t || state.reqLog.length >= MAX_INFO_REQUESTS) return;
+        // Map frontend target to backend target
+        const backendTarget = state.reqTarget === "merchant" ? "platform" : "recipient";
+        const caseNumber = state.selectedCaseId ?? "";
+        if (!caseNumber) return;
+        try {
+          const { api } = await import("./api.ts");
+          await api.requestInfo(caseNumber, { target: backendTarget as "platform" | "recipient", text: t });
           setState((s) => ({
             ...s,
             reqLog: [...s.reqLog, { target: s.reqTarget, text: t }],
             reqText: "",
             reqOpen: false,
+            caseStage: "awaiting_response",
           }));
+        } catch (e) {
+          // Keep the text so the user can retry
+          patch({ reqOpen: false });
+        }
       },
       showReqCard: !!myLastReq && !stageDecided,
       reqCardText: myLastReq ? myLastReq.text : "",
@@ -358,6 +365,25 @@ export function useFinne(initialRole: Role = "arbiter") {
             evText: "",
             evOpen: false,
           }));
+      },
+
+      /* recipient reply / response */
+      replyText: state.replyText,
+      replySending: state.replySending,
+      onReplyText: (val: string) => patch({ replyText: val }),
+      submitReply: async () => {
+        const t = state.replyText.trim();
+        if (!t) return;
+        const caseNumber = state.selectedCaseId ?? "";
+        if (!caseNumber) return;
+        patch({ replySending: true });
+        try {
+          const { api } = await import("./api.ts");
+          await api.respond(caseNumber, { text: t });
+          setState((s) => ({ ...s, replyText: "", replySending: false, caseStage: "under_review" }));
+        } catch {
+          patch({ replySending: false });
+        }
       },
 
       /* receipt / final */

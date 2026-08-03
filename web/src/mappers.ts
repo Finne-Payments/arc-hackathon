@@ -51,7 +51,9 @@ const RECIPIENT_LABEL: Record<string, string> = {
 };
 
 export function recipientDisplayName(recipientKey: string | undefined | null, recipientWallet: string | undefined | null): string {
-  // Try the friendly name map first, then a short wallet address, then fall back.
+  // Try the friendly name map first (for legacy seeded data), then a short
+  // wallet address, then the key. New payouts have address-derived keys, so
+  // they show as a shortened wallet address — which is the real identifier.
   if (recipientKey && RECIPIENT_LABEL[recipientKey]) return RECIPIENT_LABEL[recipientKey];
   if (recipientWallet && recipientWallet.length > 10) return shortHex(recipientWallet);
   if (recipientKey && recipientKey.length > 6) return shortHex(recipientKey);
@@ -87,19 +89,50 @@ export interface RecipientLedgerView {
   deadline: string;
   highlight: boolean;
   paymentId: string;
+  /** True when the lockup has passed and the recipient can withdraw now. */
+  withdrawable: boolean;
+}
+
+/** Human label for how long until lockup ends: "2h 14m", "now", "in 3 days". */
+export function lockupCountdown(lockupEndIso: string): { label: string; ready: boolean } {
+  try {
+    const ms = new Date(lockupEndIso).getTime() - Date.now();
+    if (ms <= 0) return { label: "Ready to withdraw", ready: true };
+    const mins = Math.round(ms / 60000);
+    if (mins < 60) return { label: `Unlocks in ${mins}m`, ready: false };
+    const h = Math.floor(mins / 60);
+    const m = mins % 60;
+    if (h < 48) return { label: `Unlocks in ${h}h ${String(m).padStart(2, "0")}m`, ready: false };
+    const days = Math.round(mins / (60 * 24));
+    return { label: `Unlocks in ${days} day${days === 1 ? "" : "s"}`, ready: false };
+  } catch {
+    return { label: "—", ready: false };
+  }
 }
 
 export function payoutToRecipientView(p: PayoutRow, workOrderDesc: string | null): RecipientLedgerView {
   const disputed = p.status === "DISPUTED";
+  const settled = p.status === "WITHDRAWN" || p.status === "CLEARED" || p.status === "DEBT_SETTLED";
+  // For an ESCROWED (non-disputed) payout, the lockup countdown tells the
+  // recipient exactly when the funds unlock — and whether they can withdraw now.
+  const lc = p.status === "ESCROWED" ? lockupCountdown(p.lockupEnd) : { label: "", ready: false };
+  const deadline = disputed
+    ? "Disputed — case open"
+    : settled
+      ? "Withdrawn"
+      : p.status === "REFUNDED"
+        ? "Refunded"
+        : lc.label;
   return {
     from: platformName(p.platformKey),
     amount: `${p.amount} USDC`,
     purpose: workOrderDesc ?? "—",
     paid: formatPaidDate(p.paidAt),
     status: { label: PAYMENT_WORD[p.status] ?? p.status, dot: (PAYMENT_DOT[p.status] ?? "brand") as "warn" | "brand" | "ok" | "risk" | "ink" },
-    deadline: disputed ? "" : p.status === "ESCROWED" ? `Unlocks ${formatShortDate(p.lockupEnd)}` : "—",
+    deadline,
     highlight: disputed,
     paymentId: p.paymentId,
+    withdrawable: p.status === "ESCROWED" && lc.ready,
   };
 }
 
@@ -146,7 +179,7 @@ export function caseToListView(c: CaseRow, payout: PayoutRow | undefined): CaseL
   return {
     caseId: c.caseNumber,
     parties: `${merchant} ↔ ${customer}`,
-    contested: `${c.allegationAmountContested || "33"} USDC`,
+    contested: c.allegationAmountContested ? `${c.allegationAmountContested} USDC` : "—",
     status: { label, dot },
     deadline: c.status === "CLOSED" ? "Closed" : "",
     paymentId: c.payoutRef,

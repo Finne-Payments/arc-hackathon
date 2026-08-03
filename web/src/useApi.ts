@@ -13,14 +13,14 @@ import {
 import type { Role } from "./types";
 
 /* ============================================================================
-   useApi — live data polling hook (PRD §14.1).
-   Polls GET /status + /payouts + /cases every 3 s, plus the active case
-   detail and receipt on demand. Any fetch failure surfaces as an error state
-   so the UI can render per-screen error cards with retry instead of crashing
-   (the app must survive a dead backend — PRD §13.4 resilience).
+   useApi — on-demand data hook (PRD §14.1).
+   Fetches GET /status + /payouts + /cases + /notifications + /wallet/balance
+   ONLY when refresh() is called — on initial load, screen change, or a user
+   action. There is NO automatic interval poll: the Arc testnet RPC rate-limits
+   aggressively, and continuous polling (every 3s from the frontend + every 2s
+   from the backend indexer) was exceeding the request limit. Call refresh()
+   when the user navigates, submits a form, or explicitly asks for fresh data.
    ========================================================================== */
-
-const POLL_MS = 3000;
 
 export interface ApiData {
   config: ConfigBody | null;
@@ -115,12 +115,11 @@ export function useApi(initialRole: Role): { data: ApiData; actions: ApiActions 
   const dataRef = useRef(data);
   dataRef.current = data;
 
-  // initial + interval poll
+  // Initial load only — no interval polling. refresh() is called on demand by
+  // the app when the screen changes or the user takes an action.
   useEffect(() => {
     applyRole(initialRole);
     void refresh();
-    const id = setInterval(refresh, POLL_MS);
-    return () => clearInterval(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

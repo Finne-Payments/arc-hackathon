@@ -72,17 +72,20 @@ export async function readDebt(recipient: Address): Promise<bigint | null> {
   }
 }
 
-/** Fetch RefundProtocol + CaseRegistry logs since the given block. */
+/**
+ * Fetch RefundProtocol + CaseRegistry logs in a single bounded window. The
+ * indexer passes a rolling lookback (default 5000 blocks) — well under Arc's
+ * 100k-block RPC cap — so one call per contract suffices. Errors surface to the
+ * caller (never silently swallowed — that's how events were missed before).
+ */
 export async function fetchChainLogs(fromBlock: bigint): Promise<Log[]> {
   return fetchChainLogsRange(fromBlock, "latest");
 }
 
 /**
- * Fetch logs in a bounded [fromBlock, toBlock] range. Arc's RPC caps log
- * queries at 100k blocks; this chunks any larger range so a backfill from the
- * contract deploy block to head doesn't get rejected. Errors are surfaced (the
- * caller decides), not silently swallowed — silently-empty results were how the
- * indexer previously missed real PaymentCreated events.
+ * Fetch logs in a bounded [fromBlock, toBlock] range. Kept chunked for the rare
+ * case where a caller (e.g. backfill.ts) explicitly needs a wide range; the
+ * indexer's rolling window never hits the chunk path.
  */
 export async function fetchChainLogsRange(fromBlock: bigint, toBlock: bigint | "latest"): Promise<Log[]> {
   const client = getPublicClient();
@@ -91,7 +94,9 @@ export async function fetchChainLogsRange(fromBlock: bigint, toBlock: bigint | "
   if (!client) return [];
 
   const end = toBlock === "latest" ? await client.getBlockNumber().catch(() => fromBlock) : toBlock;
-  const CHUNK = 90_000n; // under the 100k RPC cap
+  // Arc's RPC caps log queries at 10k blocks; chunk well under that so a wide
+  // backfill range is never rejected. The indexer's rolling window is far smaller.
+  const CHUNK = 5_000n;
   const out: Log[] = [];
   for (let start = fromBlock; start <= end; start += CHUNK) {
     const chunkEnd = start + CHUNK - 1n > end ? end : start + CHUNK - 1n;

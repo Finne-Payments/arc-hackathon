@@ -1,5 +1,4 @@
 import { useState, useEffect, useRef } from "react";
-import type { Screen } from "../types";
 import type { FinneActions } from "../useFinne";
 import type { ApiData } from "../useApi";
 import { api } from "../api";
@@ -284,8 +283,11 @@ export function TopBar({
                     <div
                       key={n._id}
                       onClick={() => {
-                        const target: Screen = n.caseNumber ? "case" : "receipt";
-                        actions.go(target);
+                        if (n.caseNumber) {
+                          actions.viewCase(n.caseNumber);
+                        } else {
+                          actions.go("receipt");
+                        }
                         api.markNotificationRead(n._id).catch(() => {});
                         setShowNotif(false);
                       }}

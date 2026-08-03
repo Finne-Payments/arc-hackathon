@@ -2,12 +2,16 @@
    backfill — one-shot reconcile of the DB with the on-chain truth.
 
    Replaces fabricated/Anvil-seeded payouts with the real PaymentCreated /
-   Refund / Withdrawal events read from the chain, then advances the indexer
-   cursor so live indexing continues from head. Idempotent: re-running re-reads
-   the same events and the services layer no-ops on already-recorded paymentIds.
+   Refund / Withdrawal events read from the chain. Idempotent: re-running
+   re-reads the same events and the services layer no-ops on already-recorded
+   paymentIds (deduped by the {txHash, logIndex} unique index).
+
+   The live indexer scans only a rolling recent window (INDEXER_LOOKBACK_BLOCKS)
+   — it does NOT walk the whole chain. Use THIS script when you explicitly need
+   historical catch-up (e.g. after a contract redeploy).
 
    Run:
-     INDEXER_START_BLOCK=<contract deploy block> \
+     BACKFILL_FROM_BLOCK=<contract deploy block> \
      node --env-file=.env --import tsx/esm src/backfill.ts
    ========================================================================== */
 
@@ -17,7 +21,7 @@ import { loadEnv } from "./env.ts";
 import { fetchChainLogsRange } from "./chain/reads.ts";
 import { decodeLog } from "./chain/reads.ts";
 import { dispatch } from "./indexer.ts";
-import { ChainEvent, Meta, Payout, Case, Decision, Evidence, Response, AnchorJob, Brief } from "./models/index.ts";
+import { ChainEvent, Payout, Case, Decision, Evidence, Response, AnchorJob, Brief } from "./models/index.ts";
 
 /** Wipe the fabricated/seed data so the real on-chain records are clean.
  *  Preserves the indexer cursor + heartbeat (Meta) — those are bookkeeping. */
@@ -41,10 +45,12 @@ async function main(): Promise<void> {
   await connectDb();
   console.log("[backfill] connected to MongoDB");
 
-  const startBlock = env.indexerStartBlock;
+  // The live indexer scans only a rolling window; backfill is the explicit
+  // wide-scan tool, so it can read from any block (default: contract deploy).
+  const startBlock = BigInt(Number(process.env.BACKFILL_FROM_BLOCK ?? 0));
   console.log(`[backfill] reading chain events from block ${startBlock} → head`);
 
-  console.log("[backfill] wiping fabricated/seed data (preserving indexer cursor)…");
+  console.log("[backfill] wiping fabricated/seed data…");
   await wipeFabricatedData();
 
   // Read the full history in chunks (the RPC caps log queries at 100k blocks).
@@ -70,20 +76,10 @@ async function main(): Promise<void> {
     } catch {
       // duplicate — already in the event log
     }
-    await dispatch(decoded.eventName, decoded.args, txHash);
+    await dispatch(decoded.eventName, decoded.args, txHash, log.blockNumber ?? null);
     processed++;
   }
   console.log(`[backfill] dispatched ${processed} events`);
-
-  // Advance the cursor to head so the live indexer picks up only new events.
-  const client = await import("./chain/client.ts");
-  const head = await client.getPublicClient().getBlockNumber().catch(() => 0n);
-  await Meta.findOneAndUpdate(
-    { key: "indexer:cursor" },
-    { value: { block: Number(head) }, updatedAt: new Date().toISOString() },
-    { upsert: true },
-  );
-  console.log(`[backfill] cursor advanced to head (block ${head})`);
 
   // Report what's now in the DB.
   const payouts = await Payout.find({}).lean();

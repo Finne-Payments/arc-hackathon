@@ -61,6 +61,10 @@ export interface WorkOrderDoc {
   amount: string;
   currency: "USDC";
   status: "open" | "closed";
+  /** The on-chain payment ID this work order is linked to (set after pay()
+   * confirms, by the metadata endpoint). Indexed so getSharedReceipt resolves
+   * it directly — no name-matching against seeded data. */
+  paymentId: string | null;
 }
 const workOrderSchema = new Schema<WorkOrderDoc>(
   {
@@ -71,6 +75,7 @@ const workOrderSchema = new Schema<WorkOrderDoc>(
     amount: String,
     currency: String,
     status: String,
+    paymentId: { type: String, default: null, index: true },
   },
   { collection: "workorders" },
 );

@@ -23,21 +23,9 @@ export type Screen =
   | "disputes"
   | "platform";
 
-/** Screens each role is allowed to see. Others are blocked by the route guard. */
-export const ROLE_SCREENS: Record<Role, Screen[]> = {
-  arbiter: ["disputes", "case", "decision", "receipt", "final"],
-  merchant: ["ledger", "newpayout", "disputes", "case", "receipt", "final"],
-  customer: ["home", "disputes", "case", "receipt", "final"],
-  platform: ["platform", "disputes", "case", "receipt", "final"],
-};
-
-/** The default home screen for each role (shown after login / role switch). */
-export const ROLE_HOME: Record<Role, Screen> = {
-  arbiter: "disputes",
-  merchant: "ledger",
-  customer: "home",
-  platform: "platform",
-};
+// Role → screen access (ROLE_HOME, ROLE_ALLOWED, isAllowed, homeScreenForRole)
+// lives in domain/access.ts — the single source of truth, imported by App.tsx
+// and useFinne.ts.
 
 export type DecPhase =
   | "idle"

@@ -44,8 +44,13 @@ export interface Env {
   };
   registryOperatorKey: string | null;
   responseWindowHours: number;
-  /** Block to start indexing from (the contract deploy block). 0 = head-at-boot. */
-  indexerStartBlock: bigint;
+  /**
+   * Rolling lookback window (in blocks). Each tick the indexer scans this many
+   * blocks of contract activity — not the whole chain from deploy. Picks up
+   * fresh pays/refunds/withdrawals + anything in the recent window; dedupes via
+   * the {txHash, logIndex} unique index so nothing is double-counted.
+   */
+  indexerLookbackBlocks: bigint;
 }
 
 /* ============================================================================
@@ -90,10 +95,11 @@ export function loadEnv(env: NodeJS.ProcessEnv = process.env): Env {
     },
     registryOperatorKey: env.REGISTRY_OPERATOR_PRIVATE_KEY || null,
     responseWindowHours: parseIntOr(env.RESPONSE_WINDOW_HOURS, 72),
-    // INDEXER_START_BLOCK: the contract deploy block — lets a fresh backend
-    // index from contract birth instead of head, so historical PaymentCreated
-    // events aren't missed (0 = head-at-boot, the old behaviour).
-    indexerStartBlock: BigInt(parseIntOr(env.INDEXER_START_BLOCK, 0)),
+    // INDEXER_LOOKBACK_BLOCKS: rolling window of recent contract activity the
+    // indexer scans each tick — not the whole chain from deploy. Default 5000
+    // (~7 min of Arc blocks at ~510s/block) catches any fresh pay/refund/withdraw
+    // even if a tick is missed. Replays are deduped by the unique index.
+    indexerLookbackBlocks: BigInt(parseIntOr(env.INDEXER_LOOKBACK_BLOCKS, 5000)),
   };
   return loaded;
 }
