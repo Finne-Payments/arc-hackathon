@@ -66,11 +66,12 @@ export async function seedWorld(): Promise<void> {
   void loadEnv();
 
   // --- seeded demo users (password = identity; wallet linked on first connect) ---
+  // Each wallet is hard-bound to one UI seat (one wallet ↔ one seat).
   const demoHash = await hashPassword("password123");
   await User.create(
-    { email: "dana@northbeam.com", passwordHash: demoHash, role: "reviewer", displayName: "Dana Whitfield", platformKey: "northbeam", walletAddress: ARBITER },
-    { email: "maya@recipient.com", passwordHash: demoHash, role: "recipient", displayName: "Maya Reyes", platformKey: "northbeam", walletAddress: RECIPIENT },
-    { email: "viewer@parkline.com", passwordHash: demoHash, role: "platform_viewer", displayName: "Parkline Viewer", platformKey: "northbeam", walletAddress: null },
+    { email: "dana@northbeam.com", passwordHash: demoHash, role: "reviewer", seat: "arbiter", displayName: "Dana Whitfield", platformKey: "northbeam", walletAddress: ARBITER },
+    { email: "maya@recipient.com", passwordHash: demoHash, role: "recipient", seat: "customer", displayName: "Maya Reyes", platformKey: "northbeam", walletAddress: RECIPIENT },
+    { email: "viewer@parkline.com", passwordHash: demoHash, role: "platform_viewer", seat: "platform", displayName: "Parkline Viewer", platformKey: "northbeam", walletAddress: null },
   );
   console.log("[seedWorld] demo users: dana@northbeam.com / maya@recipient.com / viewer@parkline.com (password: password123)");
   void ChainEvent;

@@ -2,7 +2,7 @@
 
 The React implementation of the Finné dispute-system prototype. Everything is
 hard-coded for now (no backend, no wallet, no chain calls) — it reproduces the
-interactive prototype in `project/Finne Dispute System.dc.html` screen for screen,
+interactive prototype in `project/Finne Dispute resolution system.dc.html` screen for screen,
 with the same content and the same Entente design system.
 
 ## Quick start

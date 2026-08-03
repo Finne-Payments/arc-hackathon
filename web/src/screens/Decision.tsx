@@ -2,7 +2,7 @@ import type { FinneActions, ViewModel } from "../useFinne";
 import type { ApiData } from "../useApi";
 import type { DecPhase } from "../types";
 import { BackLink, Card, PrimaryButton, SecondaryButton, TechChip } from "../components/primitives";
-import { shortHex } from "../mappers";
+import { explorerAddr, shortHex } from "../mappers";
 
 function Spinner({ color = "var(--brand-600)" }: { color?: string }) {
   return (
@@ -31,6 +31,7 @@ export function Decision({ v, actions, apiData }: { v: ViewModel; actions: Finne
     ? `${c.brief.latest.checks.filter((ch: { result: string }) => ch.result === "pass").length} of ${c.brief.latest.checks.length} checks passed`
     : "Brief pending.";
   const refundTo = (c?.payout as { refundTo?: string })?.refundTo ?? "";
+  const explorerBase = apiData?.config?.explorerUrl ?? null;
 
   return (
     <div className="rise-in" style={{ maxWidth: 820, margin: 0 }}>
@@ -53,16 +54,16 @@ export function Decision({ v, actions, apiData }: { v: ViewModel; actions: Finne
         </div>
       </Card>
 
-      <PhaseRouter phase={v.decPhase} v={v} actions={actions} refundTo={refundTo} caseNumber={caseNumber} />
+      <PhaseRouter phase={v.decPhase} v={v} actions={actions} refundTo={refundTo} caseNumber={caseNumber} explorerBase={explorerBase} />
     </div>
   );
 }
 
-function PhaseRouter({ phase, v, actions, refundTo, caseNumber }: { phase: DecPhase; v: ViewModel; actions: FinneActions; refundTo: string; caseNumber: string }) {
+function PhaseRouter({ phase, v, actions, refundTo, caseNumber, explorerBase }: { phase: DecPhase; v: ViewModel; actions: FinneActions; refundTo: string; caseNumber: string; explorerBase: string | null }) {
   if (phase === "idle") return <IdlePhase v={v} refundTo={refundTo} caseNumber={caseNumber} actions={actions} />;
   if (phase === "awaiting") return <AwaitingPhase onCancel={v.cancelSignature} />;
   if (phase === "sig_rejected") return <SigRejectedPhase onRetry={v.retrySign} onCancel={v.cancelSignature} />;
-  if (phase === "pending") return <PendingPhase onCopy={actions.copyTech} refundTo={refundTo} />;
+  if (phase === "pending") return <PendingPhase onCopy={actions.copyTech} refundTo={refundTo} explorerBase={explorerBase} />;
   if (phase === "failed") return <FailedPhase onRetry={v.retrySign} onCancel={v.cancelSignature} />;
   if (phase === "confirmed") return <ConfirmedPhase />;
   return <RecordedPhase onBack={() => actions.go("case")} />;
@@ -93,7 +94,7 @@ function IdlePhase({ v, refundTo, caseNumber, actions }: { v: ViewModel; refundT
           {v.previewText}
           {v.approveSelected && (
             <div style={{ marginTop: 8 }}>
-              Destination: <TechChip short={shortHex(refundTo)} full={refundTo} onCopy={undefined} /> · fixed at payment time
+              Destination: <TechChip short={shortHex(refundTo)} full={refundTo} /> · fixed at payment time
             </div>
           )}
         </div>
@@ -190,13 +191,13 @@ function SigRejectedPhase({ onRetry, onCancel }: { onRetry: () => void; onCancel
   );
 }
 
-function PendingPhase({ onCopy, refundTo }: { onCopy: (v: string) => void; refundTo: string }) {
+function PendingPhase({ onCopy, refundTo, explorerBase }: { onCopy: (v: string) => void; refundTo: string; explorerBase: string | null }) {
   return (
     <Card shadow="var(--shadow-md)" padding="36px" style={{ textAlign: "center" }}>
       <Spinner color="var(--brand-600)" />
       <div style={{ fontFamily: "var(--font-sans)", fontWeight: 700, fontSize: 17, marginBottom: 6 }}>Signed · watching for confirmation on Arc</div>
       <div style={{ fontSize: 13, color: "var(--color-fg-muted)", maxWidth: 400, margin: "0 auto", lineHeight: 1.6 }}>
-        Transaction submitted: <TechChip short={shortHex(refundTo)} full={refundTo} onCopy={onCopy} explorer />
+        Transaction submitted: <TechChip short={shortHex(refundTo)} full={refundTo} onCopy={onCopy} explorer={explorerAddr(explorerBase, refundTo)} />
       </div>
     </Card>
   );

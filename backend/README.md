@@ -1,6 +1,6 @@
 # Finné — Backend
 
-Express REST API over MongoDB. The dispute system for stablecoin payouts on
+Express REST API over MongoDB. The Dispute resolution system for stablecoin payouts on
 Circle's Refund Protocol. This is the C4 component (PRD §7.3): receipts, work
 orders, evidence, cases, responses, decisions, with server-side state machines,
 an RBAC permission matrix, append-only enforcement, and canonical hashing.

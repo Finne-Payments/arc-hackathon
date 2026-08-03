@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { requirePermission, requireInternal, currentRole } from "../middleware.ts";
 import { recordDetectedPayment, getSharedReceipt, openedByForRole, openDispute } from "../services.ts";
-import { Payout } from "../models/index.ts";
+import { Payout, WorkOrder, User } from "../models/index.ts";
 import { scopeFor } from "../scope.ts";
 import { HttpError } from "../errors.ts";
 
@@ -40,6 +40,111 @@ payoutRoutes.post("/payouts/detected", requireInternal, async (req, res, next) =
     };
     const { payout, created } = await recordDetectedPayment(det);
     res.status(201).json({ payout, created });
+  } catch (e) {
+    next(e);
+  }
+});
+
+/**
+ * @openapi
+ * /payouts:
+ *   get:
+ *     tags: [Payouts]
+ *     summary: Payout ledger (sorted by paidAt)
+ *     security: [{ bearerAuth: [] }]
+ *     responses: { 200: { description: "{ payouts: PayoutRow[] }" } }
+ *     notes: Requires `payout:read`.
+/**
+ * @openapi
+ * /payouts:
+ *   post:
+ *     tags: [Payouts]
+ *     summary: Create a protected payout directly (no chain required)
+ *     description: Used by the New Payout form when the RefundProtocol contract is not deployed yet. Creates a Payout record in ESCROWED status with the form data. When a chain is available, use the wallet signing path instead.
+ *     security: [{ bearerAuth: [] }]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [recipientWallet, amount, refundTo]
+ *             properties:
+ *               recipientWallet: { type: string }
+ *               amount: { type: string }
+ *               refundTo: { type: string }
+ *               description: { type: string }
+ *               deliverables: { type: array }
+ *               protectionDate: { type: string }
+ *     responses:
+ *       201: { description: "{ payout: PayoutRow }" }
+ *       400: { description: "Missing required fields" }
+ *     notes: Requires `workorder:create` (reviewer/merchant only).
+ */
+payoutRoutes.post("/payouts", requirePermission("workorder:create"), async (req, res, next) => {
+  try {
+    const { recipientWallet, amount, refundTo, description, deliverables, protectionDate } = req.body ?? {};
+    if (!recipientWallet || !amount || !refundTo) {
+      throw new HttpError(400, "Recipient wallet, amount, and refund address are required.");
+    }
+
+    const caller = req.session.userId ? await User.findById(req.session.userId).lean() : null;
+    const platformKey = caller?.platformKey ?? "northbeam";
+    const rKey = recipientWallet.toLowerCase().slice(0, 10);
+
+    // Also create a work order if deliverables are provided
+    let workOrderRef: string | null = null;
+    if (deliverables && Array.isArray(deliverables) && deliverables.length > 0 && description) {
+      const wo = await WorkOrder.create({
+        platformKey,
+        recipientKey: rKey,
+        description: String(description),
+        deliverables: deliverables.map((d: { name?: string; due?: string }) => ({
+          name: String(d.name ?? ""),
+          due: String(d.due ?? ""),
+          acceptanceCriteria: "",
+        })),
+        amount: String(amount),
+        currency: "USDC",
+        status: "open",
+      });
+      workOrderRef = `${rKey}:${description}`;
+      void wo;
+    }
+
+    const paymentId = `pmt_${Date.now()}`;
+    const now = new Date();
+    const lockupEnd = protectionDate ? new Date(protectionDate).toISOString() : new Date(now.getTime() + 30 * 86400 * 1000).toISOString();
+
+    const { canonicalHash } = await import("../canonical.ts");
+    const receiptBody = {
+      paymentId,
+      chain: "arc-testnet",
+      contractAddress: "not-deployed",
+      txHash: `0x${paymentId.padEnd(64, "0").slice(0, 64)}`,
+      amount: String(amount),
+      refundTo,
+      recipientKey: rKey,
+      platformKey,
+      paidAt: now.toISOString(),
+    };
+    const receiptHash = canonicalHash(receiptBody);
+
+    const payout = await Payout.create({
+      ...receiptBody,
+      recipientWallet,
+      workOrderRef,
+      trancheIndex: null,
+      disputeDeadline: lockupEnd,
+      lockupEnd,
+      status: "ESCROWED",
+      receiptHash,
+      registryAnchorTx: null,
+      refundTxHash: null,
+      withdrawTxHash: null,
+    });
+
+    res.status(201).json({ payout });
   } catch (e) {
     next(e);
   }

@@ -4,7 +4,7 @@ import { useFinne } from "./useFinne";
 import { useApi } from "./useApi";
 import { Sidebar } from "./components/Sidebar";
 import { TopBar } from "./components/TopBar";
-import { DemoControls, StatusStrip, Toasts } from "./components/Overlays";
+import { Toasts, NotificationToasts } from "./components/Overlays";
 import { Ledger } from "./screens/Ledger";
 import { Disputes } from "./screens/Disputes";
 import { Platform } from "./screens/Platform";
@@ -14,7 +14,7 @@ import { CaseRoom } from "./screens/CaseRoom";
 import { Decision } from "./screens/Decision";
 import { RecipientHome } from "./screens/RecipientHome";
 import { Login } from "./screens/Login";
-import { roleBadge } from "./mappers";
+import { roleBadge, roleLabel } from "./mappers";
 import { api, getToken, setToken, type PublicUser } from "./api";
 import type { Role } from "./types";
 import type { ViewModel } from "./useFinne";
@@ -77,10 +77,13 @@ export default function App() {
         .then((res) => {
           setUser(res.user);
           // Restore the frontend role from localStorage (chosen at login), or
-          // fall back to deriving it from the backend role.
+          // fall back to the seat the backend bound to this wallet, then to the
+          // derived backend role.
           const saved = localStorage.getItem(FRONTEND_ROLE_KEY);
           if (isValidRole(saved)) {
             setFrontendRole(saved);
+          } else if (isValidRole(res.user.seat)) {
+            setFrontendRole(res.user.seat);
           } else {
             setFrontendRole(userRoleToFrontend(res.user.role));
           }
@@ -122,6 +125,7 @@ export default function App() {
         setUser(null);
         setFrontendRole(null);
         localStorage.removeItem(FRONTEND_ROLE_KEY);
+        window.history.replaceState({}, "", "/");
       }}
     />
   );
@@ -130,7 +134,6 @@ export default function App() {
 function AuthenticatedApp({ user, frontendRole, onLogout }: { user: PublicUser; frontendRole: Role; onLogout: () => void }) {
   const finne = useFinne(frontendRole);
   const { v, actions, state } = finne;
-  const [controlsOpen, setControlsOpen] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -140,15 +143,19 @@ function AuthenticatedApp({ user, frontendRole, onLogout }: { user: PublicUser; 
     apiActions.setRole(frontendRole);
   }, [frontendRole, apiActions]);
 
-  // URL ↔ screen sync (GAP-W5). On mount, jump to the screen the URL names (if
-  // any); thereafter keep the URL in step with the active screen so it is
-  // shareable/bookmarkable. `screen: null` (role-switch reset) maps to home.
+  // URL ↔ screen sync with role-based route guards.
+  // - On mount: jump to the URL's screen ONLY if the role is allowed to see it;
+  //   otherwise redirect to the role's home screen.
+  // - Thereafter: keep the URL in step with the active screen.
+  // - When the role changes (view-as switch): reset to that role's home screen.
   const didInit = useRef(false);
   useEffect(() => {
     if (!didInit.current) {
       didInit.current = true;
       const fromPath = PATH_SCREEN[location.pathname];
-      if (fromPath) actions.go(fromPath as never);
+      if (fromPath) {
+        actions.go(fromPath as never);
+      }
       return;
     }
     if (v.screen) {
@@ -157,6 +164,21 @@ function AuthenticatedApp({ user, frontendRole, onLogout }: { user: PublicUser; 
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [v.screen, location.pathname]);
+
+  // When the role changes (view-as dropdown or role switch), redirect to the
+  // home screen for the new role.
+  useEffect(() => {
+    const homePath = SCREEN_PATH[
+      frontendRole === "arbiter" ? "disputes"
+      : frontendRole === "merchant" ? "ledger"
+      : frontendRole === "customer" ? "home"
+      : "platform"
+    ];
+    if (homePath && location.pathname !== homePath) {
+      navigate(homePath, { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [frontendRole]);
 
   useEffect(() => {
     if (v.screen === "case") {
@@ -170,10 +192,18 @@ function AuthenticatedApp({ user, frontendRole, onLogout }: { user: PublicUser; 
 
   return (
     <div style={{ minHeight: "100vh", display: "flex", alignItems: "stretch" }}>
-      <Sidebar role={v.role} screen={v.screen} actions={actions} user={user} onLogout={onLogout} />
+      <Sidebar role={v.role} screen={v.screen} actions={actions} user={user} onLogout={onLogout} apiData={apiData} />
 
       <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
-        <TopBar roleBadge={`${user.displayName} · ${user.email}`} roleDot={roleBadge(v.role).dot} />
+        <TopBar
+          roleBadge={`${roleLabel(v.role)} · ${user.displayName}`}
+          roleLabel={roleLabel(v.role)}
+          roleDot={roleBadge(v.role).dot}
+          user={user}
+          onLogout={onLogout}
+          apiData={apiData}
+          actions={actions}
+        />
 
         <div className="app-main" style={{ flex: 1, width: "100%", maxWidth: 1100, margin: 0, padding: "28px 32px 110px", boxSizing: "border-box" }}>
           {v.screen === "ledger" && <Ledger v={v} actions={actions} apiData={apiData} />}
@@ -187,9 +217,8 @@ function AuthenticatedApp({ user, frontendRole, onLogout }: { user: PublicUser; 
         </div>
       </div>
 
-      {state.demoMode && !state.stripDismissed && <StatusStrip actions={actions} />}
-      <DemoControls v={v} actions={actions} open={controlsOpen} onToggle={() => setControlsOpen((o) => !o)} />
       <Toasts exportToast={state.exportToast} copied={state.copied} />
+      <NotificationToasts notifications={apiData.notifications} />
     </div>
   );
 }

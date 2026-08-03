@@ -3,6 +3,7 @@ import { applyCaseEvent, applyPaymentEvent, IllegalTransitionError } from "./sta
 import { HttpError } from "./errors.ts";
 import { outcomeCode, type DecisionOutcome } from "./statusVocabulary.ts";
 import type { Role } from "./rbac.ts";
+import { notify } from "./notify.ts";
 import {
   AnchorJob,
   Brief,
@@ -108,6 +109,18 @@ export async function recordDetectedPayment(det: DetectedPayment): Promise<{ pay
   });
 
   await enqueueAnchor("receipt", payout.paymentId, payout.paymentId, receiptHash);
+
+  await notify({
+    type: "payment",
+    title: "Payment protected on Arc",
+    body: `${det.amount} USDC escrowed. Receipt anchored.`,
+    paymentId: payout.paymentId,
+    audience: [
+      { role: "recipient", recipientWallet: det.to },
+      { role: "reviewer", platformKey: payout.platformKey },
+    ],
+  });
+
   return { payout, created: true };
 }
 
@@ -172,6 +185,19 @@ export async function openDispute(
   await caseDoc.save();
 
   await enqueueAnchor("case", caseDoc.caseNumber, paymentId, caseHash);
+
+  await notify({
+    type: "dispute",
+    title: "A dispute was opened on your payment",
+    body: `${body.amountContested || ""} USDC contested over: ${body.freeText.slice(0, 80)}. Reply by the deadline.`,
+    caseNumber: caseDoc.caseNumber,
+    paymentId,
+    audience: [
+      { role: "recipient", recipientWallet: payout.recipientWallet },
+      { role: "reviewer", platformKey: payout.platformKey },
+    ],
+  });
+
   return { caseDoc, paymentId };
 }
 
@@ -217,6 +243,17 @@ export async function submitResponse(
     await attachEvidence(caseNumber, "recipient", ev.type, ev.title, ev.fileOrText);
   }
   await caseDoc.save();
+
+  const payoutForNotify = await Payout.findOne({ paymentId: caseDoc.payoutRef }).lean();
+  await notify({
+    type: "reply",
+    title: "Recipient replied to the case",
+    body: `${authorName} submitted a response. The case is ready for your review.`,
+    caseNumber,
+    paymentId: caseDoc.payoutRef,
+    audience: [{ role: "reviewer", platformKey: payoutForNotify?.platformKey ?? null }],
+  });
+
   return { caseDoc };
 }
 
@@ -274,6 +311,20 @@ export async function requestInfo(
   caseDoc.responseDeadline = new Date(Date.now() + windowHours * 3600 * 1000).toISOString();
   caseDoc.infoRequests.push({ target, text, requestedAt: new Date().toISOString(), answeredAt: null });
   await caseDoc.save();
+
+  const payoutForReq = await Payout.findOne({ paymentId: caseDoc.payoutRef }).lean();
+  const audienceRole = target === "recipient" ? "recipient" : "reviewer";
+  await notify({
+    type: "info_request",
+    title: "More information requested",
+    body: `Reviewer needs: ${text}`,
+    caseNumber,
+    paymentId: caseDoc.payoutRef,
+    audience: audienceRole === "recipient"
+      ? [{ role: "recipient", recipientWallet: payoutForReq?.recipientWallet }]
+      : [{ role: "reviewer", platformKey: payoutForReq?.platformKey ?? null }],
+  });
+
   return { caseDoc };
 }
 
@@ -353,6 +404,23 @@ export async function recordDecision(
   }
 
   await caseDoc.save();
+
+  await notify({
+    type: "decision",
+    title: `Case ${caseDoc.caseNumber} decided: ${body.outcome}`,
+    body: body.outcome === "refund"
+      ? "Refund approved. The reviewer's wallet will sign the on-chain transaction."
+      : body.outcome === "release"
+        ? "Refund rejected — the payout stands and will become withdrawable."
+        : "Closed with no action. The payout continues on its original schedule.",
+    caseNumber: caseDoc.caseNumber,
+    paymentId: caseDoc.payoutRef,
+    audience: [
+      { role: "recipient", recipientWallet: payout?.recipientWallet },
+      { role: "platform_viewer", platformKey: payout?.platformKey ?? null },
+    ],
+  });
+
   return { decision, unsignedTx };
 }
 
@@ -430,6 +498,18 @@ export async function confirmRefundExecuted(
       await enqueueAnchor("decision", decision._id.toString(), paymentId, decision.decisionHash, 1);
     }
   }
+
+  await notify({
+    type: "refund",
+    title: "Refund confirmed on Arc",
+    body: `Refund of ${payout.amount} USDC confirmed. Transaction: ${refundTxHash.slice(0, 10)}…`,
+    caseNumber: caseDoc?.caseNumber ?? null,
+    paymentId,
+    audience: [
+      { role: "recipient", recipientWallet: payout.recipientWallet },
+      { role: "platform_viewer", platformKey: payout.platformKey ?? null },
+    ],
+  });
 }
 
 /* ---- withdrawal confirmation (internal hook) ---- */
@@ -443,6 +523,17 @@ export async function confirmWithdrawn(paymentId: string, withdrawTxHash: string
   } catch (e) {
     asStateError(e, "payment");
   }
+
+  await notify({
+    type: "withdraw",
+    title: "Withdrawal confirmed on Arc",
+    body: `${payout.amount} USDC withdrawn. Transaction: ${withdrawTxHash.slice(0, 10)}…`,
+    paymentId,
+    audience: [
+      { role: "recipient", recipientWallet: payout.recipientWallet },
+      { role: "reviewer", platformKey: payout.platformKey ?? null },
+    ],
+  });
 }
 
 /* ---- anchor job enqueue (no-op worker in this build; documented stub) ---- */

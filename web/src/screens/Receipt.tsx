@@ -1,7 +1,7 @@
 import type { FinneActions, ViewModel } from "../useFinne";
 import type { ApiData } from "../useApi";
 import { BackLink, Card, Eyebrow, SecondaryButton, SharedViewBadge, StatusPill, TechChip } from "../components/primitives";
-import { shortHex } from "../mappers";
+import { explorerAddr, explorerTx, receiptStatusView, shortHex } from "../mappers";
 
 function ChainRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -27,6 +27,16 @@ export function Receipt({ v, actions, apiData }: { v: ViewModel; actions: FinneA
   const evidence = r?.evidence ?? [];
   const deliverables = workOrder?.deliverables ?? [];
 
+  // Chain wiring + platform policy come from /config; never hard-coded.
+  const cfg = apiData?.config ?? null;
+  const explorerBase = cfg?.explorerUrl ?? null;
+  const chainName = cfg?.chainName ?? "Arc";
+  const policySummary = cfg?.platform?.policy?.summary ?? "Money unlocks after the lockup period unless a dispute is open.";
+
+  // Receipt status is derived from the payout's real status, not the demo
+  // caseStage — a freshly-protected payout reads "Protected", not "Disputed".
+  const statusView = payout ? receiptStatusView(payout) : null;
+
   return (
     <div className="rise-in print-area" style={{ maxWidth: 820, margin: 0 }}>
       <div className="no-print" style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16, flexWrap: "wrap" }}>
@@ -42,13 +52,21 @@ export function Receipt({ v, actions, apiData }: { v: ViewModel; actions: FinneA
 
       <div style={{ display: "flex", alignItems: "baseline", gap: 14, marginBottom: 6, flexWrap: "wrap" }}>
         <h1 style={{ margin: 0, fontFamily: "var(--font-sans)", fontWeight: 700, fontSize: 24, letterSpacing: "-0.02em" }}>{v.receiptTitle}</h1>
-        <StatusPill label={v.receiptChipLabel} dot={v.receiptChipColor.includes("risk") ? "risk" : "warn"} />
+        {statusView && <StatusPill label={statusView.chipLabel} dot={statusView.chipDot} />}
       </div>
       <div style={{ fontSize: 14, color: "var(--color-fg-muted)", marginBottom: 20 }}>
-        {payout ? `Payment ${payout.paymentId} · ${new Date(payout.paidAt).toLocaleDateString()}` : "Loading receipt…"}
+        {payout ? (
+          <>
+            <span style={{ fontFamily: "var(--font-mono)", fontWeight: 600, color: "var(--color-fg)" }}>{payout.amount} USDC</span>
+            {workOrder?.description ? <> · {workOrder.description}</> : null}
+            <> · payment {payout.paymentId} · {new Date(payout.paidAt).toLocaleDateString()}</>
+          </>
+        ) : (
+          "Loading receipt…"
+        )}
       </div>
 
-      {v.showDisputeBanner && (
+      {statusView?.showBanner && (
         <div style={{ display: "flex", alignItems: "center", gap: 12, background: "var(--warn-soft)", border: "1px solid var(--warn-border)", borderRadius: "var(--radius-md)", padding: "13px 18px", marginBottom: 20, flexWrap: "wrap" }}>
           <span style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--warn-500)" }} />
           <span style={{ fontSize: 14, flex: 1 }}>
@@ -70,19 +88,16 @@ export function Receipt({ v, actions, apiData }: { v: ViewModel; actions: FinneA
           <Card shadow="var(--shadow-sm)" padding="24px">
             <Eyebrow style={{ marginBottom: 16 }}>What the chain recorded</Eyebrow>
             <div style={{ fontFamily: "var(--font-mono)", fontWeight: 500, fontSize: 28, fontVariantNumeric: "tabular-nums", marginBottom: 2 }}>{payout.amount} USDC</div>
-            <div style={{ fontSize: 12, color: "var(--ink-400)", marginBottom: 20 }}>on Arc · via Circle Refund Protocol</div>
+            <div style={{ fontSize: 12, color: "var(--ink-400)", marginBottom: 20 }}>on {chainName} · via Circle Refund Protocol</div>
             <div style={{ display: "flex", flexDirection: "column", gap: 13 }}>
-              <ChainRow label="From wallet">
-                <TechChip short={shortHex(payout.platformKey)} />
+              <ChainRow label="From wallet · refund address (fixed at payment time)">
+                <TechChip short={shortHex(payout.refundTo)} full={payout.refundTo} onCopy={actions.copyTech} explorer={explorerAddr(explorerBase, payout.refundTo)} />
               </ChainRow>
               <ChainRow label="To wallet">
-                <TechChip short={shortHex(payout.recipientWallet)} full={payout.recipientWallet} onCopy={actions.copyTech} explorer />
-              </ChainRow>
-              <ChainRow label="Refund address · fixed at payment time">
-                <TechChip short={shortHex(payout.refundTo)} full={payout.refundTo} onCopy={actions.copyTech} explorer />
+                <TechChip short={shortHex(payout.recipientWallet)} full={payout.recipientWallet} onCopy={actions.copyTech} explorer={explorerAddr(explorerBase, payout.recipientWallet)} />
               </ChainRow>
               <ChainRow label="Transaction ID">
-                <TechChip short={shortHex(payout.txHash)} full={payout.txHash} onCopy={actions.copyTech} explorer />
+                <TechChip short={shortHex(payout.txHash)} full={payout.txHash} onCopy={actions.copyTech} explorer={explorerTx(explorerBase, payout.txHash)} />
               </ChainRow>
               <ChainRow label="Payment ID">
                 <TechChip short={payout.paymentId} full={payout.paymentId} onCopy={actions.copyTech} />
@@ -92,7 +107,7 @@ export function Receipt({ v, actions, apiData }: { v: ViewModel; actions: FinneA
               </ChainRow>
               {payout.registryAnchorTx && (
                 <ChainRow label="Receipt anchored on Arc">
-                  <TechChip short={shortHex(payout.registryAnchorTx)} full={payout.registryAnchorTx} onCopy={actions.copyTech} explorer />
+                  <TechChip short={shortHex(payout.registryAnchorTx)} full={payout.registryAnchorTx} onCopy={actions.copyTech} explorer={explorerTx(explorerBase, payout.registryAnchorTx)} />
                 </ChainRow>
               )}
             </div>
@@ -124,7 +139,7 @@ export function Receipt({ v, actions, apiData }: { v: ViewModel; actions: FinneA
               </div>
             )}
             <div style={{ fontSize: 13, color: "var(--color-fg-muted)", lineHeight: 1.55, margin: "14px 0 16px" }}>
-              Policy: the money unlocks after the lockup period unless a dispute is open.
+              Policy: {policySummary}
             </div>
 
             <Eyebrow color="var(--color-fg-subtle)" style={{ margin: "4px 0 10px" }}>
@@ -164,7 +179,7 @@ export function Receipt({ v, actions, apiData }: { v: ViewModel; actions: FinneA
               {decision.outcome === "refund" ? "Refund approved" : decision.outcome === "release" ? "Refund rejected — payout released" : "Closed with no action"} · {payout?.amount} USDC
             </div>
             <div style={{ fontSize: 13, color: "var(--color-fg-muted)", marginBottom: 18 }}>
-              Decided by <strong style={{ color: "var(--color-fg)" }}>{decision.decidedByName}</strong> · wallet <TechChip short={shortHex(decision.decidedByWallet)} full={decision.decidedByWallet} onCopy={actions.copyTech} /> · {new Date(decision.decidedAt).toUTCString()}
+              Decided by <strong style={{ color: "var(--color-fg)" }}>{decision.decidedByName}</strong> · wallet <TechChip short={shortHex(decision.decidedByWallet)} full={decision.decidedByWallet} onCopy={actions.copyTech} explorer={explorerAddr(explorerBase, decision.decidedByWallet)} /> · {new Date(decision.decidedAt).toUTCString()}
             </div>
             <div style={{ background: "var(--color-surface-2)", border: "1px solid var(--color-border)", borderRadius: "var(--radius-md)", padding: "16px 18px", fontSize: 14, lineHeight: 1.65, marginBottom: 18 }}>
               <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: ".04em", textTransform: "uppercase", color: "var(--color-fg-subtle)", marginBottom: 8 }}>Written reasons</div>
@@ -175,7 +190,7 @@ export function Receipt({ v, actions, apiData }: { v: ViewModel; actions: FinneA
                 <div>
                   <span style={{ color: "var(--color-fg-subtle)" }}>Refund transaction</span>
                   <br />
-                  <TechChip short={shortHex(decision.refundTxHash)} full={decision.refundTxHash} onCopy={actions.copyTech} explorer />
+                  <TechChip short={shortHex(decision.refundTxHash)} full={decision.refundTxHash} onCopy={actions.copyTech} explorer={explorerTx(explorerBase, decision.refundTxHash)} />
                 </div>
               )}
               <div>
@@ -187,7 +202,7 @@ export function Receipt({ v, actions, apiData }: { v: ViewModel; actions: FinneA
                 <div>
                   <span style={{ color: "var(--color-fg-subtle)" }}>Anchored on Arc</span>
                   <br />
-                  <TechChip short={shortHex(decision.registryAnchorTx)} full={decision.registryAnchorTx} onCopy={actions.copyTech} explorer />
+                  <TechChip short={shortHex(decision.registryAnchorTx)} full={decision.registryAnchorTx} onCopy={actions.copyTech} explorer={explorerTx(explorerBase, decision.registryAnchorTx)} />
                 </div>
               )}
               {payout?.receiptHash && (
@@ -211,7 +226,7 @@ export function Receipt({ v, actions, apiData }: { v: ViewModel; actions: FinneA
           <svg width={13} height={13} viewBox="0 0 24 24" fill="none" stroke="var(--brand-600)" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round">
             <path d="M12 2 4 6v6c0 5 3.4 8.4 8 10 4.6-1.6 8-5 8-10V6l-8-4Z" />
           </svg>
-          Receipt fingerprint anchored on Arc · <TechChip short={shortHex(payout.receiptHash)} full={payout.receiptHash} onCopy={actions.copyTech} explorer />
+          Receipt fingerprint anchored on {chainName} · <TechChip short={shortHex(payout.receiptHash)} full={payout.receiptHash} onCopy={actions.copyTech} />
         </div>
       )}
     </div>

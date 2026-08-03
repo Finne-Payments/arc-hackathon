@@ -81,7 +81,7 @@ function Row({ row, countdown, actions }: { row: (LedgerRow & { paymentId?: stri
         {row.status.label === "Disputed" ? `Reply due in ${countdown}` : row.deadline}
       </span>
       <a
-        onClick={() => actions.go("receipt")}
+        onClick={() => row.paymentId && actions.viewReceipt(row.paymentId)}
         style={{ cursor: "pointer", fontSize: 13, fontWeight: 600 }}
       >
         Receipt
@@ -101,6 +101,7 @@ export function Ledger({
 }) {
   const { rows, live } = useRows(apiData);
   const stats = live ? ledgerStats(apiData!.payouts as never) : null;
+  const reserve = apiData?.status?.chain?.arbiterReserve;
 
   return (
     <div className="rise-in">
@@ -228,7 +229,7 @@ export function Ledger({
               <StatCard label="Resolved this month" value={String(stats?.resolved ?? 2)} sub={stats?.resolvedSub ?? "1 refunded · 1 cleared"} />
             </div>
             <div style={{ borderLeft: "1px solid var(--color-border)" }}>
-              <StatCard label="Arbiter reserve" value="500 USDC" sub="Backs post-escrow refunds" />
+              <StatCard label="Arbiter reserve" value={reserve ? `${reserve} USDC` : "—"} sub="Backs post-escrow refunds" />
             </div>
           </div>
 

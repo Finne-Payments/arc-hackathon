@@ -39,6 +39,8 @@ export interface FinneState {
   /* internal interaction state */
   screen: Screen | null;
   roleOverride: Role | null;
+  /** The payout the user clicked — drives which receipt is loaded. */
+  selectedPaymentId: string | null;
   stripDismissed: boolean;
   copied: boolean;
   exportToast: boolean;
@@ -69,6 +71,7 @@ export function useFinne(initialRole: Role = "arbiter") {
     demoMode: false,
     screen: null,
     roleOverride: null,
+    selectedPaymentId: null,
     stripDismissed: false,
     copied: false,
     exportToast: false,
@@ -113,6 +116,12 @@ export function useFinne(initialRole: Role = "arbiter") {
     window.scrollTo({ top: 0, behavior: "auto" });
   }, []);
 
+  /** Open the receipt for a specific payout (the one the user clicked). */
+  const viewReceipt = useCallback((paymentId: string) => {
+    setState((s) => ({ ...s, selectedPaymentId: paymentId, screen: "receipt" }));
+    window.scrollTo({ top: 0, behavior: "auto" });
+  }, []);
+
   const setRoleProp = useCallback((role: Role) => patch({ role }), [patch]);
   const setCaseStage = useCallback((caseStage: CaseStage) => patch({ caseStage }), [patch]);
   const setLedgerState = useCallback((ledgerState: LedgerState) => patch({ ledgerState }), [patch]);
@@ -154,9 +163,27 @@ export function useFinne(initialRole: Role = "arbiter") {
     const isRecipient = role === "customer";
     const isPlatformSide = role === "platform";
 
+    // Route guard: if the current screen is not allowed for this role, redirect
+    // to the role's home screen. This prevents e.g. a customer accessing /ledger
+    // or a merchant accessing /decision (arbiter-only).
+    const allowedScreens: Screen[] = role === "arbiter"
+      ? ["disputes", "case", "decision", "receipt", "final"]
+      : role === "merchant"
+        ? ["ledger", "newpayout", "disputes", "case", "receipt", "final"]
+        : role === "customer"
+          ? ["home", "disputes", "case", "receipt", "final"]
+          : ["platform", "disputes", "case", "receipt", "final"]; // platform
+
+    const homeScreen: Screen =
+      role === "arbiter" ? "disputes"
+      : role === "merchant" ? "ledger"
+      : role === "customer" ? "home"
+      : "platform";
+
     const screen: Screen =
-      state.screen ??
-      (isRecipient ? "home" : role === "platform" ? "platform" : isReviewer ? "disputes" : "ledger");
+      (state.screen && allowedScreens.includes(state.screen))
+        ? state.screen
+        : homeScreen;
 
     const stage = state.caseStage;
     const stageAwaiting = stage === "awaiting_response";
@@ -354,6 +381,7 @@ export function useFinne(initialRole: Role = "arbiter") {
   const actions = useMemo(
     () => ({
       go,
+      viewReceipt,
       asRole,
       setRoleProp,
       setCaseStage,
@@ -397,7 +425,7 @@ export function useFinne(initialRole: Role = "arbiter") {
         }
       },
     }),
-    [go, asRole, setRoleProp, setCaseStage, setLedgerState, setWalletSim, setDemoMode, patch]
+    [go, viewReceipt, asRole, setRoleProp, setCaseStage, setLedgerState, setWalletSim, setDemoMode, patch]
   );
 
   return { v, actions, state };

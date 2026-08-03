@@ -18,7 +18,12 @@ import type { UnsignedTx } from "./api";
 export const arcTestnet = defineChain({
   id: 5042002,
   name: "Arc Testnet",
-  nativeCurrency: { name: "USDC", symbol: "USDC", decimals: 6 },
+  // MetaMask REQUIRES nativeCurrency.decimals === 18 in wallet_addEthereumChain
+  // (hard validation — it rejects any other value). Arc's real native gas token
+  // is USDC (6 decimals), but declaring 18 here is the only way to add the chain.
+  // Side effect: MetaMask's native balance display is off by 10^12 — display only;
+  // actual USDC amounts are computed in the app (see NewPayout's 1_000_000 factor).
+  nativeCurrency: { name: "USDC", symbol: "USDC", decimals: 18 },
   rpcUrls: { default: { http: ["https://rpc.testnet.arc.io"] } },
   blockExplorers: { default: { name: "ArcScan", url: "https://testnet.arcscan.app" } },
   testnet: true,
@@ -85,7 +90,31 @@ export async function connectWallet(): Promise<WalletClient> {
   const eth = (window as unknown as { ethereum?: Record<string, unknown> }).ethereum;
   if (!eth) throw new Error("No wallet found. Install MetaMask or another EIP-1193 wallet.");
 
-  const accounts = (await (eth.request as (args: { method: string }) => Promise<string[]>)({ method: "eth_requestAccounts" })) ?? [];
+  // Prefer `wallet_requestPermissions({ eth_accounts })` over `eth_requestAccounts`.
+  // Recent MetaMask builds route `eth_requestAccounts` through their multichain
+  // (CAIP-25) session flow, which fails with:
+  //   "Received scopeString value(s): eip155:... not supported by the wallet"
+  // MetaMask proposes a list of chains the wallet doesn't recognise (none of
+  // them Arc) and then rejects its own proposal. Requesting the `eth_accounts`
+  // permission directly sidesteps the multichain session entirely. Wallets that
+  // don't implement `wallet_requestPermissions` fall back to the standard call.
+  let accounts: string[] = [];
+  try {
+    await (eth.request as (args: { method: string; params?: unknown }) => Promise<unknown>)({
+      method: "wallet_requestPermissions",
+      params: [{ eth_accounts: {} }],
+    });
+    accounts =
+      (await (eth.request as (args: { method: string }) => Promise<string[]>)({ method: "eth_accounts" })) ?? [];
+  } catch (e) {
+    // If the user actively rejected the permissions popup, surface that.
+    if (isUserRejection(e)) throw e;
+    // Otherwise (method unsupported, etc.) fall back to the standard connect.
+    accounts =
+      (await (eth.request as (args: { method: string }) => Promise<string[]>)({
+        method: "eth_requestAccounts",
+      })) ?? [];
+  }
   if (accounts.length === 0) throw new Error("No account available.");
 
   await ensureArcChain();

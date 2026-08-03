@@ -84,7 +84,8 @@ export function TechChip({
   short: string;
   full?: string;
   onCopy?: (value: string) => void;
-  explorer?: boolean;
+  /** Full explorer URL (tx or address) — opens in a new tab when provided. */
+  explorer?: string | undefined;
 }) {
   return (
     <>
@@ -117,7 +118,13 @@ export function TechChip({
         </span>
       )}
       {explorer && (
-        <a title="View on Arc explorer" style={{ fontSize: 11, cursor: "pointer" }}>
+        <a
+          href={explorer}
+          target="_blank"
+          rel="noopener noreferrer"
+          title="View on explorer"
+          style={{ fontSize: 13, cursor: "pointer", textDecoration: "none", lineHeight: 1 }}
+        >
           ↗
         </a>
       )}

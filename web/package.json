@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "Finné — the dispute system for stablecoin payouts. Built on Circle's Refund Protocol, running on Arc testnet.",
+  "description": "Finné — the Dispute resolution system for stablecoin payouts. Built on Circle's Refund Protocol, running on Arc testnet.",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",

@@ -7,6 +7,8 @@ import {
   type SharedCase,
   type SharedReceipt,
   type StatusBody,
+  type NotificationRow,
+  type WalletBalance,
 } from "./api";
 import type { Role } from "./types";
 
@@ -27,6 +29,9 @@ export interface ApiData {
   cases: CaseRow[];
   activeCase: SharedCase | null;
   activeReceipt: SharedReceipt | null;
+  notifications: NotificationRow[];
+  unreadCount: number;
+  walletBalance: WalletBalance | null;
   loading: boolean;
   error: string | null;
   /** Bump on every successful poll — components can use this to know data is fresh. */
@@ -49,6 +54,9 @@ export function useApi(initialRole: Role): { data: ApiData; actions: ApiActions 
     cases: [],
     activeCase: null,
     activeReceipt: null,
+    notifications: [],
+    unreadCount: 0,
+    walletBalance: null,
     loading: true,
     error: null,
     tick: 0,
@@ -65,7 +73,11 @@ export function useApi(initialRole: Role): { data: ApiData; actions: ApiActions 
 
   const refresh = useCallback(async () => {
     try {
-      const [status, payouts, cases] = await Promise.all([api.status(), api.payouts(), api.cases()]);
+      const [status, payouts, cases, notifs, walletBalance] = await Promise.all([
+        api.status(), api.payouts(), api.cases(),
+        api.notifications().catch(() => ({ notifications: [], unreadCount: 0 })),
+        api.walletBalance().catch(() => null),
+      ]);
       let cfg = dataRef.current.config;
       if (!cfg) {
         try {
@@ -80,6 +92,9 @@ export function useApi(initialRole: Role): { data: ApiData; actions: ApiActions 
         status,
         payouts: payouts.payouts,
         cases: cases.cases,
+        notifications: notifs.notifications,
+        unreadCount: notifs.unreadCount,
+        walletBalance,
         loading: false,
         error: null,
         tick: d.tick + 1,

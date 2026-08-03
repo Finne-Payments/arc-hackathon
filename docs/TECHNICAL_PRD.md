@@ -1,6 +1,6 @@
 # Finné — Technical Product Requirements Document
 
-## The dispute system for stablecoin payouts, on Circle's Refund Protocol
+## The Dispute resolution system for stablecoin payouts, on Circle's Refund Protocol
 
 ---
 
@@ -57,7 +57,7 @@ The system is five services and two contracts:
 
 ### 3.1 Problem
 
-Businesses and platforms pay creators, contractors and sellers in USDC. The chain records that a wallet sent 100 USDC to another wallet. It does not record **why**. When a payout is wrong, short, or challenged, there is no claim, no evidence, no hearing and no record. Platforms claw money back by silent deduction. Recipients have nowhere to appeal. Every other payment rail grew a dispute system — card networks got chargebacks, banks got recalls. Stablecoins shipped without one.
+Businesses and platforms pay creators, contractors and sellers in USDC. The chain records that a wallet sent 100 USDC to another wallet. It does not record **why**. When a payout is wrong, short, or challenged, there is no claim, no evidence, no hearing and no record. Platforms claw money back by silent deduction. Recipients have nowhere to appeal. Every other payment rail grew a Dispute resolution system — card networks got chargebacks, banks got recalls. Stablecoins shipped without one.
 
 Circle's Refund Protocol is the rail admitting the gap. It escrows an ERC-20 payment, fixes a refund address at payment time, and gives a named arbiter three narrow powers: hold funds for a lockup period, refund to the pre-set address, and permit early withdrawal for an agreed fee. It cannot answer the only question that matters in a dispute: **should this money move back?** It has no concept of the work, the terms, the evidence, or the recipient's side. That empty seat is Finné.
 

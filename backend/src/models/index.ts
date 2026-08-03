@@ -346,8 +346,12 @@ const metaSchema = new Schema<MetaDoc>(
 
 export interface UserDoc {
   email: string;
-  passwordHash: string;
+  passwordHash?: string; // optional: wallet-login users have no password
   role: "reviewer" | "recipient" | "platform_viewer";
+  // The UI seat this wallet is bound to (arbiter/merchant/customer/platform).
+  // Distinct from `role`: arbiter and merchant both map to backend `reviewer`,
+  // so without `seat` the same wallet could be reused across those two seats.
+  seat: string | null;
   displayName: string;
   platformKey: string;
   walletAddress: string | null;
@@ -355,14 +359,72 @@ export interface UserDoc {
 const userSchema = new Schema<UserDoc>(
   {
     email: { type: String, required: true, unique: true, index: true },
-    passwordHash: { type: String, required: true },
+    passwordHash: { type: String, required: false },
     role: { type: String, required: true },
+    seat: { type: String, default: null },
     displayName: String,
     platformKey: String,
     walletAddress: { type: String, default: null },
   },
   { collection: "users" },
 );
+// A wallet address uniquely owns one user account — but only when a wallet is
+// actually linked. A partial unique index (vs `unique + sparse`) excludes null
+// entirely, so many wallet-less users can coexist while one wallet still maps
+// to exactly one user.
+userSchema.index(
+  { walletAddress: 1 },
+  { unique: true, partialFilterExpression: { walletAddress: { $type: "string" } } },
+);
+
+export interface NotificationDoc {
+  type: string;
+  title: string;
+  body: string;
+  caseNumber: string | null;
+  paymentId: string | null;
+  audienceRole: string;
+  platformKey: string | null;
+  recipientWallet: string | null;
+  readAt: string | null;
+  createdAt: string;
+}
+const notificationSchema = new Schema<NotificationDoc>(
+  {
+    type: { type: String, required: true },
+    title: { type: String, required: true },
+    body: { type: String, required: true },
+    caseNumber: { type: String, default: null },
+    paymentId: { type: String, default: null },
+    audienceRole: { type: String, required: true },
+    platformKey: { type: String, default: null },
+    recipientWallet: { type: String, default: null },
+    readAt: { type: String, default: null },
+    createdAt: { type: String, required: true },
+  },
+  { collection: "notifications" },
+);
+notificationSchema.index({ audienceRole: 1, readAt: 1, createdAt: -1 });
+
+/* ---- address book (per-user saved wallets for the New Payout flow) ---- */
+export interface AddressBookEntryDoc {
+  ownerUserId: string; // the user who saved this entry (User._id as string)
+  side: "from" | "to"; // from = refund/treasury wallet, to = recipient
+  label: string;
+  address: string;
+  createdAt: string;
+}
+const addressBookEntrySchema = new Schema<AddressBookEntryDoc>(
+  {
+    ownerUserId: { type: String, required: true },
+    side: { type: String, required: true, enum: ["from", "to"] },
+    label: { type: String, default: "" },
+    address: { type: String, required: true },
+    createdAt: { type: String, required: true },
+  },
+  { collection: "address_book" },
+);
+addressBookEntrySchema.index({ ownerUserId: 1, side: 1 });
 
 /* ---- model registry (guard against re-registration across hot reloads / test imports) ---- */
 function register<T>(name: string, schema: Schema<T>): Model<T> {
@@ -381,3 +443,5 @@ export const ChainEvent = register<ChainEventDoc>("ChainEvent", chainEventSchema
 export const AnchorJob = register<AnchorJobDoc>("AnchorJob", anchorJobSchema);
 export const Meta = register<MetaDoc>("Meta", metaSchema);
 export const User = register<UserDoc>("User", userSchema);
+export const Notification = register<NotificationDoc>("Notification", notificationSchema);
+export const AddressBookEntry = register<AddressBookEntryDoc>("AddressBookEntry", addressBookEntrySchema);

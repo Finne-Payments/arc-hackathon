@@ -12,9 +12,11 @@ import { workOrderRoutes } from "./routes/workorders.ts";
 import { caseRoutes } from "./routes/cases.ts";
 import { internalRoutes } from "./routes/internal.ts";
 import { briefRoutes } from "./routes/briefs.ts";
-import { demoRoutes } from "./routes/demo.ts";
 import { extraRoutes } from "./routes/timeline.ts";
 import { authRoutes } from "./routes/auth.ts";
+import { notificationRoutes } from "./routes/notifications.ts";
+import { addressBookRoutes } from "./routes/addressBook.ts";
+import { walletRoutes } from "./routes/wallet.ts";
 
 /** Mount Swagger UI at /api-docs. Gracefully skips if the packages aren't installed. */
 async function setupSwagger(app: express.Application): Promise<void> {
@@ -44,8 +46,10 @@ export function createApp(): express.Application {
   app.use(caseRoutes);
   app.use(internalRoutes);
   app.use(briefRoutes);
-  app.use(demoRoutes);
   app.use(extraRoutes);
+  app.use(notificationRoutes);
+  app.use(addressBookRoutes);
+  app.use(walletRoutes);
 
   // Swagger UI — mounted at /api-docs. Falls back gracefully if the packages
   // aren't installed (e.g. in a stripped-down deployment).

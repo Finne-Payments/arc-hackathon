@@ -35,6 +35,19 @@ export function roleToSeat(role: Role): "reviewer" | "recipient" | "platform" {
   }
 }
 
+/** Map the frontend's Role union to the backend's stored role. */
+export function roleToBackendRole(role: Role): "reviewer" | "recipient" | "platform_viewer" {
+  switch (role) {
+    case "arbiter":
+    case "merchant":
+      return "reviewer";
+    case "customer":
+      return "recipient";
+    case "platform":
+      return "platform_viewer";
+  }
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const headers: Record<string, string> = {
     "content-type": "application/json",
@@ -209,6 +222,8 @@ export const api = {
   chainEvents: () => request<{ txHash: string; eventName: string; contract: string; block: number }[]>("/chain/events"),
 
   payouts: () => request<{ payouts: PayoutRow[] }>("/payouts"),
+  createPayout: (body: { recipientWallet: string; amount: string; refundTo: string; description?: string; deliverables?: { name: string; due: string }[]; protectionDate?: string }) =>
+    request<{ payout: PayoutRow }>("/payouts", { method: "POST", body: JSON.stringify(body) }),
   receipt: (paymentId: string) => request<SharedReceipt>(`/payouts/${paymentId}/receipt`),
 
   cases: () => request<{ cases: CaseRow[] }>("/cases"),
@@ -235,12 +250,6 @@ export const api = {
   decisionPreview: (caseNumber: string, outcome: string) =>
     request<{ preview: string }>(`/cases/${caseNumber}/decision-preview`, { method: "POST", body: JSON.stringify({ outcome }) }),
 
-  // demo (reviewer seat)
-  seed: (body: { scenario?: "A" | "B"; withReply?: boolean; stage?: string }) =>
-    request<{ caseNumber: string; paymentIds: string[]; scenario: string; stage: string }>("/demo/seed", { method: "POST", body: JSON.stringify(body) }),
-  executeRefund: (body: { paymentId: string; debtRecorded?: boolean }) =>
-    request<{ ok: boolean; simulated: boolean; refundTxHash: string }>("/demo/execute-refund", { method: "POST", body: JSON.stringify(body) }),
-
   // auth
   login: (email: string, password: string) =>
     request<{ token: string; user: PublicUser }>("/auth/login", { method: "POST", body: JSON.stringify({ email, password }) }),
@@ -249,12 +258,78 @@ export const api = {
   getMe: () => request<{ user: PublicUser }>("/auth/me"),
   linkWallet: (walletAddress: string) =>
     request<{ user: PublicUser }>("/auth/link-wallet", { method: "POST", body: JSON.stringify({ walletAddress }) }),
+
+  // notifications
+  notifications: () =>
+    request<{ notifications: NotificationRow[]; unreadCount: number }>("/notifications"),
+  markNotificationRead: (id: string) =>
+    request<{ ok: boolean }>(`/notifications/${id}/read`, { method: "POST" }),
+  markAllNotificationsRead: () =>
+    request<{ ok: boolean }>("/notifications/read-all", { method: "POST" }),
+
+  // address book (per-user saved wallets for the New Payout flow)
+  listAddressBook: () => request<{ entries: AddressBookEntry[] }>("/address-book"),
+  addAddressBook: (body: { side: "from" | "to"; label: string; address: string }) =>
+    request<{ entry: AddressBookEntry }>("/address-book", { method: "POST", body: JSON.stringify(body) }),
+  removeAddressBook: (id: string) =>
+    request<{ ok: boolean }>(`/address-book/${id}`, { method: "DELETE" }),
+
+  // wallet balance (live USDC + RefundProtocol balances/debts for the user's wallet)
+  walletBalance: () => request<WalletBalance>("/wallet/balance"),
 };
+
+export interface WalletBalance {
+  walletAddress: string | null;
+  usdc: string | null;
+  protected: string | null;
+  debt: string | null;
+}
+
+export interface AddressBookEntry {
+  id: string;
+  side: "from" | "to";
+  label: string;
+  address: string;
+}
+
+export interface NotificationRow {
+  _id: string;
+  type: string;
+  title: string;
+  body: string;
+  caseNumber: string | null;
+  paymentId: string | null;
+  readAt: string | null;
+  createdAt: string;
+}
+
+/**
+ * Wallet login (no password, no external service). The browser wallet (MetaMask
+ * via window.ethereum) connects through wallet.ts; its address is sent here and
+ * the backend find-or-creates a user keyed by that address, assigns the chosen
+ * role on first login, and returns a Finné JWT. The address itself is the
+ * identity — the wallet still signs every on-chain action, so no server-side
+ * key material is involved.
+ */
+export async function walletLogin(body: { walletAddress: string; role?: Role }): Promise<{ token: string; user: PublicUser }> {
+  return request<{ token: string; user: PublicUser }>("/auth/wallet", {
+    method: "POST",
+    body: JSON.stringify({
+      walletAddress: body.walletAddress,
+      // Send the frontend seat (arbiter/merchant/customer/platform). The backend
+      // derives the stored role from it and enforces one-wallet-one-seat, so the
+      // same wallet can't sign in as a different seat (incl. arbiter vs merchant,
+      // which share the backend `reviewer` role).
+      seat: body.role,
+    }),
+  });
+}
 
 export interface PublicUser {
   id: string;
   email: string;
   role: "reviewer" | "recipient" | "platform_viewer";
+  seat: string | null;
   displayName: string;
   platformKey: string;
   walletAddress: string | null;

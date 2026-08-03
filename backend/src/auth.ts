@@ -42,6 +42,7 @@ export interface PublicUser {
   id: string;
   email: string;
   role: Role;
+  seat: string | null;
   displayName: string;
   platformKey: string;
   walletAddress: string | null;

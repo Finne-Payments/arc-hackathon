@@ -2,13 +2,13 @@
   "name": "finne-backend",
   "private": true,
   "version": "0.1.0",
-  "description": "Finné backend — Express REST API over MongoDB. Dispute system for stablecoin payouts on Circle's Refund Protocol.",
+  "description": "Finné backend — Express REST API over MongoDB. Dispute resolution system for stablecoin payouts on Circle's Refund Protocol.",
   "type": "module",
   "main": "dist/server.js",
   "scripts": {
     "dev": "nodemon --watch src --ext ts --exec \"node --env-file=.env --import tsx/esm src/server.ts\"",
     "start": "node --env-file=.env --import tsx/esm src/server.ts",
-    "seed": "node --env-file=.env --import tsx/esm src/seed.ts",
+    "seed": "node --env-file=.env --import tsx/esm src/seedWorld.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest"
@@ -22,6 +22,8 @@
     "js-sha3": "^0.9.3",
     "jsonwebtoken": "^9.0.3",
     "mongoose": "8.9.5",
+    "swagger-jsdoc": "^6.3.0",
+    "swagger-ui-express": "^5.0.1",
     "viem": "^2.55.10"
   },
   "devDependencies": {
@@ -29,6 +31,7 @@
     "@types/express": "^4.17.21",
     "@types/node": "^22.10.0",
     "@types/supertest": "^7.2.1",
+    "@types/swagger-ui-express": "^4.1.8",
     "mongodb-memory-server": "^11.2.0",
     "nodemon": "^3.1.9",
     "supertest": "^7.2.2",

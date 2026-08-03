@@ -153,6 +153,34 @@ export function shortHex(full: string | null | undefined): string {
   return `${full.slice(0, 6)}…${full.slice(-4)}`;
 }
 
+/** Build a block-explorer URL for a transaction hash (undefined if no base URL). */
+export function explorerTx(base: string | null | undefined, hash: string | null | undefined): string | undefined {
+  return base && hash ? `${base.replace(/\/+$/, "")}/tx/${hash}` : undefined;
+}
+
+/** Build a block-explorer URL for an address (undefined if no base URL). */
+export function explorerAddr(base: string | null | undefined, addr: string | null | undefined): string | undefined {
+  return base && addr ? `${base.replace(/\/+$/, "")}/address/${addr}` : undefined;
+}
+
+/**
+ * Receipt header status, derived from the payout's real status — NOT the demo
+ * caseStage. A freshly-protected (ESCROWED) payout now reads "Protected" instead
+ * of the old hardcoded "Disputed"; the dispute banner only shows when the payout
+ * is actually DISPUTED.
+ */
+export function receiptStatusView(payout: { status: string }): {
+  chipLabel: string;
+  chipDot: "warn" | "brand" | "ok" | "risk";
+  showBanner: boolean;
+} {
+  return {
+    chipLabel: PAYMENT_WORD[payout.status] ?? payout.status,
+    chipDot: (PAYMENT_DOT[payout.status] ?? "brand") as "warn" | "brand" | "ok" | "risk",
+    showBanner: payout.status === "DISPUTED",
+  };
+}
+
 function formatPaidDate(iso: string): string {
   try {
     const d = new Date(iso);
@@ -173,18 +201,32 @@ function formatShortDate(iso: string): string {
 
 /** The demo world's headline stats, computed from the payout list. */
 export function ledgerStats(payouts: PayoutRow[]) {
+  const now = new Date();
+  const inCurrentMonth = (iso: string) => {
+    try {
+      const d = new Date(iso);
+      return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+    } catch {
+      return false;
+    }
+  };
   const escrowed = payouts.filter((p) => p.status === "ESCROWED" || p.status === "DISPUTED");
   const escrowTotal = escrowed.reduce((s, p) => s + Number(p.amount || 0), 0);
   const disputed = payouts.filter((p) => p.status === "DISPUTED").length;
-  const resolved = payouts.filter((p) => p.status === "REFUNDED" || p.status === "CLEARED" || p.status === "WITHDRAWN").length;
-  const refunded = payouts.filter((p) => p.status === "REFUNDED" || p.status === "DEBT_OUTSTANDING").length;
-  const cleared = payouts.filter((p) => p.status === "CLEARED" || p.status === "WITHDRAWN").length;
+  const resolvedStatuses = ["REFUNDED", "CLEARED", "WITHDRAWN", "DEBT_SETTLED"];
+  const resolvedAll = payouts.filter((p) => resolvedStatuses.includes(p.status));
+  // "Resolved this month" — approximated by paidAt, the closest date on the row.
+  const resolvedThisMonth = resolvedAll.filter((p) => inCurrentMonth(p.paidAt));
+  const refunded = resolvedAll.filter((p) => p.status === "REFUNDED" || p.status === "DEBT_OUTSTANDING").length;
+  const cleared = resolvedAll.filter((p) => p.status === "CLEARED" || p.status === "WITHDRAWN").length;
   return {
     protectedCount: escrowed.length,
     escrowTotal: `${escrowTotal} USDC in escrow`,
     openDisputes: disputed,
-    resolved,
-    resolvedSub: `${refunded} refunded · ${cleared} cleared`,
+    resolved: resolvedThisMonth.length,
+    resolvedSub: resolvedThisMonth.length
+      ? `${resolvedThisMonth.filter((p) => p.status === "REFUNDED").length} refunded · ${resolvedThisMonth.filter((p) => p.status === "CLEARED" || p.status === "WITHDRAWN").length} cleared`
+      : `${refunded} refunded · ${cleared} cleared all-time`,
   };
 }
 
@@ -238,6 +280,20 @@ export function roleBadge(role: Role): { label: string; dot: string } {
       return { label: "Platform · Parkline Market · view access", dot: "var(--brand-400)" };
     default:
       return { label: "Customer · Maya Reyes", dot: "var(--ok-500)" };
+  }
+}
+
+/** Short, capitalized role title for identity displays (header pill, sidebar). */
+export function roleLabel(role: Role): string {
+  switch (role) {
+    case "arbiter":
+      return "Arbiter";
+    case "merchant":
+      return "Merchant";
+    case "customer":
+      return "Customer";
+    case "platform":
+      return "Platform";
   }
 }
 
