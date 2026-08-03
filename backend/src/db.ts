@@ -24,14 +24,3 @@ export async function disconnectDb(): Promise<void> {
     await mongoose.disconnect();
   }
 }
-
-/** Drop the 12 data collections (preserves the indexer Meta cursor). For seed. */
-export async function dropDataCollections(): Promise<void> {
-  const db = mongoose.connection.db;
-  if (!db) return; // not connected — nothing to drop
-  const names = await db.collections();
-  for (const c of names) {
-    if (c.collectionName === "metas") continue; // preserve indexer cursor/heartbeat
-    await c.deleteMany({});
-  }
-}

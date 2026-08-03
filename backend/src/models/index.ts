@@ -163,6 +163,7 @@ appendOnly(evidenceSchema, "Evidence", EVIDENCE_IMMUTABLE);
 
 export interface CaseDoc {
   caseNumber: string;
+  caseCode: string; // readable, auto-derived: e.g. NB-MAYA-001 (display/search friendly)
   payoutRef: string;
   openedBy: "platform" | "recipient";
   allegationClaimType: string;
@@ -179,6 +180,7 @@ export interface CaseDoc {
 const caseSchema = new Schema<CaseDoc>(
   {
     caseNumber: { type: String, required: true, unique: true, index: true },
+    caseCode: { type: String, index: true, default: "" },
     payoutRef: { type: String, index: true },
     openedBy: String,
     allegationClaimType: String,

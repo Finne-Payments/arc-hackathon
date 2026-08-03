@@ -63,6 +63,11 @@ beforeAll(async () => {
   process.env.DEMO_MODE = "true";
   process.env.INTERNAL_TOKEN = "dev-internal";
   process.env.SESSION_SECRET = "integration-test-secret";
+  // The dispute flow is gated by the chain-first guard (requireChainConfigured).
+  // Set a non-empty RefundProtocol address so the guard allows the dispute; the
+  // suite exercises the dispute state machine, not the chain requirement itself.
+  // The 503-when-unset case is covered in its own test below.
+  process.env.REFUND_PROTOCOL_ADDRESS = "0x0000000000000000000000000000000000000001";
   await mongoose.connect(mongo.getUri());
   app = createApp();
 });

@@ -5,20 +5,29 @@ import { platformStats, PAYMENT_WORD, PAYMENT_DOT, platformName } from "../mappe
 
 const COLS = "1.2fr 1fr .8fr 1.5fr 1.1fr .6fr";
 
-/** Live marketplace rows from the API, falling back to the seeded constants. */
+/** Live marketplace rows from the API. Empty when the DB is empty — no seed fallback. */
 function usePlatformRows(apiData?: ApiData) {
-  if (apiData && apiData.payouts.length > 0) {
-    const rows = apiData.payouts.map((p) => ({
-      merchant: platformName(p.platformKey),
-      customer: p.recipientWallet,
-      amount: `${p.amount} USDC`,
-      purpose: p.workOrderRef ? p.workOrderRef.split(":").slice(1).join(":") : "—",
-      status: { label: PAYMENT_WORD[p.status] ?? p.status, dot: PAYMENT_DOT[p.status] ?? "brand" },
-      highlight: p.status === "DISPUTED",
-    }));
-    return { rows, stats: platformStats(apiData.payouts as never) };
-  }
-  return { rows: [], stats: null };
+  if (!apiData) return { rows: [] as Row[], stats: null };
+  const rows: Row[] = apiData.payouts.map((p) => ({
+    paymentId: p.paymentId,
+    merchant: platformName(p.platformKey),
+    customer: p.recipientWallet,
+    amount: `${p.amount} USDC`,
+    purpose: p.workOrderRef ? p.workOrderRef.split(":").slice(1).join(":") : "—",
+    status: { label: PAYMENT_WORD[p.status] ?? p.status, dot: PAYMENT_DOT[p.status] ?? "brand" },
+    highlight: p.status === "DISPUTED",
+  }));
+  return { rows, stats: platformStats(apiData.payouts as never) };
+}
+
+interface Row {
+  paymentId?: string;
+  merchant: string;
+  customer: string;
+  amount: string;
+  purpose: string;
+  status: { label: string; dot: "warn" | "brand" | "ok" | "risk" | "ink" };
+  highlight: boolean;
 }
 
 export function Platform({ v, actions, apiData }: { v: ViewModel; actions: FinneActions; apiData?: ApiData }) {
@@ -49,10 +58,10 @@ export function Platform({ v, actions, apiData }: { v: ViewModel; actions: Finne
         }}
       >
         {[
-          { label: "Volume · 30 days", value: stats?.volume ?? "4,820 USDC", sub: "Across 4 merchants", color: undefined },
-          { label: "Protected in escrow", value: stats?.escrowTotal ?? "430 USDC", sub: stats?.escrowCount ?? "3 payments", color: undefined },
-          { label: "Open disputes", value: String(stats?.openDisputes ?? 1), sub: `Oldest reply due in ${v.countdown}`, color: "var(--warn-600)" },
-          { label: "Refund rate", value: stats?.refundRate ?? "2.1%", sub: "Trailing 90 days", color: undefined },
+          { label: "Volume · 30 days", value: stats?.volume ?? "0 USDC", sub: stats?.merchantCount ?? "—", color: undefined },
+          { label: "Protected in escrow", value: stats?.escrowTotal ?? "0 USDC", sub: stats?.escrowCount ?? "0 payments", color: undefined },
+          { label: "Open disputes", value: String(stats?.openDisputes ?? 0), sub: `Oldest reply due in ${v.countdown}`, color: "var(--warn-600)" },
+          { label: "Refund rate", value: stats?.refundRate ?? "—", sub: "Resolved payouts", color: undefined },
         ].map((s, i) => (
           <div key={i} style={{ padding: "16px 20px", borderLeft: i === 0 ? "none" : "1px solid var(--color-border)" }}>
             <Eyebrow color={s.color} style={{ marginBottom: 10 }}>
@@ -106,7 +115,7 @@ export function Platform({ v, actions, apiData }: { v: ViewModel; actions: Finne
             <span style={{ fontFamily: "var(--font-mono)", fontSize: 13, fontVariantNumeric: "tabular-nums", textAlign: "right" }}>{row.amount}</span>
             <span>{row.purpose}</span>
             <StatusPill label={row.status.label} dot={row.status.dot} />
-            <a onClick={() => actions.go("receipt")} style={{ cursor: "pointer", fontSize: 13, fontWeight: 600 }}>
+            <a onClick={() => row.paymentId && actions.viewReceipt(row.paymentId)} style={{ cursor: "pointer", fontSize: 13, fontWeight: 600 }}>
               Receipt
             </a>
           </div>

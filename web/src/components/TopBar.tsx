@@ -3,6 +3,7 @@ import type { Screen } from "../types";
 import type { FinneActions } from "../useFinne";
 import type { ApiData } from "../useApi";
 import { api } from "../api";
+import { PAYMENT_WORD, shortHex } from "../mappers";
 
 /* ============================================================================
    TopBar — sticky header with search and the top-right cluster:
@@ -28,26 +29,65 @@ export function TopBar({
 }) {
   const [showNotif, setShowNotif] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [showSearch, setShowSearch] = useState(false);
   const clusterRef = useRef<HTMLDivElement>(null);
+  const searchRef = useRef<HTMLDivElement>(null);
 
-  // Close dropdowns when clicking outside the top-right cluster
+  // Close dropdowns when clicking outside the top-right cluster OR the search box.
   useEffect(() => {
-    if (!showNotif && !showProfile) return;
+    if (!showNotif && !showProfile && !showSearch) return;
     const handler = (e: MouseEvent) => {
-      if (clusterRef.current && !clusterRef.current.contains(e.target as Node)) {
+      const t = e.target as Node;
+      const outsideCluster = clusterRef.current && !clusterRef.current.contains(t);
+      const outsideSearch = searchRef.current && !searchRef.current.contains(t);
+      if (outsideCluster && outsideSearch) {
         setShowNotif(false);
         setShowProfile(false);
+        setShowSearch(false);
       }
     };
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
-  }, [showNotif, showProfile]);
+  }, [showNotif, showProfile, showSearch]);
 
   const unreadCount = apiData?.unreadCount ?? 0;
-  const notifications = apiData?.notifications ?? [];
+  const allNotifications = apiData?.notifications ?? [];
+  const notifications = allNotifications.filter((n) => !n.readAt);
   const walletAddr = user?.walletAddress ?? null;
   const wb = apiData?.walletBalance ?? null;
   const initial = (user?.displayName ?? user?.email ?? "U").slice(0, 1).toUpperCase();
+
+  // Client-side search across payouts + cases + the wallet/tx addresses on each.
+  const q = searchQuery.trim().toLowerCase();
+  const payments = q
+    ? (apiData?.payouts ?? []).filter((p) =>
+        [p.paymentId, p.platformKey, p.recipientKey, p.recipientWallet, p.refundTo, p.txHash, p.amount, p.workOrderRef, p.status].some(
+          (v) => v && v.toLowerCase().includes(q),
+        ),
+      ).slice(0, 6)
+    : [];
+  const cases = q
+    ? (apiData?.cases ?? []).filter((c) =>
+        [c.caseNumber, c.payoutRef, c.allegationFreeText, c.allegationClaimType, c.allegationAmountContested, c.status, c.openedBy].some(
+          (v) => v && v.toLowerCase().includes(q),
+        ),
+      ).slice(0, 6)
+    : [];
+  const hasResults = payments.length > 0 || cases.length > 0;
+  const closeSearch = () => {
+    setSearchQuery("");
+    setShowSearch(false);
+  };
+  const openFirstResult = () => {
+    if (payments[0]) {
+      actions.viewReceipt(payments[0].paymentId);
+      closeSearch();
+    } else if (cases[0]) {
+      actions.viewCase(cases[0].caseNumber);
+      closeSearch();
+    }
+  };
 
   return (
     <div
@@ -63,26 +103,97 @@ export function TopBar({
     >
       <div style={{ display: "flex", alignItems: "center", gap: 14, padding: "9px 28px" }}>
         {/* search */}
-        <div
-          style={{
-            flex: 1,
-            maxWidth: 420,
-            display: "flex",
-            alignItems: "center",
-            gap: 9,
-            border: "1px solid var(--color-border)",
-            borderRadius: "var(--radius-md)",
-            padding: "7px 12px",
-            background: "var(--color-surface)",
-            color: "var(--color-fg-subtle)",
-            fontSize: 13,
-          }}
-        >
-          <svg width={13} height={13} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round">
-            <circle cx="11" cy="11" r="7" />
-            <path d="m20 20-3.5-3.5" />
-          </svg>
-          Search payments, cases, addresses
+        <div ref={searchRef} style={{ position: "relative", flex: 1, maxWidth: 420 }}>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 9,
+              border: `1px solid ${searchQuery ? "var(--brand-400)" : "var(--color-border)"}`,
+              borderRadius: "var(--radius-md)",
+              padding: "7px 12px",
+              background: "var(--color-surface)",
+              color: "var(--color-fg-subtle)",
+              fontSize: 13,
+            }}
+          >
+            <svg width={13} height={13} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round">
+              <circle cx="11" cy="11" r="7" />
+              <path d="m20 20-3.5-3.5" />
+            </svg>
+            <input
+              value={searchQuery}
+              onChange={(e) => {
+                setSearchQuery(e.target.value);
+                setShowSearch(true);
+              }}
+              onFocus={() => setShowSearch(true)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") openFirstResult();
+                if (e.key === "Escape") closeSearch();
+              }}
+              placeholder="Search payments, cases, addresses"
+              style={{ border: "none", outline: "none", flex: 1, fontSize: 13, background: "transparent", color: "var(--color-fg)" }}
+            />
+            {searchQuery && (
+              <a
+                onClick={closeSearch}
+                title="Clear"
+                style={{ cursor: "pointer", fontSize: 15, color: "var(--color-fg-subtle)", lineHeight: 1 }}
+              >
+                ×
+              </a>
+            )}
+          </div>
+
+          {showSearch && q && (
+            <div
+              style={{
+                position: "absolute",
+                top: "calc(100% + 6px)",
+                left: 0,
+                right: 0,
+                background: "var(--color-surface)",
+                border: "1px solid var(--color-border)",
+                borderRadius: "var(--radius-md)",
+                boxShadow: "var(--shadow-lg)",
+                maxHeight: 420,
+                overflowY: "auto",
+                zIndex: 70,
+                padding: 4,
+              }}
+            >
+              {!hasResults && (
+                <div style={{ padding: "16px 12px", fontSize: 13, color: "var(--color-fg-subtle)", textAlign: "center" }}>
+                  No matches for "{searchQuery}"
+                </div>
+              )}
+              {payments.length > 0 && <SearchGroup label="Payments" />}
+              {payments.map((p) => (
+                <SearchRow
+                  key={`p-${p.paymentId}`}
+                  title={`${p.amount} USDC · ${p.recipientKey || p.platformKey}`}
+                  sub={`payment ${p.paymentId} · ${PAYMENT_WORD[p.status] ?? p.status} · ${shortHex(p.recipientWallet)}`}
+                  onClick={() => {
+                    actions.viewReceipt(p.paymentId);
+                    closeSearch();
+                  }}
+                />
+              ))}
+              {cases.length > 0 && <SearchGroup label="Cases" />}
+              {cases.map((c) => (
+                <SearchRow
+                  key={`c-${c.caseNumber}`}
+                  title={c.caseNumber}
+                  sub={`${c.allegationAmountContested ? c.allegationAmountContested + " USDC · " : ""}${c.payoutRef} · ${c.status}`}
+                  onClick={() => {
+                    actions.viewCase(c.caseNumber);
+                    closeSearch();
+                  }}
+                />
+              ))}
+            </div>
+          )}
         </div>
 
         <span style={{ flex: 1 }} />
@@ -95,7 +206,6 @@ export function TopBar({
               onClick={() => {
                 setShowNotif((s) => !s);
                 setShowProfile(false);
-                if (!showNotif && unreadCount > 0) api.markAllNotificationsRead().catch(() => {});
               }}
               aria-label="Notifications"
               style={{
@@ -154,8 +264,16 @@ export function TopBar({
                   zIndex: 60,
                 }}
               >
-                <div style={{ padding: "10px 12px", fontSize: 12, fontWeight: 700, color: "var(--color-fg)", borderBottom: "1px solid var(--color-border)" }}>
-                  Notifications
+                <div style={{ padding: "10px 12px", fontSize: 12, fontWeight: 700, color: "var(--color-fg)", borderBottom: "1px solid var(--color-border)", display: "flex", alignItems: "center", gap: 8 }}>
+                  <span style={{ flex: 1 }}>Notifications</span>
+                  {unreadCount > 0 && (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); api.markAllNotificationsRead().catch(() => {}); }}
+                      style={{ border: "none", background: "none", cursor: "pointer", fontSize: 11, fontWeight: 600, color: "var(--brand-600)" }}
+                    >
+                      Mark all read
+                    </button>
+                  )}
                 </div>
                 {notifications.length === 0 ? (
                   <div style={{ padding: "18px 12px", fontSize: 12, color: "var(--color-fg-subtle)", textAlign: "center" }}>
@@ -365,5 +483,26 @@ function ProfileRow({ label, value, mono, ok }: { label: string; value: string; 
         {value}
       </span>
     </div>
+  );
+}
+
+function SearchGroup({ label }: { label: string }) {
+  return (
+    <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: ".06em", textTransform: "uppercase", color: "var(--color-fg-subtle)", padding: "8px 12px 4px" }}>
+      {label}
+    </div>
+  );
+}
+
+function SearchRow({ title, sub, onClick }: { title: string; sub: string; onClick: () => void }) {
+  return (
+    <a
+      onClick={onClick}
+      style={{ display: "block", padding: "8px 12px", borderRadius: "var(--radius-sm)", cursor: "pointer", textDecoration: "none" }}
+      className="hoverable"
+    >
+      <div style={{ fontSize: 13, fontWeight: 600, color: "var(--color-fg)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{title}</div>
+      <div style={{ fontSize: 11.5, color: "var(--color-fg-muted)", fontFamily: "var(--font-mono)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{sub}</div>
+    </a>
   );
 }

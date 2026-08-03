@@ -44,7 +44,21 @@ export interface Env {
   };
   registryOperatorKey: string | null;
   responseWindowHours: number;
+  /** Block to start indexing from (the contract deploy block). 0 = head-at-boot. */
+  indexerStartBlock: bigint;
 }
+
+/* ============================================================================
+   Deployed contract addresses — Arc testnet (hard-coded defaults).
+   These are the live deployments from contracts/.env.deploy + scripts/deploy-arc.sh.
+   Hard-coding them means the app works on a fresh clone with no .env and the
+   contracts never need redeploying. A .env / environment override still wins,
+   so a different deployment (e.g. a second testnet run) can point at new
+   addresses without touching code. The arbiter baked into RefundProtocol at
+   construction is immutable and documented in contracts/.env.deploy.
+   ========================================================================== */
+const DEFAULT_REFUND_PROTOCOL_ADDRESS = "0x6EE86fEE126C94CD3bE0d2a5187F69368965f989";
+const DEFAULT_CASE_REGISTRY_ADDRESS = "0x9Db75cf6B7Ecb6efDac5C141E17bE3884a3e6D4d";
 
 let loaded: Env | null = null;
 
@@ -67,12 +81,19 @@ export function loadEnv(env: NodeJS.ProcessEnv = process.env): Env {
       chainId: parseIntOr(env.ARC_CHAIN_ID, 31338),
       chainName: env.ARC_CHAIN_NAME || "arc-local",
       explorerUrl: env.ARC_EXPLORER_URL || "",
-      refundProtocolAddress: env.REFUND_PROTOCOL_ADDRESS || null,
-      caseRegistryAddress: env.CASE_REGISTRY_ADDRESS || null,
+      // Hard-coded deployed addresses (see constants above). An explicit env
+      // override wins, but absent that the app points at the live Arc testnet
+      // contracts without any .env setup.
+      refundProtocolAddress: env.REFUND_PROTOCOL_ADDRESS || DEFAULT_REFUND_PROTOCOL_ADDRESS,
+      caseRegistryAddress: env.CASE_REGISTRY_ADDRESS || DEFAULT_CASE_REGISTRY_ADDRESS,
       usdcAddress: env.USDC_ADDRESS || null,
     },
     registryOperatorKey: env.REGISTRY_OPERATOR_PRIVATE_KEY || null,
     responseWindowHours: parseIntOr(env.RESPONSE_WINDOW_HOURS, 72),
+    // INDEXER_START_BLOCK: the contract deploy block — lets a fresh backend
+    // index from contract birth instead of head, so historical PaymentCreated
+    // events aren't missed (0 = head-at-boot, the old behaviour).
+    indexerStartBlock: BigInt(parseIntOr(env.INDEXER_START_BLOCK, 0)),
   };
   return loaded;
 }

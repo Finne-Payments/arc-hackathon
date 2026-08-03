@@ -10,18 +10,12 @@ import {
   PrimaryButton,
   SecondaryButton,
   SharedViewBadge,
+  SpinnerLabel,
   StatusPill,
 } from "../components/primitives";
+import { Timeline, type TimelineEntry } from "../components/Timeline";
 import { shortHex } from "../mappers";
-
-const TYPE_DOT: Record<string, string> = {
-  payment: "var(--brand-500)",
-  dispute: "var(--warn-500)",
-  reply: "var(--ok-500)",
-  agent: "var(--ink-400)",
-  info: "var(--brand-500)",
-  decision: "var(--brand-600)",
-};
+import { claimLabel } from "../domain/statusVocabulary";
 
 function FileIcon({ kind }: { kind: "doc" | "video" }) {
   if (kind === "video") {
@@ -40,31 +34,56 @@ function FileIcon({ kind }: { kind: "doc" | "video" }) {
   );
 }
 
-interface TimelineEntry {
-  time: string;
-  type: string;
-  label: string;
-  txHash?: string;
-}
-
 export function CaseRoom({ v, actions, apiData }: { v: ViewModel; actions: FinneActions; apiData?: ApiData }) {
   const c = apiData?.activeCase ?? null;
   const caseDoc: CaseRow | null = (c?.case as CaseRow) ?? null;
-  const caseNumber = caseDoc?.caseNumber ?? "CASE-0142";
+  const caseNumber = caseDoc?.caseNumber ?? v.selectedCaseId ?? "";
   const payout: PayoutRow | null = (c?.payout as PayoutRow) ?? null;
   const responses = (c?.responses as { authorName: string; text: string; submittedAt: string }[]) ?? [];
   const evidence = (c?.evidence as { title: string; submittedBy: string; submittedAt: string; sha256: string; type: string }[]) ?? [];
   const brief = c?.brief?.latest as { checks: { check: string; expected: string; found: string; result: string }[]; inconsistencies: string[]; missingItems: string[] } | undefined;
 
   const [timeline, setTimeline] = useState<TimelineEntry[]>([]);
+  const [timelineLoading, setTimelineLoading] = useState(false);
   useEffect(() => {
-    if (!caseNumber || caseNumber === "CASE-0142" && !caseDoc) return;
-    api.timeline(caseNumber).then((t) => setTimeline(t.events)).catch(() => {});
-  }, [caseNumber, caseDoc]);
+    if (!caseNumber) return;
+    setTimelineLoading(true);
+    api
+      .timeline(caseNumber)
+      .then((t) => setTimeline(t.events))
+      .catch(() => {})
+      .finally(() => setTimelineLoading(false));
+  }, [caseNumber]);
 
   const claimText = caseDoc?.allegationFreeText ?? "—";
   const contested = caseDoc?.allegationAmountContested ?? "0";
   const response = responses[0];
+  const caseCode = caseDoc?.caseCode || caseNumber;
+  const claimLabelText = claimLabel(caseDoc?.allegationClaimType);
+  const hasBrief = !!brief;
+
+  // While the case data is loading (or the case number is missing), show a
+  // loading state instead of rendering with empty placeholders.
+  if (!caseDoc && caseNumber) {
+    return (
+      <div className="rise-in" style={{ maxWidth: 820, margin: 0 }}>
+        <BackLink label="All disputes" onClick={() => actions.go("disputes")} />
+        <div style={{ marginTop: 40, display: "flex", justifyContent: "center" }}>
+          <SpinnerLabel label={`Loading ${caseNumber}…`} />
+        </div>
+      </div>
+    );
+  }
+  if (!caseDoc) {
+    return (
+      <div className="rise-in" style={{ maxWidth: 820, margin: 0 }}>
+        <BackLink label="All disputes" onClick={() => actions.go("disputes")} />
+        <div style={{ marginTop: 40, fontSize: 14, color: "var(--color-fg-muted)" }}>
+          No case selected. Pick one from the disputes list.
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="rise-in" style={{ maxWidth: 820, margin: 0 }}>
@@ -78,9 +97,12 @@ export function CaseRoom({ v, actions, apiData }: { v: ViewModel; actions: Finne
       <Card shadow="var(--shadow-xs)" padding="20px 24px" style={{ marginBottom: 20 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
           <div>
-            <div style={{ fontFamily: "var(--font-sans)", fontWeight: 700, fontSize: 19, letterSpacing: "-0.02em" }}>Case 0142</div>
+            <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
+              <span style={{ fontFamily: "var(--font-sans)", fontWeight: 700, fontSize: 19, letterSpacing: "-0.01em" }}>{caseCode}</span>
+              <span style={{ fontFamily: "var(--font-mono)", fontSize: 11.5, color: "var(--color-fg-subtle)" }}>{caseNumber}</span>
+            </div>
             <div style={{ fontSize: 13, color: "var(--color-fg-muted)", marginTop: 2 }}>
-              Concerns <a onClick={() => actions.go("receipt")} style={{ cursor: "pointer", fontWeight: 600 }}>the {payout?.amount ?? ""} USDC payment</a>
+              Concerns <a onClick={() => caseDoc.payoutRef && actions.viewReceipt(caseDoc.payoutRef)} style={{ cursor: "pointer", fontWeight: 600 }}>the {payout?.amount ?? ""} USDC payment</a>
             </div>
           </div>
           <span style={{ flex: 1 }} />
@@ -107,7 +129,7 @@ export function CaseRoom({ v, actions, apiData }: { v: ViewModel; actions: Finne
         <Eyebrow style={{ marginBottom: 12 }}>The claim</Eyebrow>
         <div style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 13, color: "var(--color-fg-muted)", marginBottom: 12, flexWrap: "wrap" }}>
           Opened by <strong style={{ color: "var(--color-fg)" }}>{caseDoc?.openedBy === "recipient" ? "Recipient" : "Platform"}</strong>
-          <span style={{ border: "1px solid var(--color-border)", borderRadius: "var(--radius-pill)", padding: "2px 10px", fontSize: 12, fontWeight: 500, color: "var(--color-fg)" }}>{caseDoc?.allegationClaimType ?? "Dispute"}</span>
+          <span style={{ border: "1px solid var(--color-border)", borderRadius: "var(--radius-pill)", padding: "2px 10px", fontSize: 12, fontWeight: 500, color: "var(--color-fg)" }}>{claimLabelText}</span>
         </div>
         <p style={{ margin: "0 0 12px", fontSize: 14, lineHeight: 1.65 }}>
           “{claimText}”
@@ -253,56 +275,57 @@ export function CaseRoom({ v, actions, apiData }: { v: ViewModel; actions: Finne
         </div>
       </Card>
 
-      {/* (c) the agent's brief */}
+      {/* (c) the agent's brief — checks/missing-items when one exists, a clear
+          empty state otherwise (no fake "None identified." placeholders). */}
       <Card shadow="var(--shadow-xs)" padding="22px 24px" style={{ marginBottom: 16 }}>
         <Eyebrow style={{ marginBottom: 12 }}>The agent's brief</Eyebrow>
-        <div style={{ border: "1px solid var(--color-border)", borderRadius: "var(--radius-md)", overflow: "hidden", marginBottom: 14 }}>
-          <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1.3fr .8fr", gap: 12, padding: "9px 14px", background: "var(--color-surface-2)", borderBottom: "1px solid var(--color-border)", fontSize: 11, fontWeight: 600, letterSpacing: ".04em", textTransform: "uppercase", color: "var(--color-fg-subtle)" }}>
-            <span>Check</span>
-            <span>Expected</span>
-            <span>Found</span>
-            <span>Result</span>
-          </div>
-          {(brief?.checks ?? []).map((c, i) => (
-            <div key={i} style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1.3fr .8fr", gap: 12, padding: "11px 14px", borderBottom: i < (brief?.checks.length ?? 1) - 1 ? "1px solid var(--color-border)" : "none", fontSize: 13, alignItems: "center" }}>
-              <span>{c.check}</span>
-              <span style={{ color: "var(--color-fg-muted)" }}>{c.expected}</span>
-              <span style={{ color: "var(--color-fg-muted)" }}>{c.found}</span>
-              <span style={{ color: c.result === "pass" ? "var(--ok-600)" : "var(--warn-600)", fontWeight: 600 }}>{c.result === "pass" ? "✓ Pass" : "○ Missing"}</span>
+        {hasBrief ? (
+          <>
+            <div style={{ border: "1px solid var(--color-border)", borderRadius: "var(--radius-md)", overflow: "hidden", marginBottom: 14 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1.3fr .8fr", gap: 12, padding: "9px 14px", background: "var(--color-surface-2)", borderBottom: "1px solid var(--color-border)", fontSize: 11, fontWeight: 600, letterSpacing: ".04em", textTransform: "uppercase", color: "var(--color-fg-subtle)" }}>
+                <span>Check</span>
+                <span>Expected</span>
+                <span>Found</span>
+                <span>Result</span>
+              </div>
+              {brief!.checks.map((c, i) => (
+                <div key={i} style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1.3fr .8fr", gap: 12, padding: "11px 14px", borderBottom: i < brief!.checks.length - 1 ? "1px solid var(--color-border)" : "none", fontSize: 13, alignItems: "center" }}>
+                  <span>{c.check}</span>
+                  <span style={{ color: "var(--color-fg-muted)" }}>{c.expected}</span>
+                  <span style={{ color: "var(--color-fg-muted)" }}>{c.found}</span>
+                  <span style={{ color: c.result === "pass" ? "var(--ok-600)" : "var(--warn-600)", fontWeight: 600 }}>{c.result === "pass" ? "✓ Pass" : "○ Missing"}</span>
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 14 }}>
-          <div>
-            <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: ".04em", textTransform: "uppercase", color: "var(--color-fg-subtle)", marginBottom: 6 }}>Inconsistencies</div>
-            <div style={{ fontSize: 13, lineHeight: 1.6, color: "var(--color-fg)" }}>{(brief?.inconsistencies ?? ["None identified."]).join(" · ")}</div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 14 }}>
+              <div>
+                <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: ".04em", textTransform: "uppercase", color: "var(--color-fg-subtle)", marginBottom: 6 }}>Inconsistencies</div>
+                <div style={{ fontSize: 13, lineHeight: 1.6, color: "var(--color-fg)" }}>{(brief!.inconsistencies.length ? brief!.inconsistencies : ["None identified."]).join(" · ")}</div>
+              </div>
+              <div>
+                <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: ".04em", textTransform: "uppercase", color: "var(--color-fg-subtle)", marginBottom: 6 }}>Missing items</div>
+                <div style={{ fontSize: 13, lineHeight: 1.6, color: "var(--color-fg)" }}>{(brief!.missingItems.length ? brief!.missingItems : ["None."]).join(" · ")}</div>
+              </div>
+            </div>
+            <div style={{ fontSize: 12, color: "var(--color-fg-subtle)", borderTop: "1px solid var(--color-border)", paddingTop: 12 }}>
+              Prepared by the Finné proof agent. It reads and explains; it does not decide.
+            </div>
+          </>
+        ) : (
+          <div style={{ padding: "8px 2px 4px", color: "var(--color-fg-muted)", fontSize: 13.5, lineHeight: 1.6 }}>
+            The proof agent hasn’t reviewed this case yet. It runs automatically when a dispute opens and again whenever evidence is added — its findings (what’s on file, what’s missing) will appear here. It never renders a verdict.
           </div>
-          <div>
-            <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: ".04em", textTransform: "uppercase", color: "var(--color-fg-subtle)", marginBottom: 6 }}>Missing items</div>
-            <div style={{ fontSize: 13, lineHeight: 1.6, color: "var(--color-fg)" }}>{(brief?.missingItems ?? ["None."]).join(" · ")}</div>
-          </div>
-        </div>
-        <div style={{ fontSize: 12, color: "var(--color-fg-subtle)", borderTop: "1px solid var(--color-border)", paddingTop: 12 }}>
-          Prepared by the Finné proof agent. It reads and explains; it does not decide.
-        </div>
+        )}
       </Card>
 
       {/* (d) timeline */}
       <Card shadow="var(--shadow-xs)" padding="22px 24px" style={{ marginBottom: 16 }}>
         <Eyebrow style={{ marginBottom: 14 }}>Timeline</Eyebrow>
-        <div style={{ display: "flex", flexDirection: "column" }}>
-          {timeline.map((ev, i) => (
-            <div key={i} style={{ display: "flex", gap: 14, fontSize: 13, padding: "8px 0" }}>
-              <span style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--color-fg-subtle)", width: 96, flexShrink: 0 }}>{ev.time}</span>
-              <span style={{ width: 8, height: 8, borderRadius: "50%", background: TYPE_DOT[ev.type] ?? "var(--ink-400)", marginTop: 4, flexShrink: 0 }} />
-              <span style={{ flex: 1 }}>
-                <strong>{ev.label}</strong>
-                {ev.txHash && <a style={{ cursor: "pointer", fontSize: 12, marginLeft: 6 }}>tx ↗</a>}
-              </span>
-            </div>
-          ))}
-          {timeline.length === 0 && <div style={{ fontSize: 13, color: "var(--color-fg-subtle)" }}>Loading timeline…</div>}
-        </div>
+        <Timeline
+          events={timeline}
+          loading={timelineLoading ? <SpinnerLabel label="Loading timeline…" /> : undefined}
+          explorerUrl={apiData?.config?.explorerUrl ?? null}
+        />
       </Card>
 
       {/* case actions */}

@@ -1,28 +1,12 @@
 import type { FinneActions, ViewModel } from "../useFinne";
 import type { ApiData } from "../useApi";
 import type { DecPhase } from "../types";
-import { BackLink, Card, PrimaryButton, SecondaryButton, TechChip } from "../components/primitives";
+import { BackLink, Card, PrimaryButton, SecondaryButton, TechChip, Spinner } from "../components/primitives";
 import { explorerAddr, shortHex } from "../mappers";
-
-function Spinner({ color = "var(--brand-600)" }: { color?: string }) {
-  return (
-    <div
-      style={{
-        width: 44,
-        height: 44,
-        borderRadius: "50%",
-        border: "3px solid var(--brand-200)",
-        borderTopColor: color,
-        margin: "0 auto 18px",
-        animation: "spin 1s linear infinite",
-      }}
-    />
-  );
-}
 
 export function Decision({ v, actions, apiData }: { v: ViewModel; actions: FinneActions; apiData?: ApiData }) {
   const c = apiData?.activeCase ?? null;
-  const caseNumber = c?.case?.caseNumber ?? "CASE-0142";
+  const caseNumber = c?.case?.caseNumber ?? v.selectedCaseId ?? "";
   const contested = (c?.case as { allegationAmountContested?: string })?.allegationAmountContested ?? "0";
   const total = (c?.payout as { amount?: string })?.amount ?? "0";
   const claim = (c?.case as { allegationFreeText?: string })?.allegationFreeText ?? "—";
@@ -166,7 +150,9 @@ function OptionCard({ onClick, border, bg, title, desc }: { onClick: () => void;
 function AwaitingPhase({ onCancel }: { onCancel: () => void }) {
   return (
     <Card shadow="var(--shadow-md)" padding="36px" style={{ textAlign: "center" }}>
-      <Spinner />
+      <div style={{ display: "flex", justifyContent: "center", marginBottom: 18 }}>
+        <Spinner size={44} />
+      </div>
       <div style={{ fontFamily: "var(--font-sans)", fontWeight: 700, fontSize: 17, marginBottom: 6 }}>Waiting for your wallet signature</div>
       <div style={{ fontSize: 13, color: "var(--color-fg-muted)", maxWidth: 400, margin: "0 auto 20px", lineHeight: 1.6 }}>
         Your wallet is asking you to sign the refund of 33 USDC to <span style={{ fontFamily: "var(--font-mono)", fontSize: 12 }}>0x4B21…9d3E</span>. Nothing moves until you sign.
@@ -194,7 +180,9 @@ function SigRejectedPhase({ onRetry, onCancel }: { onRetry: () => void; onCancel
 function PendingPhase({ onCopy, refundTo, explorerBase }: { onCopy: (v: string) => void; refundTo: string; explorerBase: string | null }) {
   return (
     <Card shadow="var(--shadow-md)" padding="36px" style={{ textAlign: "center" }}>
-      <Spinner color="var(--brand-600)" />
+      <div style={{ display: "flex", justifyContent: "center", marginBottom: 18 }}>
+        <Spinner size={44} color="var(--brand-600)" />
+      </div>
       <div style={{ fontFamily: "var(--font-sans)", fontWeight: 700, fontSize: 17, marginBottom: 6 }}>Signed · watching for confirmation on Arc</div>
       <div style={{ fontSize: 13, color: "var(--color-fg-muted)", maxWidth: 400, margin: "0 auto", lineHeight: 1.6 }}>
         Transaction submitted: <TechChip short={shortHex(refundTo)} full={refundTo} onCopy={onCopy} explorer={explorerAddr(explorerBase, refundTo)} />

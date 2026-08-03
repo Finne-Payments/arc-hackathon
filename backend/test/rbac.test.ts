@@ -21,7 +21,8 @@ describe("RBAC matrix", () => {
     expect(can("reviewer", "case:respond")).toBe(false);
   });
 
-  it("recipient can respond + add evidence but cannot decide", () => {
+  it("recipient can open + respond + add evidence but cannot decide", () => {
+    expect(can("recipient", "case:open")).toBe(true);
     expect(can("recipient", "case:respond")).toBe(true);
     expect(can("recipient", "case:add_evidence")).toBe(true);
     expect(can("recipient", "case:decide")).toBe(false);

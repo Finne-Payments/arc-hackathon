@@ -46,6 +46,29 @@ export async function nextCaseNumber(): Promise<string> {
   return "CASE-" + String(142 + count).padStart(4, "0");
 }
 
+/**
+ * Readable, auto-derived case code: `{PLATFORM}-{RECIPIENT}-{seq}` (e.g.
+ * `NB-MAYA-001`), sequenced per platform+recipient pair. Falls back to the
+ * canonical CASE-NNNN if either party key is missing. Fully derived — no caller
+ * input. Stored on the Case as `caseCode` for display + search.
+ */
+export async function nextCaseCode(platformKey: string | null, recipientKey: string | null): Promise<string> {
+  const plat = prefixOf(platformKey);
+  const recip = prefixOf(recipientKey);
+  if (!plat || !recip) return nextCaseNumber();
+  const seq = 1 + (await Case.countDocuments({
+    caseCode: { $regex: `^${plat}-${recip}-\\d+$` },
+  }));
+  return `${plat}-${recip}-${String(seq).padStart(3, "0")}`;
+}
+
+function prefixOf(key: string | null | undefined): string {
+  if (!key) return "";
+  const cleaned = key.replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
+  // Take up to the first camelCase boundary or the first 2-4 chars.
+  return cleaned.slice(0, Math.min(4, cleaned.length || 2));
+}
+
 export async function nextBriefVersion(caseRef: string): Promise<number> {
   const count = await Brief.countDocuments({ caseRef });
   return count + 1;
@@ -152,6 +175,7 @@ export async function openDispute(
   const windowHours = platform?.policyResponseWindowHours ?? env.responseWindowHours;
   const now = new Date();
   const caseNumber = await nextCaseNumber();
+  const caseCode = await nextCaseCode(payout.platformKey, payout.recipientKey);
   const openedAt = now.toISOString();
   const responseDeadline = new Date(now.getTime() + windowHours * 3600 * 1000).toISOString();
 
@@ -165,6 +189,7 @@ export async function openDispute(
 
   const caseDoc = await Case.create({
     caseNumber,
+    caseCode,
     payoutRef: paymentId,
     openedBy,
     allegationClaimType: body.claimType,

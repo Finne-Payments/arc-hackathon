@@ -1,11 +1,14 @@
 import { Router } from "express";
 import { requirePermission } from "../middleware.ts";
 import { getSharedCase } from "../services.ts";
+import { claimLabel } from "../claimVocabulary.ts";
 
 /* ============================================================================
    Timeline + decision-preview routes.
-   The timeline is assembled from the case's lifecycle events (no hardcoded
-   strings) — every entry's text is built from real data.
+   The timeline is a true case chronicle — every entry is built from real case
+   data and surfaces the *content* of each event (claim, reply snippet, brief
+   headline, evidence), not just a bare "X happened" marker. Entries are pushed
+   in lifecycle order; the frontend renders them as-is.
    ========================================================================== */
 
 export const extraRoutes = Router();
@@ -19,43 +22,173 @@ function fmtDate(iso: string): string {
   }
 }
 
+/** Short snippet for timeline labels — first clause, capped. */
+function snippet(text: string | undefined | null, max = 64): string {
+  if (!text) return "";
+  const t = text.trim().replace(/\s+/g, " ");
+  return t.length > max ? t.slice(0, max - 1) + "…" : t;
+}
+
+interface TLEvent {
+  time: string;
+  type: string;
+  label: string;
+  detail?: string;
+  txHash?: string;
+}
+
+/**
+ * Internal build shape — carries the raw ISO timestamp (`sortAt`) so events can
+ * be sorted latest-first before the display time string is formatted.
+ */
+interface TLBuild {
+  sortAt: string;
+  type: string;
+  label: string;
+  detail?: string;
+  txHash?: string;
+}
+
 /**
  * @openapi
  * /cases/{id}/timeline:
  *   get:
  *     tags: [Timeline]
  *     summary: Case timeline (assembled from real lifecycle data)
- *     security: [{ bearerAuth: [] }]
+ * security: [{ bearerAuth: [] }]
  *     parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
- *     responses: { 200: { description: "{ events: [{ time, type, label, txHash? }] }" } }
+ *     responses: { 200: { description: "{ events: [{ time, type, label, detail?, txHash? }] }" } }
  *     notes: Requires `case:read`.
  */
-// GET /cases/:id/timeline — assembled from real case lifecycle data.
+// GET /cases/:id/timeline — the case chronicle, content-rich.
 extraRoutes.get("/cases/:id/timeline", requirePermission("case:read"), async (req, res, next) => {
   try {
     const shared = await getSharedCase(req.params.id);
-    const events: { time: string; type: string; label: string; txHash?: string }[] = [];
-    const c = shared.case as { openedAt: string; payoutRef: string; infoRequests: { text: string; requestedAt: string }[] };
-    const payout = shared.payout as { paidAt: string; txHash: string };
-    const responses = shared.responses as { submittedAt: string }[];
-    const brief = shared.brief as { latest: { generatedAt: string }; versions: number } | null;
-    const decision = shared.decision as { decidedAt: string; outcome: string } | null;
+    const built: TLBuild[] = [];
 
-    if (payout?.paidAt) events.push({ time: fmtDate(payout.paidAt), type: "payment", label: "Payment protected on Arc", txHash: payout.txHash });
-    if (c?.openedAt) events.push({ time: fmtDate(c.openedAt), type: "dispute", label: "Dispute opened" });
+    const payout = shared.payout as { paidAt: string; txHash: string; amount: string } | null;
+    const c = shared.case as {
+      openedAt: string;
+      payoutRef: string;
+      openedBy: string;
+      allegationClaimType: string;
+      allegationFreeText: string;
+      allegationAmountContested: string;
+      infoRequests: { target: string; text: string; requestedAt: string }[];
+    } | null;
+    const responses = shared.responses as { authorName: string; text: string; submittedAt: string }[];
+    const evidence = shared.evidence as { title: string; submittedBy: string; submittedAt: string }[];
+    const brief = shared.brief as {
+      latest: {
+        generatedAt: string;
+        checks: { result: string }[];
+        inconsistencies: string[];
+        missingItems: string[];
+      };
+      versions: number;
+    } | null;
+    const decision = shared.decision as { decidedAt: string; outcome: string; reason: string } | null;
+
+    // 1. Payment protected.
+    if (payout?.paidAt) {
+      built.push({
+        sortAt: payout.paidAt,
+        type: "payment",
+        label: `Payment protected on Arc`,
+        detail: `${payout.amount} USDC escrowed`,
+        txHash: payout.txHash,
+      });
+    }
+
+    // 2. Dispute opened — with the claim type, amount, and the opener's words.
+    if (c?.openedAt) {
+      const contested = c.allegationAmountContested || "0";
+      built.push({
+        sortAt: c.openedAt,
+        type: "dispute",
+        label: `Dispute opened: ${claimLabel(c.allegationClaimType)}`,
+        detail: [
+          `${contested} USDC contested · opened by ${c.openedBy === "recipient" ? "recipient" : "platform"}`,
+          snippet(c.allegationFreeText, 90),
+        ]
+          .filter(Boolean)
+          .join(" — "),
+      });
+    }
+
+    // 3. Information requests — target + a snippet of the question.
     for (const req of c?.infoRequests ?? []) {
-      events.push({ time: fmtDate(req.requestedAt), type: "info", label: `More information requested: ${req.text}` });
-    }
-    for (const r of responses) {
-      events.push({ time: fmtDate(r.submittedAt), type: "reply", label: "Reply submitted" });
-    }
-    if (brief?.latest?.generatedAt) {
-      events.push({ time: fmtDate(brief.latest.generatedAt), type: "agent", label: `Agent brief updated (v${brief.versions})` });
-    }
-    if (decision?.decidedAt) {
-      events.push({ time: fmtDate(decision.decidedAt), type: "decision", label: `Decision signed: ${decision.outcome}` });
+      built.push({
+        sortAt: req.requestedAt,
+        type: "info",
+        label: `Information requested from ${req.target}`,
+        detail: snippet(req.text),
+      });
     }
 
+    // 4. Responses — the replier + a snippet of what they said.
+    for (const r of responses) {
+      built.push({
+        sortAt: r.submittedAt,
+        type: "reply",
+        label: `Reply from ${r.authorName}`,
+        detail: snippet(r.text),
+      });
+    }
+
+    // 5. Evidence — each submission is a dated entry.
+    for (const e of evidence) {
+      built.push({
+        sortAt: e.submittedAt,
+        type: "evidence",
+        label: `Evidence added by ${e.submittedBy}`,
+        detail: e.title,
+      });
+    }
+
+    // 6. Agent brief — only when one exists. Headline = pass/missing counts.
+    if (brief?.latest?.generatedAt) {
+      const checks = brief.latest.checks ?? [];
+      const passed = checks.filter((c) => c.result === "pass").length;
+      const missing = checks.length - passed;
+      const extra: string[] = [];
+      if (brief.latest.inconsistencies?.length) extra.push(`${brief.latest.inconsistencies.length} inconsistency`);
+      if (brief.latest.missingItems?.length) extra.push(`${brief.latest.missingItems.length} missing item`);
+      built.push({
+        sortAt: brief.latest.generatedAt,
+        type: "agent",
+        label: `Agent brief prepared (v${brief.versions})`,
+        detail: [
+          `${passed} of ${checks.length} checks pass${missing ? ` · ${missing} missing` : ""}`,
+          extra.join(" · "),
+        ]
+          .filter(Boolean)
+          .join(" — "),
+      });
+    }
+
+    // 7. Decision — outcome + a snippet of the written reason.
+    if (decision?.decidedAt) {
+      built.push({
+        sortAt: decision.decidedAt,
+        type: "decision",
+        label: `Decision: ${decision.outcome}`,
+        detail: snippet(decision.reason, 90),
+      });
+    }
+
+    // Latest-first: sort by raw timestamp descending. Events without a parseable
+    // timestamp fall to the end (NaN comparison handling).
+    built.sort((a, b) => {
+      const ta = Date.parse(a.sortAt);
+      const tb = Date.parse(b.sortAt);
+      if (Number.isNaN(ta) && Number.isNaN(tb)) return 0;
+      if (Number.isNaN(ta)) return 1;
+      if (Number.isNaN(tb)) return -1;
+      return tb - ta;
+    });
+
+    const events: TLEvent[] = built.map(({ sortAt, ...rest }) => ({ time: fmtDate(sortAt), ...rest }));
     res.json({ events });
   } catch (e) {
     next(e);

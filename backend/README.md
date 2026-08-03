@@ -21,7 +21,6 @@ docker run -d --name finne-mongo -p 27017:27017 mongo:7
 ```bash
 cp .env.example .env          # adjust MONGO_URL if needed
 npm install
-npm run seed                  # build the demo world (idempotent)
 npm run dev                   # API on http://localhost:4000
 ```
 
@@ -33,50 +32,49 @@ Health check: `curl http://localhost:4000/healthz` → `{"ok":true}`
 |---|---|
 | `npm run dev` | Start the API with live reload (nodemon + tsx). |
 | `npm start` | Start the compiled API (tsx runtime). |
-| `npm run seed` | Wipe 11 collections and rebuild the frozen demo world. Idempotent. |
 | `npm test` | Run the vitest suite (state machines, RBAC, canonical, findings guard, env boot-fail). |
 | `npm run typecheck` | `tsc --noEmit`. |
 
+## Data model
+
+The database starts **empty** — there is no seed step. Payouts, cases, and users
+are created dynamically from real usage: wallet sign-in creates a user, on-chain
+`pay()` (detected by the indexer) creates a payout, and `POST /payouts/:id/disputes`
+opens a case. All list/detail endpoints reflect whatever is in the DB.
+
 ## Trying the demo
 
-All read/mutate routes select a seat with the `x-finne-session` header (D7):
-`reviewer`, `recipient`, `platform`, `agent`.
+Sign in from the web app with a connected wallet (MetaMask/Rabby on Arc testnet);
+the backend find-or-creates a user keyed by the wallet address and binds it to
+one seat. Money moves via the RefundProtocol contract; the indexer detects
+on-chain `pay()` / `refundByArbiter()` events and builds payouts and receipts.
 
-```bash
-# shared case body (P3 — byte-identical for every seat)
-curl -s localhost:4000/cases/CASE-0142 -H "x-finne-session: reviewer" | jq
-curl -s localhost:4000/cases/CASE-0142 -H "x-finne-session: recipient" | jq
+## Live chain integration
 
-# reviewer decides a refund → returns an unsigned tx for the browser wallet
-curl -s localhost:4000/cases/CASE-0142/decisions \
-  -H "x-finne-session: reviewer" -H "content-type: application/json" \
-  -d '{"outcome":"refund","reason":"Video 3 was never on file and no delivery confirmation was provided."}' | jq
-```
+When chain addresses/keys are configured in `.env` (`REFUND_PROTOCOL_ADDRESS`,
+`CASE_REGISTRY_ADDRESS`, `REGISTRY_OPERATOR_PRIVATE_KEY`, `ARC_RPC_URL`), the
+backend runs the full on-chain loop:
 
-Seed variants:
+- **Indexer** (`indexer.ts`) — watches the RefundProtocol + CaseRegistry for
+  `PaymentCreated` / `Refund` / anchor events, and builds payouts + receipts.
+- **Anchor worker** (`anchorWorker.ts`) — posts receipt/case/decision hash
+  anchors to the CaseRegistry using the operator key (hashes only; never USDC).
+- **Wallet signing** — refund decisions return an unsigned tx that the reviewer's
+  browser wallet signs (`refundByArbiter` on the RefundProtocol).
 
-```bash
-npm run seed                                 # scenario A, under review (default)
-SEED_STAGE=decided npm run seed              # show the final-receipt / outcome state
-SEED_STAGE=awaiting_response npm run seed    # recipient reply composer visible
-```
+### Chain-first invariant
 
-## What's live vs stubbed
+A Payout row is created **only** by the indexer when it detects a real on-chain
+`pay()` on the RefundProtocol — never by a direct DB write. `POST /payouts`
+returns the unsigned `pay()` transaction for the browser wallet to sign; it does
+not write a Payout. Until the contracts are deployed, money-mutating endpoints
+(`POST /payouts`, `POST /payouts/:id/disputes`) return `503` via the
+`requireChainConfigured` middleware, and `/config` reports `chainReady: false`.
+Deploy with `./scripts/deploy-arc.sh` (see the repo root README).
 
-This build implements the full API surface, RBAC, state machines, append-only
-hooks, canonical hashing and the frozen seed — but the on-chain side is stubbed
-(see `docs/REMAINING_ISSUES.md`):
-
-- **No indexer process** — there is no chain watcher; `/status` chain figures
-  return `null` and the internal hooks are exercised by `/demo/seed` and the
-  frontend's labeled simulation. The contract is identical to the PRD's.
-- **No real anchor worker** — anchor jobs are enqueued but not posted to C2
-  (no real registry contract). The enqueue code and job model are in place.
-- **No real wallet signing** — `POST /cases/:id/decisions` returns the unsigned
-  tx; the frontend's simulation flow stands in (D11). The decision + reason
-  persist and the refund confirmation is driven by `/demo/execute-refund`.
-
-These are PRD PH-5 (indexer) and PH-7 (contracts) items.
+With no chain configured, the indexer/anchor worker sit idle and the API serves
+whatever is in the DB (chain figures in `/status` and `/wallet/balance` degrade
+to `null`).
 
 ## Layout
 
@@ -85,7 +83,7 @@ src/
   server.ts        entry — boot-fail assertions, Mongo connect, listen
   app.ts           express app + terminal error handler
   env.ts           env loading + the P4 boot-fail assertions
-  db.ts            mongoose connection + drop-for-seed
+  db.ts            mongoose connection
   rbac.ts          can(role, permission) — the single choke point
   stateMachines.ts payment + case machines, table-driven
   canonical.ts     canonical JSON + keccak256 + sha256
@@ -94,9 +92,8 @@ src/
   statusVocabulary.ts  single shared status-word mapping
   middleware.ts    resolveSession + requirePermission + requireInternal
   services.ts      receipt/case/decision assembly + hashing
-  seed.ts          frozen demo fixtures → DB
-  models/          12 mongoose schemas + append-only plugin
-  routes/          one file per resource group (24 endpoints)
+  models/          mongoose schemas + append-only plugin
+  routes/          one file per resource group
 test/              vitest suites
 ```
 

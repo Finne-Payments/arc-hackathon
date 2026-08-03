@@ -4,7 +4,7 @@ import { useFinne } from "./useFinne";
 import { useApi } from "./useApi";
 import { Sidebar } from "./components/Sidebar";
 import { TopBar } from "./components/TopBar";
-import { Toasts, NotificationToasts } from "./components/Overlays";
+import { Toasts } from "./components/Overlays";
 import { Ledger } from "./screens/Ledger";
 import { Disputes } from "./screens/Disputes";
 import { Platform } from "./screens/Platform";
@@ -46,7 +46,8 @@ function isValidRole(r: string | null): r is Role {
 /* ============================================================================
    URL ↔ screen sync (GAP-W5). useFinne remains the source of truth for the
    ViewModel; this keeps the browser URL in step so screens are deep-linkable
-   and shareable. Each Screen maps to a path segment.
+   and shareable. Entity screens carry their ID in the path so each dispute and
+   receipt has its own URL (e.g. /case/CASE-0142, /receipt/pmt_123).
    ========================================================================== */
 const SCREEN_PATH: Record<string, string> = {
   ledger: "/ledger",
@@ -60,9 +61,37 @@ const SCREEN_PATH: Record<string, string> = {
   platform: "/platform",
 };
 
+/** Build the URL for a screen + the selected entity (if any). */
+function screenUrl(screen: string, caseId: string | null, paymentId: string | null): string {
+  const base = SCREEN_PATH[screen];
+  if (!base) return "/";
+  if (screen === "case" && caseId) return `${base}/${caseId}`;
+  if ((screen === "receipt" || screen === "final") && paymentId) return `${base}/${paymentId}`;
+  return base;
+}
+
 const PATH_SCREEN: Record<string, string> = Object.fromEntries(
   Object.entries(SCREEN_PATH).map(([s, p]) => [p, s]),
 );
+
+/**
+ * Parse the browser path into { screen, caseId, paymentId } so a deep link to
+ * /case/CASE-0142 or /receipt/pmt_123 opens the right entity. Falls back to the
+ * bare screen when the path has no ID segment.
+ */
+function parsePath(pathname: string): { screen: string | null; caseId: string | null; paymentId: string | null } {
+  const parts = pathname.split("/").filter(Boolean); // e.g. ["case", "CASE-0142"]
+  // /receipt maps to both "receipt" and "final" (they share a path); deep links
+  // always resolve to the canonical "receipt" view. "final" is an internal state
+  // set only after a confirmed refund — never reachable via URL.
+  const raw = parts[0] ? PATH_SCREEN["/" + parts[0]] ?? null : null;
+  const screen = raw === "final" ? "receipt" : raw;
+  const id = parts[1] ?? null;
+  if (!screen) return { screen: null, caseId: null, paymentId: null };
+  if (screen === "case") return { screen, caseId: id, paymentId: null };
+  if (screen === "receipt") return { screen, caseId: null, paymentId: id };
+  return { screen, caseId: null, paymentId: null };
+}
 
 export default function App() {
   const [user, setUser] = useState<PublicUser | null>(null);
@@ -144,26 +173,31 @@ function AuthenticatedApp({ user, frontendRole, onLogout }: { user: PublicUser; 
   }, [frontendRole, apiActions]);
 
   // URL ↔ screen sync with role-based route guards.
-  // - On mount: jump to the URL's screen ONLY if the role is allowed to see it;
-  //   otherwise redirect to the role's home screen.
-  // - Thereafter: keep the URL in step with the active screen.
-  // - When the role changes (view-as switch): reset to that role's home screen.
+  // - On mount: parse the deep link (e.g. /case/CASE-0142) and set the screen
+  //   + selected entity so the right data loads. Bare screens (e.g. /disputes)
+  //   just set the screen.
+  // - Thereafter: keep the URL in step with the active screen + entity, so every
+  //   dispute and receipt has its own shareable URL.
   const didInit = useRef(false);
   useEffect(() => {
     if (!didInit.current) {
       didInit.current = true;
-      const fromPath = PATH_SCREEN[location.pathname];
-      if (fromPath) {
-        actions.go(fromPath as never);
+      const parsed = parsePath(location.pathname);
+      if (parsed.screen) {
+        // Carry the entity ID from the URL into useFinne state so the data-load
+        // effect fetches the right case/receipt.
+        if (parsed.caseId) actions.viewCase(parsed.caseId);
+        else if (parsed.paymentId) actions.viewReceipt(parsed.paymentId);
+        else actions.go(parsed.screen as never);
       }
       return;
     }
     if (v.screen) {
-      const path = SCREEN_PATH[v.screen];
-      if (path && path !== location.pathname) navigate(path, { replace: true });
+      const path = screenUrl(v.screen, v.selectedCaseId, v.selectedPaymentId);
+      if (path !== location.pathname) navigate(path, { replace: true });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [v.screen, location.pathname]);
+  }, [v.screen, v.selectedCaseId, v.selectedPaymentId, location.pathname]);
 
   // When the role changes (view-as dropdown or role switch), redirect to the
   // home screen for the new role.
@@ -182,13 +216,14 @@ function AuthenticatedApp({ user, frontendRole, onLogout }: { user: PublicUser; 
 
   useEffect(() => {
     if (v.screen === "case") {
-      const caseNumber = activeCaseNumber(apiData.cases);
+      const caseNumber = v.selectedCaseId ?? activeCaseNumber(apiData.cases);
       apiActions.loadCase(caseNumber);
     } else if (v.screen === "receipt" || v.screen === "final") {
-      const paymentId = activePaymentId(apiData.payouts);
-      apiActions.loadReceipt(paymentId);
+      // Use the specific payout the user clicked, not the first one in the list.
+      const paymentId = v.selectedPaymentId ?? activePaymentId(apiData.payouts);
+      if (paymentId) apiActions.loadReceipt(paymentId);
     }
-  }, [v.screen, apiData.cases, apiData.payouts, apiActions]);
+  }, [v.screen, v.selectedPaymentId, v.selectedCaseId, apiData.cases, apiData.payouts, apiActions]);
 
   return (
     <div style={{ minHeight: "100vh", display: "flex", alignItems: "stretch" }}>
@@ -218,7 +253,6 @@ function AuthenticatedApp({ user, frontendRole, onLogout }: { user: PublicUser; 
       </div>
 
       <Toasts exportToast={state.exportToast} copied={state.copied} />
-      <NotificationToasts notifications={apiData.notifications} />
     </div>
   );
 }

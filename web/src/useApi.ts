@@ -73,9 +73,14 @@ export function useApi(initialRole: Role): { data: ApiData; actions: ApiActions 
 
   const refresh = useCallback(async () => {
     try {
-      const [status, payouts, cases, notifs, walletBalance] = await Promise.all([
-        api.status(), api.payouts(), api.cases(),
-        api.notifications().catch(() => ({ notifications: [], unreadCount: 0 })),
+      const [status, payouts, cases, notifsResult, walletBalance] = await Promise.all([
+        api.status(),
+        api.payouts(),
+        api.cases(),
+        api.notifications().catch((e) => {
+          console.warn("[useApi] notifications fetch failed:", e instanceof Error ? e.message : e);
+          return { notifications: [], unreadCount: 0 };
+        }),
         api.walletBalance().catch(() => null),
       ]);
       let cfg = dataRef.current.config;
@@ -92,8 +97,8 @@ export function useApi(initialRole: Role): { data: ApiData; actions: ApiActions 
         status,
         payouts: payouts.payouts,
         cases: cases.cases,
-        notifications: notifs.notifications,
-        unreadCount: notifs.unreadCount,
+        notifications: notifsResult.notifications,
+        unreadCount: notifsResult.unreadCount,
         walletBalance,
         loading: false,
         error: null,

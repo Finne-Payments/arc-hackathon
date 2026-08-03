@@ -2,6 +2,7 @@ import { useState } from "react";
 import { setToken, walletLogin, type PublicUser } from "../api";
 import { connectWallet } from "../wallet";
 import { isUserRejection } from "../wallet";
+import { Spinner } from "../components/primitives";
 import type { Role } from "../types";
 
 /* ============================================================================
@@ -44,6 +45,7 @@ export function Login({ onLogin }: { onLogin: (user: PublicUser, frontendRole?: 
   const [selectedRole, setSelectedRole] = useState<RoleKey | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [connecting, setConnecting] = useState(false);
+  const [connectMsg, setConnectMsg] = useState<string>("");
 
   const selectRole = (role: RoleKey) => {
     setSelectedRole(role);
@@ -56,9 +58,11 @@ export function Login({ onLogin }: { onLogin: (user: PublicUser, frontendRole?: 
     setError(null);
     setConnecting(true);
     try {
+      setConnectMsg("Opening your wallet…");
       const client = await connectWallet();
       const addr = client.account?.address;
       if (!addr) throw new Error("No address returned by the wallet.");
+      setConnectMsg("Signing you in…");
       const { token, user } = await walletLogin({
         walletAddress: addr,
         role: (selectedRole ?? "customer") as Role,
@@ -138,7 +142,12 @@ export function Login({ onLogin }: { onLogin: (user: PublicUser, frontendRole?: 
             boxShadow: connecting ? "none" : "var(--shadow-sm)",
           }}
         >
-          {connecting ? "Connecting…" : "Connect wallet"}
+          {connecting ? (
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 8, justifyContent: "center" }}>
+              <Spinner size={16} color="var(--brand-600)" track="var(--brand-300)" thickness={2} />
+              {connectMsg || "Connecting…"}
+            </span>
+          ) : "Connect wallet"}
         </button>
         <div style={{ marginTop: 8, fontSize: 11, color: "var(--color-fg-subtle)", textAlign: "center", lineHeight: 1.4 }}>
           MetaMask / Rabby on Arc testnet. Your wallet is your account — no password needed.

@@ -1,17 +1,21 @@
 import { useMemo, useState } from "react";
 import type { FinneActions } from "../useFinne";
 import type { ApiData } from "../useApi";
-import { BackLink, PrimaryButton, SecondaryButton, TechChip } from "../components/primitives";
+import { BackLink, PrimaryButton, SecondaryButton, TechChip, SpinnerLabel } from "../components/primitives";
 import { shortHex } from "../mappers";
-import { sameAddress, uid, useAddressBook, type AddressEntry } from "../useAddressBook";
+import { sameAddress, useAddressBook, type AddressEntry } from "../useAddressBook";
 
 /* ============================================================================
-   New protected payout. The merchant picks a refund ("from") wallet and a
-   recipient ("to") wallet — either from their local address book or by adding a
-   new one — sets an amount and a deliverable list, then signs pay() on the
-   RefundProtocol. The address book is browser-local (useAddressBook); the
-   backend config still supplies the default treasury/recipient as starter
-   options so the flow works before anything is saved.
+   New protected payout — essentials only.
+
+   The payer's wallet signs ONE action: approve the RefundProtocol to spend the
+   USDC, then call pay(). Both go through the wallet (the backend holds no payer
+   key by design). The receipt is awaited, so the screen reflects the REAL
+   on-chain outcome — a reverted pay() (e.g. no approval, no balance) shows as a
+   failure, never a false "submitted".
+
+   The payout row itself is created ONLY by the indexer when it detects the
+   PaymentCreated event (chain-first). This screen never writes to the DB.
    ========================================================================== */
 
 const CONFIG_FROM_ID = "__config_refund__";
@@ -22,21 +26,16 @@ export function NewPayout({ actions, apiData }: { actions: FinneActions; apiData
   const platform = apiData?.config?.platform ?? null;
   const recipient = apiData?.config?.recipient ?? null;
   const rpAddress = apiData?.config?.refundProtocolAddress ?? null;
+  const usdcAddress = apiData?.config?.usdcAddress ?? null;
   const configRefund = platform?.refundAddress ?? "";
   const configRecipientAddr = recipient?.walletAddress ?? "";
 
   const { from: fromBook, to: toBook, addEntry, removeEntry } = useAddressBook();
 
-  // Merge the backend's default wallets in as starter options (shown unless the
-  // user has already saved an entry for the same address).
   const fromOptions = useMemo<AddressEntry[]>(() => {
     const list = [...fromBook];
     if (configRefund && !list.some((e) => sameAddress(e.address, configRefund))) {
-      list.unshift({
-        id: CONFIG_FROM_ID,
-        label: platform ? `${platform.name} treasury (default)` : "Treasury (default)",
-        address: configRefund,
-      });
+      list.unshift({ id: CONFIG_FROM_ID, label: platform ? `${platform.name} treasury` : "Treasury", address: configRefund });
     }
     return list;
   }, [fromBook, configRefund, platform]);
@@ -44,95 +43,61 @@ export function NewPayout({ actions, apiData }: { actions: FinneActions; apiData
   const toOptions = useMemo<AddressEntry[]>(() => {
     const list = [...toBook];
     if (configRecipientAddr && recipient && !list.some((e) => sameAddress(e.address, configRecipientAddr))) {
-      list.unshift({ id: CONFIG_TO_ID, label: `${recipient.displayName} (default)`, address: configRecipientAddr });
+      list.unshift({ id: CONFIG_TO_ID, label: recipient.displayName, address: configRecipientAddr });
     }
     return list;
   }, [toBook, configRecipientAddr, recipient]);
 
-  // Pre-select the first option (the config default) so the form is usable immediately.
   const [fromId, setFromId] = useState<string>(fromOptions[0]?.id ?? "");
   const [toId, setToId] = useState<string>(toOptions[0]?.id ?? "");
-
   const fromEntry = fromOptions.find((e) => e.id === fromId) ?? fromOptions[0] ?? null;
   const toEntry = toOptions.find((e) => e.id === toId) ?? toOptions[0] ?? null;
   const refundAddress = fromEntry?.address ?? "";
   const recipientAddress = toEntry?.address ?? "";
 
   const [amount, setAmount] = useState("");
-  const [deliverables, setDeliverables] = useState<{ id: string; name: string; due: string }[]>([]);
-  const [policy, setPolicy] = useState<"standard" | "perDeliverable">("standard");
-  const [protectionDate, setProtectionDate] = useState(() => {
-    const d = new Date();
-    d.setDate(d.getDate() + 30);
-    return d.toISOString().split("T")[0];
-  });
-  const [status, setStatus] = useState<string | null>(null);
+  const [status, setStatus] = useState<{ kind: "working" | "ok" | "err"; text: string } | null>(null);
   const [paying, setPaying] = useState(false);
 
   const numericAmount = Number(amount);
   const hasChain = !!rpAddress && rpAddress !== "0x0000000000000000000000000000000000000000";
-  const valid = !!recipientAddress && !!refundAddress && amount !== "" && numericAmount > 0 && !!protectionDate;
-
-  const addDeliverable = () => setDeliverables((d) => [...d, { id: uid(), name: "", due: "" }]);
-  const updateDeliverable = (id: string, field: "name" | "due", value: string) =>
-    setDeliverables((d) => d.map((x) => (x.id === id ? { ...x, [field]: value } : x)));
-  const removeDeliverable = (id: string) => setDeliverables((d) => d.filter((x) => x.id !== id));
+  const valid = !!recipientAddress && !!refundAddress && amount !== "" && numericAmount > 0 && !!usdcAddress;
 
   const payAndProtect = async () => {
-    if (!recipientAddress || !refundAddress || !valid) {
-      setStatus("Pick a recipient and a refund wallet, and enter an amount greater than 0.");
+    if (!valid || !rpAddress || !usdcAddress) {
+      setStatus({ kind: "err", text: "Pick a recipient and a refund wallet, and enter an amount greater than 0." });
       return;
     }
     setPaying(true);
-    setStatus(null);
+    const phaseText: Record<string, string> = {
+      connecting: "Opening your wallet…",
+      approving: "Approving USDC spend — confirm in your wallet…",
+      paying: "Paying into escrow — confirm in your wallet…",
+      confirming: "Confirming the payment on Arc…",
+    };
+    setStatus({ kind: "working", text: phaseText.connecting });
     try {
-      if (hasChain) {
-        // Real chain path — the merchant's browser wallet signs pay() on the RefundProtocol.
-        const { connectWallet } = await import("../wallet.ts");
-        const client = await connectWallet();
-        const amountBase = BigInt(Math.round(numericAmount * 1_000_000));
-        const hash = await client.writeContract({
-          address: rpAddress as `0x${string}`,
-          abi: [
-            {
-              type: "function",
-              name: "pay",
-              stateMutability: "nonpayable",
-              inputs: [
-                { name: "to", type: "address" },
-                { name: "amount", type: "uint256" },
-                { name: "refundTo", type: "address" },
-              ],
-              outputs: [],
-            },
-          ],
-          functionName: "pay",
-          args: [recipientAddress as `0x${string}`, amountBase, refundAddress as `0x${string}`],
-          account: client.account!,
-          chain: null,
-        });
-        setStatus(`Payment submitted on Arc! Transaction: ${hash.slice(0, 10)}…${hash.slice(-4)}`);
-        setTimeout(() => actions.go("ledger"), 3000);
-      } else {
-        // No chain deployed — create the payout directly in the database.
-        const { api } = await import("../api.ts");
-        await api.createPayout({
-          recipientWallet: recipientAddress,
-          amount: String(numericAmount),
-          refundTo: refundAddress,
-          description: deliverables.length > 0 ? deliverables.map((d) => d.name).filter(Boolean).join(", ") : "Protected payout",
-          deliverables: deliverables.filter((d) => d.name.trim()).map((d) => ({ name: d.name, due: d.due })),
-          protectionDate,
-        });
-        setStatus(`Protected payout created. ${amount} USDC to ${shortHex(recipientAddress)} is now escrowed. Opening the ledger...`);
-        setTimeout(() => actions.go("ledger"), 2500);
-      }
+      const { approveAndPay } = await import("../wallet.ts");
+      const amountBase = BigInt(Math.round(numericAmount * 1_000_000));
+      const { paymentId } = await approveAndPay(
+        rpAddress as `0x${string}`,
+        usdcAddress as `0x${string}`,
+        recipientAddress as `0x${string}`,
+        amountBase,
+        refundAddress as `0x${string}`,
+        (phase) => setStatus({ kind: "working", text: phaseText[phase] ?? "Working…" }),
+      );
+      setStatus({
+        kind: "ok",
+        text: `Payment confirmed on Arc${paymentId !== null ? ` · payment #${paymentId}` : ""}. The receipt is being built — opening the ledger.`,
+      });
+      setTimeout(() => actions.go("ledger"), 3500);
     } catch (e) {
       const { isUserRejection } = await import("../wallet.ts");
       if (isUserRejection(e)) {
-        setStatus("Transaction rejected in your wallet.");
+        setStatus({ kind: "err", text: "Transaction rejected in your wallet." });
       } else {
-        setStatus(e instanceof Error ? e.message : "Payment failed.");
+        setStatus({ kind: "err", text: e instanceof Error ? e.message : "Payment failed on chain. Nothing moved." });
       }
     } finally {
       setPaying(false);
@@ -140,55 +105,52 @@ export function NewPayout({ actions, apiData }: { actions: FinneActions; apiData
   };
 
   return (
-    <div className="rise-in" style={{ maxWidth: 720, margin: 0 }}>
+    <div className="rise-in" style={{ maxWidth: 640, margin: 0 }}>
       <BackLink label="All payouts" onClick={() => actions.go("ledger")} />
       <h1 style={{ margin: "14px 0 6px", fontFamily: "var(--font-sans)", fontWeight: 700, fontSize: 24, letterSpacing: "-0.02em" }}>
         New protected payout
       </h1>
       <p style={{ margin: "0 0 24px", fontSize: 14, color: "var(--color-fg-muted)", lineHeight: 1.6 }}>
-        The payment sits protected until the date you set. If the work goes wrong, an arbiter decides — money can only return to the
+        Funds stay protected for 30 days unless a dispute is open. If the work goes wrong, an arbiter decides — money can only return to the
         refund wallet you pick here.
       </p>
 
       {!hasChain && (
-        <div style={{ background: "var(--warn-soft)", border: "1px solid var(--warn-border)", borderRadius: "var(--radius-md)", padding: "12px 16px", marginBottom: 20, fontSize: 13, color: "var(--warn-600)", lineHeight: 1.5 }}>
-          <strong>The RefundProtocol contract is not deployed yet.</strong> Your payout will be recorded off-chain in the database.
-          Once the contract is deployed to Arc testnet, payouts will be escrowed on-chain with real USDC.
+        <div style={{ background: "var(--risk-soft, var(--warn-soft))", border: "1px solid var(--risk-border, var(--warn-border))", borderRadius: "var(--radius-md)", padding: "14px 16px", marginBottom: 20, fontSize: 13, color: "var(--risk-600, var(--warn-600))", lineHeight: 1.5 }}>
+          <strong>Payouts are disabled — the RefundProtocol contract isn't deployed.</strong>
+          <br />
+          A protected payout can only be created by a real on-chain <code style={{ fontFamily: "var(--font-mono)" }}>pay()</code> on Arc.
         </div>
       )}
 
       <div style={{ background: "var(--color-surface)", border: "1px solid var(--color-border)", borderRadius: "var(--radius-lg)", boxShadow: "var(--shadow-xs)", padding: 28, display: "flex", flexDirection: "column", gap: 20 }}>
-        {/* from (refund / treasury) — this is the MERCHANT's wallet where refunds return to */}
+        {/* from (refund / treasury) — refunds return here */}
         <AddressField
-          fieldLabel="Your treasury wallet (refund address)"
+          fieldLabel="Refund wallet (your treasury)"
           entries={fromOptions}
           selectedId={fromEntry?.id ?? ""}
           nonRemovableIds={[CONFIG_FROM_ID]}
           addTitle="Add a treasury wallet"
-          nameLabel="Wallet label (e.g. Northbeam treasury)"
-          addrPlaceholder="0x… your treasury / refund address"
+          nameLabel="Wallet label"
+          addrPlaceholder="0x… your refund address"
           onSelect={setFromId}
           onAdd={async (label, address) => (await addEntry("from", label, address)).id}
-          onRemove={(id) => {
-            void removeEntry(id);
-          }}
+          onRemove={(id) => void removeEntry(id)}
           onCopy={actions.copyTech}
         />
 
-        {/* to (recipient) — this is who gets PAID */}
+        {/* to (recipient) */}
         <AddressField
-          fieldLabel="Recipient wallet (paid to)"
+          fieldLabel="Recipient wallet"
           entries={toOptions}
           selectedId={toEntry?.id ?? ""}
           nonRemovableIds={[CONFIG_TO_ID]}
           addTitle="Add a recipient"
           nameLabel="Recipient name"
-          addrPlaceholder="0x… recipient wallet address"
+          addrPlaceholder="0x… recipient address"
           onSelect={setToId}
           onAdd={async (label, address) => (await addEntry("to", label, address)).id}
-          onRemove={(id) => {
-            void removeEntry(id);
-          }}
+          onRemove={(id) => void removeEntry(id)}
           onCopy={actions.copyTech}
         />
 
@@ -207,94 +169,36 @@ export function NewPayout({ actions, apiData }: { actions: FinneActions; apiData
           </div>
         </div>
 
-        {/* protection end date */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 6, maxWidth: 240 }}>
-          <label style={{ fontSize: 13, fontWeight: 600 }}>Protection ends</label>
-          <input
-            type="date"
-            className="finne-input"
-            value={protectionDate}
-            onChange={(e) => setProtectionDate(e.target.value)}
-            min={new Date().toISOString().split("T")[0]}
-            style={{ padding: "9px 12px", color: "var(--color-fg-muted)" }}
-          />
-          <div style={{ fontSize: 11, color: "var(--color-fg-subtle)" }}>
-            Funds stay escrowed until this date unless a dispute is open.
-          </div>
-        </div>
-
-        {/* deliverables */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          <label style={{ fontSize: 13, fontWeight: 600 }}>Deliverables</label>
-          {deliverables.length === 0 && (
-            <div style={{ fontSize: 12.5, color: "var(--color-fg-subtle)" }}>No deliverables yet. Add what the recipient owes you.</div>
-          )}
-          {deliverables.map((d) => (
-            <div key={d.id} style={{ display: "grid", gridTemplateColumns: "1fr 140px auto", gap: 8, alignItems: "center" }}>
-              <input className="finne-input" placeholder="Deliverable (e.g. Video 1 — product hero)" value={d.name} onChange={(e) => updateDeliverable(d.id, "name", e.target.value)} style={{ padding: "9px 12px" }} />
-              <input type="date" className="finne-input" value={d.due} onChange={(e) => updateDeliverable(d.id, "due", e.target.value)} style={{ padding: "9px 12px", color: "var(--color-fg-muted)" }} />
-              <a onClick={() => removeDeliverable(d.id)} title="Remove" style={{ cursor: "pointer", fontSize: 16, color: "var(--risk-600)", padding: "4px 8px" }}>×</a>
-            </div>
-          ))}
-          <a onClick={addDeliverable} style={{ cursor: "pointer", fontSize: 13, fontWeight: 600, alignSelf: "flex-start" }}>+ Add a deliverable</a>
-        </div>
-
-        {/* policy */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          <label style={{ fontSize: 13, fontWeight: 600 }}>Payout policy</label>
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            <label style={{ display: "flex", gap: 10, alignItems: "flex-start", border: policy === "standard" ? "1.5px solid var(--brand-600)" : "1.5px solid var(--ink-200)", background: policy === "standard" ? "var(--brand-50)" : "var(--color-surface)", borderRadius: "var(--radius-md)", padding: "12px 14px", cursor: "pointer" }}>
-              <input type="radio" checked={policy === "standard"} onChange={() => setPolicy("standard")} style={{ marginTop: 2, accentColor: "var(--brand-600)" }} />
-              <span>
-                <span style={{ fontSize: 14, fontWeight: 600 }}>Standard · 30-day protection</span>
-                <br />
-                <span style={{ fontSize: 13, color: "var(--color-fg-muted)" }}>Money unlocks 30 days after payment unless a dispute is open.</span>
-              </span>
-            </label>
-            <label style={{ display: "flex", gap: 10, alignItems: "flex-start", border: policy === "perDeliverable" ? "1.5px solid var(--brand-600)" : "1.5px solid var(--ink-200)", background: policy === "perDeliverable" ? "var(--brand-50)" : "var(--color-surface)", borderRadius: "var(--radius-md)", padding: "12px 14px", cursor: "pointer" }}>
-              <input type="radio" checked={policy === "perDeliverable"} onChange={() => setPolicy("perDeliverable")} style={{ marginTop: 2, accentColor: "var(--brand-600)" }} />
-              <span>
-                <span style={{ fontSize: 14, fontWeight: 600 }}>Per-deliverable · releases in parts</span>
-                <br />
-                <span style={{ fontSize: 13, color: "var(--color-fg-muted)" }}>A share of the payment unlocks as each deliverable is confirmed.</span>
-              </span>
-            </label>
-          </div>
-        </div>
-
-        {/* status message */}
+        {/* status */}
         {status && (
-          <div style={{ background: status.includes("submitted") ? "var(--ok-soft)" : "var(--warn-soft)", border: `1px solid ${status.includes("submitted") ? "var(--ok-border)" : "var(--warn-border)"}`, borderRadius: "var(--radius-md)", padding: "10px 14px", fontSize: 13, color: status.includes("submitted") ? "var(--ok-600)" : "var(--warn-600)", lineHeight: 1.5 }}>
-            {status}
+          <div
+            style={{
+              background: status.kind === "ok" ? "var(--ok-soft)" : status.kind === "err" ? "var(--warn-soft)" : "var(--brand-50)",
+              border: `1px solid ${status.kind === "ok" ? "var(--ok-border)" : status.kind === "err" ? "var(--warn-border)" : "var(--brand-200)"}`,
+              borderRadius: "var(--radius-md)",
+              padding: "10px 14px",
+              fontSize: 13,
+              color: status.kind === "ok" ? "var(--ok-600)" : status.kind === "err" ? "var(--warn-600)" : "var(--brand-800)",
+              lineHeight: 1.5,
+            }}
+          >
+            {status.kind === "working" ? <SpinnerLabel label={status.text} /> : status.text}
           </div>
         )}
 
         {/* pay + protect */}
-        <div style={{ borderTop: "1px solid var(--color-border)", paddingTop: 20 }}>
-          <div style={{ background: "var(--brand-50)", border: "1px solid var(--brand-200)", borderRadius: "var(--radius-md)", padding: "14px 16px", marginBottom: 16 }}>
-            <div style={{ fontSize: 13, fontWeight: 600, color: "var(--brand-800)", marginBottom: 6 }}>Pay and protect</div>
-            <div style={{ fontSize: 13, color: "var(--color-fg-muted)", lineHeight: 1.6 }}>
-              <div>Paying <strong>{recipientAddress ? shortHex(recipientAddress) : "—"}</strong> (recipient)</div>
-              <div style={{ marginTop: 4 }}>Refunds return to <strong>{refundAddress ? shortHex(refundAddress) : "—"}</strong> (your treasury — fixed at payment time, cannot be changed)</div>
-              <div style={{ marginTop: 4 }}>Protected until <strong>{protectionDate}</strong></div>
-            </div>
-          </div>
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-            <PrimaryButton onClick={payAndProtect} disabled={paying || !valid}>
-              {paying ? "Connecting wallet…" : numericAmount > 0 ? `Pay ${amount} USDC and protect` : "Pay and protect"}
-            </PrimaryButton>
-            <SecondaryButton onClick={() => actions.go("ledger")}>Cancel</SecondaryButton>
-          </div>
-          <div style={{ fontSize: 11, color: "var(--color-fg-subtle)", marginTop: 8 }}>
-            This calls <code style={{ fontFamily: "var(--font-mono)" }}>pay()</code> on the RefundProtocol via your browser wallet. The indexer detects the payment and builds the receipt.
-          </div>
+        <div style={{ borderTop: "1px solid var(--color-border)", paddingTop: 20, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+          <PrimaryButton onClick={payAndProtect} disabled={paying || !valid || !hasChain}>
+            {paying ? "Confirming on Arc…" : numericAmount > 0 ? `Pay ${amount} USDC and protect` : "Pay and protect"}
+          </PrimaryButton>
+          <SecondaryButton onClick={() => actions.go("ledger")}>Cancel</SecondaryButton>
         </div>
       </div>
     </div>
   );
 }
 
-/** Pick an address from a list, or add a new one inline. Used for from/to. */
+/** Pick an address from a list, or add a new one inline. */
 function AddressField({
   fieldLabel,
   entries,
@@ -365,11 +269,7 @@ function AddressField({
             <option value={NEW_ID}>➕ {addTitle}</option>
           </select>
           {canRemove && (
-            <a
-              onClick={() => selected && onRemove(selected.id)}
-              title="Remove from address book"
-              style={{ fontSize: 12, fontWeight: 600, color: "var(--risk-600)", cursor: "pointer", whiteSpace: "nowrap" }}
-            >
+            <a onClick={() => selected && onRemove(selected.id)} title="Remove" style={{ fontSize: 12, fontWeight: 600, color: "var(--risk-600)", cursor: "pointer", whiteSpace: "nowrap" }}>
               Remove
             </a>
           )}
@@ -382,14 +282,7 @@ function AddressField({
             <PrimaryButton onClick={save} disabled={saving || !lbl.trim() || !addr.trim()} style={{ fontSize: 13, padding: "7px 14px" }}>
               {saving ? "Saving…" : "Save & select"}
             </PrimaryButton>
-            <SecondaryButton
-              onClick={() => {
-                setAdding(false);
-                setLbl("");
-                setAddr("");
-              }}
-              style={{ fontSize: 13, padding: "7px 14px" }}
-            >
+            <SecondaryButton onClick={() => { setAdding(false); setLbl(""); setAddr(""); }} style={{ fontSize: 13, padding: "7px 14px" }}>
               Cancel
             </SecondaryButton>
           </div>
@@ -397,7 +290,7 @@ function AddressField({
       )}
       {selected && !adding && (
         <div style={{ fontSize: 12, color: "var(--color-fg-muted)" }}>
-          Wallet: <TechChip short={shortHex(selected.address)} full={selected.address} onCopy={onCopy} />
+          <TechChip short={shortHex(selected.address)} full={selected.address} onCopy={onCopy} />
         </div>
       )}
     </div>

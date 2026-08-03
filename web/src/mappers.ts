@@ -50,10 +50,18 @@ const RECIPIENT_LABEL: Record<string, string> = {
   alex: "Alex Chen",
 };
 
+export function recipientDisplayName(recipientKey: string | undefined | null, recipientWallet: string | undefined | null): string {
+  // Try the friendly name map first, then a short wallet address, then fall back.
+  if (recipientKey && RECIPIENT_LABEL[recipientKey]) return RECIPIENT_LABEL[recipientKey];
+  if (recipientWallet && recipientWallet.length > 10) return shortHex(recipientWallet);
+  if (recipientKey && recipientKey.length > 6) return shortHex(recipientKey);
+  return "Recipient";
+}
+
 export function payoutToLedgerView(p: PayoutRow, workOrderDesc: string | null): LedgerView {
   const disputed = p.status === "DISPUTED";
   return {
-    recipient: RECIPIENT_LABEL[p.recipientKey] ?? p.recipientKey,
+    recipient: recipientDisplayName(p.recipientKey, p.recipientWallet),
     amount: `${p.amount} USDC`,
     purpose: workOrderDesc ?? "—",
     paid: formatPaidDate(p.paidAt),
@@ -64,6 +72,53 @@ export function payoutToLedgerView(p: PayoutRow, workOrderDesc: string | null): 
         ? `Unlocks ${formatShortDate(p.lockupEnd)}`
         : "—",
     paymentId: p.paymentId,
+  };
+}
+
+/** Same shape as the merchant ledger, but from the recipient's perspective — the
+ *  party column is "from" (the platform/merchant) instead of "recipient". Keeps
+ *  the two payouts tables visually congruent (same columns, dates, statuses). */
+export interface RecipientLedgerView {
+  from: string;
+  amount: string;
+  purpose: string;
+  paid: string;
+  status: { label: string; dot: "warn" | "brand" | "ok" | "risk" | "ink" };
+  deadline: string;
+  highlight: boolean;
+  paymentId: string;
+}
+
+export function payoutToRecipientView(p: PayoutRow, workOrderDesc: string | null): RecipientLedgerView {
+  const disputed = p.status === "DISPUTED";
+  return {
+    from: platformName(p.platformKey),
+    amount: `${p.amount} USDC`,
+    purpose: workOrderDesc ?? "—",
+    paid: formatPaidDate(p.paidAt),
+    status: { label: PAYMENT_WORD[p.status] ?? p.status, dot: (PAYMENT_DOT[p.status] ?? "brand") as "warn" | "brand" | "ok" | "risk" | "ink" },
+    deadline: disputed ? "" : p.status === "ESCROWED" ? `Unlocks ${formatShortDate(p.lockupEnd)}` : "—",
+    highlight: disputed,
+    paymentId: p.paymentId,
+  };
+}
+
+/** Headline stats for the recipient's "Your payouts" view — mirrors ledgerStats
+ *  but framed from the recipient's side (protected FOR them, ready to withdraw). */
+export function recipientStats(payouts: PayoutRow[]) {
+  const sum = (arr: PayoutRow[]) => arr.reduce((s, p) => s + Number(p.amount || 0), 0);
+  const escrowed = payouts.filter((p) => p.status === "ESCROWED" || p.status === "DISPUTED");
+  const withdrawable = payouts.filter((p) => p.status === "WITHDRAWABLE");
+  const withdrawn = payouts.filter((p) => p.status === "WITHDRAWN" || p.status === "CLEARED" || p.status === "DEBT_SETTLED");
+  const disputed = payouts.filter((p) => p.status === "DISPUTED").length;
+  return {
+    protectedTotal: `${sum(escrowed)} USDC`,
+    protectedCount: `${escrowed.length} ${escrowed.length === 1 ? "payment" : "payments"}`,
+    withdrawableCount: withdrawable.length,
+    withdrawableTotal: `${sum(withdrawable)} USDC`,
+    openDisputes: disputed,
+    withdrawnTotal: `${sum(withdrawn)} USDC`,
+    withdrawnCount: `${withdrawn.length} ${withdrawn.length === 1 ? "payment" : "payments"}`,
   };
 }
 
@@ -230,18 +285,24 @@ export function ledgerStats(payouts: PayoutRow[]) {
   };
 }
 
-/** The platform view's marketplace stats (demo uses seeded volume). */
+/** Marketplace stats for the platform view — fully derived from the payout list. */
 export function platformStats(payouts: PayoutRow[]) {
   const volume = payouts.reduce((s, p) => s + Number(p.amount || 0), 0);
   const escrowed = payouts.filter((p) => p.status === "ESCROWED" || p.status === "DISPUTED");
   const escrowTotal = escrowed.reduce((s, p) => s + Number(p.amount || 0), 0);
   const disputed = payouts.filter((p) => p.status === "DISPUTED").length;
+  const merchants = new Set(payouts.map((p) => p.platformKey).filter(Boolean)).size;
+  const resolvedStatuses = ["REFUNDED", "CLEARED", "WITHDRAWN", "DEBT_SETTLED"];
+  const resolved = payouts.filter((p) => resolvedStatuses.includes(p.status)).length;
+  const refunded = payouts.filter((p) => p.status === "REFUNDED" || p.status === "DEBT_OUTSTANDING").length;
+  const refundRate = resolved > 0 ? `${Math.round((refunded / resolved) * 1000) / 10}%` : "—";
   return {
     volume: `${volume.toLocaleString()} USDC`,
     escrowTotal: `${escrowTotal} USDC`,
-    escrowCount: `${escrowed.length} payments`,
+    escrowCount: `${escrowed.length} ${escrowed.length === 1 ? "payment" : "payments"}`,
     openDisputes: disputed,
-    refundRate: "2.1%",
+    refundRate,
+    merchantCount: `${merchants} ${merchants === 1 ? "merchant" : "merchants"}`,
   };
 }
 

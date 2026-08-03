@@ -48,7 +48,7 @@ export const MATRIX: Record<Role, Permission[]> = {
     "brief:read",
     "demo:seed",
   ],
-  recipient: ["workorder:read", "payout:read", "case:read", "case:respond", "case:add_evidence", "brief:read"],
+  recipient: ["workorder:read", "payout:read", "case:open", "case:read", "case:respond", "case:add_evidence", "brief:read"],
   platform_viewer: ["workorder:read", "payout:read", "case:read", "brief:read"],
   agent_service: ["workorder:read", "payout:read", "case:read", "brief:read", "brief:write"],
   registry_operator: ["anchor:write"],

@@ -47,6 +47,12 @@ publicRoutes.get("/config", async (_req, res, next) => {
       refundProtocolAddress: env.arc.refundProtocolAddress,
       caseRegistryAddress: env.arc.caseRegistryAddress,
       usdcAddress: env.arc.usdcAddress,
+      // Chain-first readiness: money-mutating endpoints 503 until the contracts
+      // are deployed. The UI gates New Payout / Dispute on this.
+      chainReady: {
+        refundProtocolDeployed: !!env.arc.refundProtocolAddress,
+        caseRegistryDeployed: !!env.arc.caseRegistryAddress,
+      },
       demoMode: env.demoMode,
       // never expose payWallet (PRD §11.2)
       platform: firstPlatform
@@ -109,6 +115,10 @@ publicRoutes.get("/status", async (_req, res, next) => {
     res.json({
       indexer: { lastSeenAt, lastBlock, stale },
       chain,
+      chainReady: {
+        refundProtocolDeployed: !!env.arc.refundProtocolAddress,
+        caseRegistryDeployed: !!env.arc.caseRegistryAddress,
+      },
       demoMode: env.demoMode,
     });
   } catch (e) {

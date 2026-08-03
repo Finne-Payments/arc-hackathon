@@ -8,8 +8,8 @@
 #   cp .env.example .env        # fill in MONGO_URL, contract addresses, operator key
 #   docker compose up --build   # web on :5173, backend on :4000
 #
-# One-command rebuild of the demo world (idempotent) once the backend is up:
-#   docker compose run --rm backend npm run seed
+# The DB starts empty — payouts and disputes are created dynamically from real
+# on-chain activity (the indexer) and the app flow. No seed step.
 #
 # Money path is unchanged from the non-Docker build (PRD §4.1): Finné services
 # are read-only against the chain; the only key in these containers is the

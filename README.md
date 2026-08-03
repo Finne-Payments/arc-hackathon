@@ -41,6 +41,26 @@ If the lockup has already expired and the recipient has withdrawn, an approved r
 
 **Money path, stated once.** USDC moves in exactly two ways: the platform wallet calls `pay`, and the reviewer's arbiter wallet calls `refundByArbiter` (or the recipient calls `withdraw` after lockup). Finné's servers and agent are read-only against the chain at all times.
 
+## Deploying contracts (chain-first)
+
+The app is **inert** until both contracts are deployed to Arc testnet: money-mutating endpoints (new payout, open dispute) return `503`, and no Payout row is ever written to the database without a real on-chain `pay()` to back it. The chain is the source of truth; the database is a projection of it.
+
+```bash
+# 1. Create the deploy-only env (gitignored; holds money-moving keys ONLY).
+#    Copy the header template from the file itself and fill in derived keys.
+cp contracts/.env.deploy.example contracts/.env.deploy   # then edit
+
+# 2. Fund the accounts at https://faucet.circle.com/ (Arc testnet).
+
+# 3. Deploy + configure the arbiter reserve + make 3 demo payouts.
+./scripts/deploy-arc.sh
+```
+
+`deploy-arc.sh` deploys `RefundProtocol` (C1) and `FinneCaseRegistry` (C2), deposits the arbiter reserve, makes three real `pay()` calls, then writes the deployed addresses + the **single** registry operator key into `backend/.env` and the root `.env`. The money-moving keys (deployer / arbiter / payer) never leave `contracts/.env.deploy`; the running backend holds only the operator key, which can anchor hashes and cannot move USDC — enforced by the boot-fail guard in `backend/src/env.ts`.
+
+> **Note on Arc testnet + forge:** Arc's native USDC invokes an `isBlocklisted` compliance precompile (`0x1800…0001`) that forge's local EVM simulator cannot execute. Any forge script that moves USDC therefore reverts in simulation and forge refuses to broadcast. `deploy-arc.sh` works around this by deploying the contracts with `forge script` (no USDC) and doing every USDC-touching step (`setLockupSeconds`, `approve`, `depositArbiterFunds`, `pay`) via `cast send` against the live chain, where the precompile exists.
+
+
 ## This repository, right now
 
 `project/Finne Dispute resolution system.dc.html` is the interactive prototype of the product — open it in a browser, no build step. It covers the payout ledger, disputes queue, shared payout receipt, case room, decision-and-signing flow, recipient home and final receipt, with a session switcher for each role (arbiter, merchant, recipient, platform) and simulated wallet outcomes. `project/_ds/` holds the design tokens the prototype imports.

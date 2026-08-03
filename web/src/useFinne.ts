@@ -41,6 +41,8 @@ export interface FinneState {
   roleOverride: Role | null;
   /** The payout the user clicked — drives which receipt is loaded. */
   selectedPaymentId: string | null;
+  /** The case the user clicked (e.g. from search) — drives which case is loaded. */
+  selectedCaseId: string | null;
   stripDismissed: boolean;
   copied: boolean;
   exportToast: boolean;
@@ -72,6 +74,7 @@ export function useFinne(initialRole: Role = "arbiter") {
     screen: null,
     roleOverride: null,
     selectedPaymentId: null,
+    selectedCaseId: null,
     stripDismissed: false,
     copied: false,
     exportToast: false,
@@ -119,6 +122,12 @@ export function useFinne(initialRole: Role = "arbiter") {
   /** Open the receipt for a specific payout (the one the user clicked). */
   const viewReceipt = useCallback((paymentId: string) => {
     setState((s) => ({ ...s, selectedPaymentId: paymentId, screen: "receipt" }));
+    window.scrollTo({ top: 0, behavior: "auto" });
+  }, []);
+
+  /** Open a specific case by case number (e.g. from search). */
+  const viewCase = useCallback((caseNumber: string) => {
+    setState((s) => ({ ...s, selectedCaseId: caseNumber, screen: "case" }));
     window.scrollTo({ top: 0, behavior: "auto" });
   }, []);
 
@@ -375,6 +384,8 @@ export function useFinne(initialRole: Role = "arbiter") {
       canDecide: (stageReview || stageMoreInfo) && isReviewer,
       showComposer: isRecipient && (stageAwaiting || stageMoreInfo) && screen === "case",
       disputeDeadlineCell: stageAwaiting ? "in " + countdown : stageDecided ? "Closed 29 Jul" : "—",
+      selectedPaymentId: state.selectedPaymentId,
+      selectedCaseId: state.selectedCaseId,
     };
   }, [state, patch, startSim]);
 
@@ -382,6 +393,7 @@ export function useFinne(initialRole: Role = "arbiter") {
     () => ({
       go,
       viewReceipt,
+      viewCase,
       asRole,
       setRoleProp,
       setCaseStage,
@@ -425,7 +437,7 @@ export function useFinne(initialRole: Role = "arbiter") {
         }
       },
     }),
-    [go, viewReceipt, asRole, setRoleProp, setCaseStage, setLedgerState, setWalletSim, setDemoMode, patch]
+    [go, viewReceipt, viewCase, asRole, setRoleProp, setCaseStage, setLedgerState, setWalletSim, setDemoMode, patch]
   );
 
   return { v, actions, state };

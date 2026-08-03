@@ -30,29 +30,27 @@ function StatCard({
   );
 }
 
-/** Live ledger rows from the API, falling back to the seeded constants. */
+/** Live ledger rows from the API. Empty when the DB is empty — no seed fallback. */
 function useRows(apiData?: ApiData): { rows: (LedgerRow & { paymentId?: string })[]; live: boolean } {
-  if (apiData && apiData.payouts.length > 0) {
-    const workOrderDesc = (p: { workOrderRef: string | null }) =>
-      p.workOrderRef ? p.workOrderRef.split(":").slice(1).join(":") : null;
-    const rows = apiData.payouts
-      .filter((p) => p.platformKey === "northbeam" || !p.platformKey)
-      .map((p) => {
-        const view = payoutToLedgerView(p as never, workOrderDesc(p));
-        return {
-          recipient: view.recipient,
-          amount: view.amount,
-          purpose: view.purpose,
-          paid: view.paid,
-          status: view.status,
-          deadline: view.deadline,
-          highlight: p.status === "DISPUTED",
-          paymentId: p.paymentId,
-        };
-      });
-    return { rows, live: true };
-  }
-  return { rows: [], live: false };
+  if (!apiData) return { rows: [], live: false };
+  const workOrderDesc = (p: { workOrderRef: string | null }) =>
+    p.workOrderRef ? p.workOrderRef.split(":").slice(1).join(":") : null;
+  const rows = apiData.payouts
+    .filter((p) => p.platformKey === "northbeam" || !p.platformKey)
+    .map((p) => {
+      const view = payoutToLedgerView(p as never, workOrderDesc(p));
+      return {
+        recipient: view.recipient,
+        amount: view.amount,
+        purpose: view.purpose,
+        paid: view.paid,
+        status: view.status,
+        deadline: view.deadline,
+        highlight: p.status === "DISPUTED",
+        paymentId: p.paymentId,
+      };
+    });
+  return { rows, live: true };
 }
 
 function Row({ row, countdown, actions }: { row: (LedgerRow & { paymentId?: string }); countdown: string; actions: FinneActions }) {
@@ -221,12 +219,12 @@ export function Ledger({
               overflow: "hidden",
             }}
           >
-            <StatCard label="Protected payouts" value={String(stats?.protectedCount ?? 3)} sub={stats?.escrowTotal ?? "430 USDC in escrow"} />
+            <StatCard label="Protected payouts" value={String(stats?.protectedCount ?? 0)} sub={stats?.escrowTotal ?? "0 USDC in escrow"} />
             <div style={{ borderLeft: "1px solid var(--color-border)" }}>
-              <StatCard label="Open disputes" value={String(stats?.openDisputes ?? 1)} sub={`Oldest reply due in ${v.countdown}`} labelColor="var(--warn-600)" />
+              <StatCard label="Open disputes" value={String(stats?.openDisputes ?? 0)} sub={`Oldest reply due in ${v.countdown}`} labelColor="var(--warn-600)" />
             </div>
             <div style={{ borderLeft: "1px solid var(--color-border)" }}>
-              <StatCard label="Resolved this month" value={String(stats?.resolved ?? 2)} sub={stats?.resolvedSub ?? "1 refunded · 1 cleared"} />
+              <StatCard label="Resolved this month" value={String(stats?.resolved ?? 0)} sub={stats?.resolvedSub ?? "—"} />
             </div>
             <div style={{ borderLeft: "1px solid var(--color-border)" }}>
               <StatCard label="Arbiter reserve" value={reserve ? `${reserve} USDC` : "—"} sub="Backs post-escrow refunds" />
@@ -256,6 +254,11 @@ export function Ledger({
               <span>Deadline</span>
               <span />
             </div>
+            {rows.length === 0 && (
+              <div style={{ padding: "40px 20px", textAlign: "center", fontSize: 14, color: "var(--color-fg-muted)" }}>
+                No payouts yet — protected payments appear here once they're detected on Arc.
+              </div>
+            )}
             {rows.map((row, i) => (
               <Row
                 key={i}

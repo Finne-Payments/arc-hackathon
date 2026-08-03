@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { Address, Hash } from "viem";
+import type { Address, Hash, LocalAccount } from "viem";
 import { getWalletClient, caseRegistryAddress, refundProtocolAddress, getPublicClient } from "./chain/client.ts";
 import { CASE_REGISTRY_ABI } from "./chain/abis.ts";
 import { AnchorJob, Payout, Case, Decision } from "./models/index.ts";
@@ -53,6 +53,17 @@ function eligibleQuery() {
   };
 }
 
+/**
+ * Lease filter: a job is claimable if it has never been leased (leasedUntil is
+ * null) OR its lease has expired (leasedUntil < now). MongoDB's `$lt` with a
+ * string operand does NOT match `null`, so without the explicit null branch a
+ * freshly-enqueued job (leasedUntil defaults to null) is never picked up.
+ */
+function leaseQuery() {
+  const leaseUntil = new Date(Date.now() + LEASE_MS).toISOString();
+  return { $or: [{ leasedUntil: null }, { leasedUntil: { $lt: leaseUntil } }] };
+}
+
 async function drain(): Promise<void> {
   try {
     const wallet = getWalletClient();
@@ -63,23 +74,31 @@ async function drain(): Promise<void> {
     for (let i = 0; i < 10; i++) {
       const leaseUntil = new Date(Date.now() + LEASE_MS).toISOString();
       const job = await AnchorJob.findOneAndUpdate(
-        { ...eligibleQuery(), leasedUntil: { $lt: leaseUntil } },
+        { $and: [eligibleQuery(), leaseQuery()] },
         { $set: { status: "in_flight", leaseOwner: WORKER_ID, leasedUntil: leaseUntil } },
         { sort: { _id: 1 }, new: true },
       );
       if (!job) break;
-      await processJob(job, registry, wallet.account!.address);
+      // wallet.account is a LocalAccount (built from privateKeyToAccount in
+      // getWalletClient); the union type is narrowed here so processJob gets a
+      // local-signing account and viem broadcasts via eth_sendRawTransaction.
+      await processJob(job, registry, wallet.account as unknown as LocalAccount);
     }
   } catch (e) {
     console.error("[anchor-worker] drain error:", e instanceof Error ? e.message : e);
   }
 }
 
-async function processJob(job: typeof AnchorJob.prototype, registry: Address, operator: Address): Promise<void> {
+async function processJob(job: typeof AnchorJob.prototype, registry: Address, operator: LocalAccount): Promise<void> {
   const client = getPublicClient();
   const wallet = getWalletClient()!;
   const hash = job.hash as `0x${string}`;
 
+  // Pass the LocalAccount object (not a bare address) so viem signs the
+  // transaction locally and broadcasts it via eth_sendRawTransaction. Arc's
+  // public RPC rejects eth_sendTransaction (JSON-RPC accounts), which is what
+  // viem falls back to when given a raw address — producing "Invalid
+  // parameters" on every anchor attempt.
   try {
     let txHash: Hash | null = null;
     if (job.kind === "receipt") {

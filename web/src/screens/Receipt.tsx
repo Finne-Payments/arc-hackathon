@@ -1,6 +1,8 @@
+import { useState } from "react";
 import type { FinneActions, ViewModel } from "../useFinne";
 import type { ApiData } from "../useApi";
-import { BackLink, Card, Eyebrow, SecondaryButton, SharedViewBadge, StatusPill, TechChip } from "../components/primitives";
+import { BackLink, Card, Eyebrow, SecondaryButton, SharedViewBadge, SpinnerLabel, StatusPill, TechChip } from "../components/primitives";
+import { OpenDisputeModal } from "../components/OpenDisputeModal";
 import { explorerAddr, explorerTx, receiptStatusView, shortHex } from "../mappers";
 
 function ChainRow({ label, children }: { label: string; children: React.ReactNode }) {
@@ -37,6 +39,13 @@ export function Receipt({ v, actions, apiData }: { v: ViewModel; actions: FinneA
   // caseStage — a freshly-protected payout reads "Protected", not "Disputed".
   const statusView = payout ? receiptStatusView(payout) : null;
 
+  // Open-dispute modal: opens for the payout currently being viewed. Either side
+  // (claimant/merchant or recipient) can open a dispute; creation is a real API
+  // call, and the freshly-created case loads on success.
+  const [disputeOpen, setDisputeOpen] = useState(false);
+  const disputedPaymentId = payout?.paymentId ?? v.selectedPaymentId ?? "";
+  const disputedAmount = payout?.amount ?? "0";
+
   return (
     <div className="rise-in print-area" style={{ maxWidth: 820, margin: 0 }}>
       <div className="no-print" style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16, flexWrap: "wrap" }}>
@@ -62,7 +71,9 @@ export function Receipt({ v, actions, apiData }: { v: ViewModel; actions: FinneA
             <> · payment {payout.paymentId} · {new Date(payout.paidAt).toLocaleDateString()}</>
           </>
         ) : (
-          "Loading receipt…"
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+            <SpinnerLabel label="Loading receipt…" size={15} />
+          </span>
         )}
       </div>
 
@@ -155,18 +166,29 @@ export function Receipt({ v, actions, apiData }: { v: ViewModel; actions: FinneA
               ))}
             </div>
 
-            {v.isRecipient && v.screen === "receipt" && (
-              <SecondaryButton onClick={() => actions.go("case")} style={{ marginTop: 18, fontSize: 13, padding: "9px 15px" }}>
-                Something wrong with this payment?
-              </SecondaryButton>
-            )}
-            {v.isClaimant && v.screen === "receipt" && (
-              <SecondaryButton onClick={() => actions.go("case")} style={{ marginTop: 18, fontSize: 13, padding: "9px 15px" }}>
-                Open a dispute
+            {v.screen === "receipt" && payout && payout.status !== "DISPUTED" && payout.status !== "REFUNDED" && (
+              <SecondaryButton
+                onClick={() => setDisputeOpen(true)}
+                style={{ marginTop: 18, fontSize: 13, padding: "9px 15px" }}
+              >
+                {v.isRecipient ? "Something wrong with this payment?" : "Open a dispute"}
               </SecondaryButton>
             )}
           </Card>
         </div>
+      )}
+
+      {/* Open-dispute modal — form → confirm → create case (real API call) */}
+      {disputeOpen && disputedPaymentId && (
+        <OpenDisputeModal
+          paymentId={disputedPaymentId}
+          amount={disputedAmount}
+          onClose={() => setDisputeOpen(false)}
+          onCreated={(caseNumber) => {
+            setDisputeOpen(false);
+            actions.viewCase(caseNumber);
+          }}
+        />
       )}
 
       {/* outcome strip — final receipt */}

@@ -44,3 +44,26 @@ export const CASE_WORD: Record<string, string> = {
 export const MIN_DECISION_REASON = 20;
 /** The PRD §10.2 cap on information requests per case. */
 export const MAX_INFO_REQUESTS = 2;
+
+/* ============================================================================
+   Claim-type vocabulary (mirrors backend claimVocabulary.ts — keep in lockstep).
+   allegationClaimType on a case is a free string; these are the recognised
+   dispute reasons, each mapped to a human-readable label for tags/pills.
+   Unknown codes fall back to the raw string.
+   ========================================================================== */
+export const CLAIM_LABEL: Record<string, string> = {
+  work_not_delivered_in_full: "Work not delivered in full",
+  short_payment: "Short payment",
+  unauthorised_charge: "Unauthorised charge",
+  deliverable_rejected: "Deliverable rejected",
+  other: "Other dispute",
+};
+
+export const DEFAULT_CLAIM_TYPE = "work_not_delivered_in_full";
+
+export function claimLabel(code: string | null | undefined): string {
+  if (!code) return "Dispute";
+  return CLAIM_LABEL[code] ?? code;
+}
+
+export const CLAIM_CODES = Object.keys(CLAIM_LABEL);

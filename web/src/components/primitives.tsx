@@ -273,3 +273,89 @@ export function SharedViewBadge() {
     </span>
   );
 }
+
+/* ============================================================================
+   Spinner — the ONE loading indicator for the whole app.
+   Every blockchain wait (approve, pay, sign, withdraw), every async API call,
+   and every data fetch uses this so the user always sees the same "something
+   is happening, wait" signal. Reuses the global `spin` keyframe.
+   ========================================================================== */
+
+/** A circular spinner. Inline by default; pair with a label for context. */
+export function Spinner({
+  size = 36,
+  color = "var(--brand-600)",
+  track = "var(--brand-200)",
+  thickness = 3,
+  style,
+}: {
+  size?: number;
+  color?: string;
+  track?: string;
+  thickness?: number;
+  style?: CSSProperties;
+}) {
+  return (
+    <div
+      style={{
+        width: size,
+        height: size,
+        borderRadius: "50%",
+        border: `${thickness}px solid ${track}`,
+        borderTopColor: color,
+        animation: "spin 0.8s linear infinite",
+        ...style,
+      }}
+    />
+  );
+}
+
+/**
+ * A small inline spinner + label, for "waiting on the chain / wallet / server"
+ * moments inside a button row or status line.
+ */
+export function SpinnerLabel({
+  label,
+  size = 16,
+  color = "var(--brand-600)",
+}: {
+  label: string;
+  size?: number;
+  color?: string;
+}) {
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 500, color }}>
+      <Spinner size={size} color={color} track="var(--color-border)" thickness={2} />
+      {label}
+    </span>
+  );
+}
+
+/**
+ * A centered spinner card for moments where the whole panel is waiting on the
+ * blockchain (e.g. watching a tx confirm). `label` is the human line ("Waiting
+ * for your wallet signature"); `sub` is optional smaller detail.
+ */
+export function SpinnerOverlay({
+  label,
+  sub,
+  color = "var(--brand-600)",
+}: {
+  label: string;
+  sub?: string;
+  color?: string;
+}) {
+  return (
+    <Card
+      shadow="var(--shadow-md)"
+      padding="36px"
+      style={{ textAlign: "center" }}
+    >
+      <div style={{ display: "flex", justifyContent: "center", marginBottom: 18 }}>
+        <Spinner size={44} color={color} />
+      </div>
+      <div style={{ fontFamily: "var(--font-sans)", fontWeight: 700, fontSize: 17, marginBottom: 6 }}>{label}</div>
+      {sub && <div style={{ fontSize: 13, color: "var(--color-fg-muted)", maxWidth: 420, margin: "0 auto", lineHeight: 1.6 }}>{sub}</div>}
+    </Card>
+  );
+}

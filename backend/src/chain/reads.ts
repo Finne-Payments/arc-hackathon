@@ -74,25 +74,39 @@ export async function readDebt(recipient: Address): Promise<bigint | null> {
 
 /** Fetch RefundProtocol + CaseRegistry logs since the given block. */
 export async function fetchChainLogs(fromBlock: bigint): Promise<Log[]> {
+  return fetchChainLogsRange(fromBlock, "latest");
+}
+
+/**
+ * Fetch logs in a bounded [fromBlock, toBlock] range. Arc's RPC caps log
+ * queries at 100k blocks; this chunks any larger range so a backfill from the
+ * contract deploy block to head doesn't get rejected. Errors are surfaced (the
+ * caller decides), not silently swallowed — silently-empty results were how the
+ * indexer previously missed real PaymentCreated events.
+ */
+export async function fetchChainLogsRange(fromBlock: bigint, toBlock: bigint | "latest"): Promise<Log[]> {
   const client = getPublicClient();
   const rp = refundProtocolAddress();
   const registry = caseRegistryAddress();
   if (!client) return [];
-  try {
+
+  const end = toBlock === "latest" ? await client.getBlockNumber().catch(() => fromBlock) : toBlock;
+  const CHUNK = 90_000n; // under the 100k RPC cap
+  const out: Log[] = [];
+  for (let start = fromBlock; start <= end; start += CHUNK) {
+    const chunkEnd = start + CHUNK - 1n > end ? end : start + CHUNK - 1n;
     const tasks: Promise<Log[]>[] = [];
-    if (rp) tasks.push(client.getLogs({ address: rp, fromBlock, toBlock: "latest" }));
-    if (registry) tasks.push(client.getLogs({ address: registry, fromBlock, toBlock: "latest" }));
-    if (tasks.length === 0) return [];
+    if (rp) tasks.push(client.getLogs({ address: rp, fromBlock: start, toBlock: chunkEnd }));
+    if (registry) tasks.push(client.getLogs({ address: registry, fromBlock: start, toBlock: chunkEnd }));
+    if (tasks.length === 0) continue;
     const results = await Promise.all(tasks);
-    // sort by block, logIndex
-    return results.flat().sort((a, b) => {
-      const blockDiff = Number((a.blockNumber ?? 0n) - (b.blockNumber ?? 0n));
-      if (blockDiff !== 0) return blockDiff;
-      return (a.logIndex ?? 0) - (b.logIndex ?? 0);
-    });
-  } catch {
-    return [];
+    out.push(...results.flat());
   }
+  return out.sort((a, b) => {
+    const blockDiff = Number((a.blockNumber ?? 0n) - (b.blockNumber ?? 0n));
+    if (blockDiff !== 0) return blockDiff;
+    return (a.logIndex ?? 0) - (b.logIndex ?? 0);
+  });
 }
 
 /** Decode a log into { eventName, args } using the known ABIs. */

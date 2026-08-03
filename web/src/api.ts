@@ -126,6 +126,7 @@ export interface EvidenceRow {
 
 export interface CaseRow {
   caseNumber: string;
+  caseCode?: string;
   payoutRef: string;
   openedBy: string;
   allegationClaimType: string;
@@ -183,6 +184,7 @@ export interface SharedReceipt {
 export interface StatusBody {
   indexer: { lastSeenAt: string | null; lastBlock: number; stale: boolean };
   chain: { arbiterReserve: string; recipientDebt: string } | null;
+  chainReady?: { refundProtocolDeployed: boolean; caseRegistryDeployed: boolean };
   demoMode: boolean;
 }
 
@@ -194,6 +196,7 @@ export interface ConfigBody {
   refundProtocolAddress: string | null;
   caseRegistryAddress: string | null;
   usdcAddress: string | null;
+  chainReady?: { refundProtocolDeployed: boolean; caseRegistryDeployed: boolean };
   demoMode: boolean;
   platform: {
     name: string;
@@ -222,8 +225,9 @@ export const api = {
   chainEvents: () => request<{ txHash: string; eventName: string; contract: string; block: number }[]>("/chain/events"),
 
   payouts: () => request<{ payouts: PayoutRow[] }>("/payouts"),
-  createPayout: (body: { recipientWallet: string; amount: string; refundTo: string; description?: string; deliverables?: { name: string; due: string }[]; protectionDate?: string }) =>
-    request<{ payout: PayoutRow }>("/payouts", { method: "POST", body: JSON.stringify(body) }),
+  // No createPayout endpoint: payouts are created ONLY by the indexer when it
+  // detects an on-chain pay(). The merchant signs approve()+pay() in the browser
+  // (wallet.ts approveAndPay); the indexer builds the receipt row.
   receipt: (paymentId: string) => request<SharedReceipt>(`/payouts/${paymentId}/receipt`),
 
   cases: () => request<{ cases: CaseRow[] }>("/cases"),

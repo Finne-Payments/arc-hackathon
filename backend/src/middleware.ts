@@ -83,6 +83,39 @@ export function requireInternal(req: Request, _res: Response, next: NextFunction
   next();
 }
 
+/**
+ * Chain-first invariant guard. A payout may ONLY be created as a consequence of
+ * a real on-chain `pay()` detected by the indexer — never written straight to
+ * the DB. Any money-mutating endpoint (new payout, open dispute) gated by this
+ * middleware returns 503 when the RefundProtocol is not deployed, so the
+ * off-chain record can never exist without its on-chain commitment. The DB is
+ * a projection of the chain, never a substitute for it (PRD §9.4, §12).
+ *
+ * `which` selects the contract the action depends on:
+ *   - "refundProtocol" — payouts, disputes (C1, holds USDC)
+ *   - "registry"       — anchor-issuing endpoints (C2, FinnéCaseRegistry)
+ */
+export function requireChainConfigured(which: "refundProtocol" | "registry" = "refundProtocol"): RequestHandler {
+  return (_req: Request, _res: Response, next: NextFunction) => {
+    const env = loadEnv();
+    const configured =
+      which === "registry"
+        ? !!env.arc.caseRegistryAddress
+        : !!env.arc.refundProtocolAddress;
+    if (!configured) {
+      return next(
+        new HttpError(
+          503,
+          which === "registry"
+            ? "The FinneCaseRegistry contract isn't deployed yet — anchoring is disabled. Deploy the contracts first (see scripts/deploy-arc.sh)."
+            : "The RefundProtocol contract isn't deployed yet — no payout can be created off chain. A payment must exist on Arc first (the indexer then builds the receipt). Deploy the contracts to enable payouts.",
+        ),
+      );
+    }
+    next();
+  };
+}
+
 /** The seat, as needed by handlers for role-conditional logic. */
 export function currentRole(req: Request): Role | null {
   return req.session?.role ?? null;

@@ -40,8 +40,11 @@ export function stopIndexer(): void {
 
 async function getCursor(): Promise<bigint> {
   const meta = await Meta.findOne({ key: "indexer:cursor" });
-  if (meta && meta.value?.block) return BigInt(meta.value.block as number);
-  return 0n;
+  const saved = meta && meta.value?.block ? BigInt(meta.value.block as number) : 0n;
+  // Never start before INDEXER_START_BLOCK (the contract deploy block) — otherwise
+  // a fresh backend whose cursor was advanced past the payments would miss them.
+  const start = loadEnv().indexerStartBlock;
+  return saved > start ? saved : start;
 }
 
 async function setCursor(block: bigint): Promise<void> {
@@ -110,7 +113,7 @@ async function tick(): Promise<void> {
 }
 
 /** Dispatch a decoded chain event to the appropriate backend service call. */
-async function dispatch(eventName: string, args: Record<string, unknown>, txHash: string): Promise<void> {
+export async function dispatch(eventName: string, args: Record<string, unknown>, txHash: string): Promise<void> {
   switch (eventName) {
     case "PaymentCreated": {
       const paymentID = String(args.paymentID ?? args[0] ?? "");

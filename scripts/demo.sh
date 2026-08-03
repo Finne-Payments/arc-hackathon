@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Finné demo — deploys contracts to Arc testnet, seeds the demo world, and
-# runs real protected payouts on chain. The backend's indexer detects them.
+# Finné demo — deploys contracts to Arc testnet and runs real protected payouts
+# on chain. The backend's indexer detects them and builds payouts/receipts
+# dynamically (no seed data — the DB starts empty and fills from real usage).
 #
 # Usage: ./scripts/demo.sh
 # Prereqs: Foundry (~/.foundry/bin on PATH), Node 20+.
@@ -23,7 +24,7 @@ export DAPP_EVM_VERSION=cancun  # workaround for forge's bad default evm version
 RPC="https://rpc.testnet.arc.io"
 USDC="0x3600000000000000000000000000000000000000"  # Arc testnet native USDC
 
-echo "==> 1/4  Deploying contracts to Arc testnet..."
+echo "==> 1/3  Deploying contracts to Arc testnet..."
 cd "$ROOT/contracts"
 DEPLOY_OUTPUT=$(
   USDC_ADDRESS=$USDC \
@@ -33,7 +34,7 @@ RP=$(echo "$DEPLOY_OUTPUT" | grep "RefundProtocol:" | awk '{print $2}')
 REGISTRY=$(echo "$DEPLOY_OUTPUT" | grep "FinneCaseRegistry:" | awk '{print $2}')
 echo "      RefundProtocol=$RP  Registry=$REGISTRY"
 
-echo "==> 2/4  Writing backend .env..."
+echo "==> 2/3  Writing backend .env..."
 cat > "$ROOT/backend/.env" <<EOF
 MONGO_URL=mongodb+srv://USER:PASSWORD@YOUR_CLUSTER.mongodb.net/finne?retryWrites=true&w=majority
 BACKEND_PORT=4000
@@ -50,18 +51,7 @@ REGISTRY_OPERATOR_PRIVATE_KEY=$REGISTRY_OPERATOR_PRIVATE_KEY
 RESPONSE_WINDOW_HOURS=72
 EOF
 
-echo "==> 3/4  Seeding platform/recipient/work-order in MongoDB..."
-cd "$ROOT/backend"
-node --env-file=.env --import tsx/esm -e "
-import { connectDb, disconnectDb } from './src/db.ts';
-import { seedWorld } from './src/seedWorld.ts';
-await connectDb();
-await seedWorld();
-await disconnectDb();
-console.log('      demo entities seeded');
-"
-
-echo "==> 4/4  Starting backend (indexer + anchor worker) + making real payouts..."
+echo "==> 3/3  Starting backend (indexer + anchor worker) + making real payouts..."
 pkill -f "node.*server" 2>/dev/null || true
 npm start > /tmp/finne-backend.log 2>&1 &
 sleep 3

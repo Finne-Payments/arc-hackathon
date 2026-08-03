@@ -1,4 +1,4 @@
-import { createWalletClient, custom, defineChain, type WalletClient, type Address, type Hash } from "viem";
+import { createWalletClient, custom, defineChain, createPublicClient, http, type WalletClient, type Address, type Hash } from "viem";
 import type { UnsignedTx } from "./api";
 
 /* ============================================================================
@@ -177,6 +177,110 @@ export async function signWithdraw(
     chain: arcTestnet,
   });
   return hash;
+}
+
+/**
+ * The ONE wallet action that creates a protected payout: approve the
+ * RefundProtocol to spend the USDC, then call pay(). The payer's signature is
+ * the only thing that can move their USDC (the backend holds no payer key).
+ *
+ * Both steps go through the connected wallet. The previous inline version in
+ * NewPayout.tsx called pay() with no prior approve, so USDC.transferFrom
+ * reverted on chain and the indexer saw no PaymentCreated event — the on-screen
+ * "Payment submitted" was a lie because the tx had reverted.
+ *
+ * The receipt is awaited so the caller learns the real on-chain outcome before
+ * showing a success message. The indexer detects PaymentCreated and builds the
+ * payout row (chain-first: no row exists without this confirmation).
+ */
+export async function approveAndPay(
+  refundProtocolAddress: Address,
+  usdcAddress: Address,
+  recipient: Address,
+  amountBaseUnits: bigint,
+  refundTo: Address,
+  onProgress?: (phase: "connecting" | "approving" | "paying" | "confirming") => void,
+): Promise<{ hash: Hash; paymentId: bigint | null }> {
+  onProgress?.("connecting");
+  const client = _walletClient ?? (await connectWallet());
+  await ensureArcChain();
+
+  // 1. Approve the RefundProtocol to spend exactly this amount of USDC.
+  onProgress?.("approving");
+  const approveHash = await client.writeContract({
+    address: usdcAddress,
+    abi: [
+      {
+        type: "function",
+        name: "approve",
+        stateMutability: "nonpayable",
+        inputs: [
+          { name: "spender", type: "address" },
+          { name: "amount", type: "uint256" },
+        ],
+        outputs: [{ name: "", type: "bool" }],
+      },
+    ],
+    functionName: "approve",
+    args: [refundProtocolAddress, amountBaseUnits],
+    account: client.account!,
+    chain: arcTestnet,
+  });
+  await waitForReceipt(approveHash);
+
+  // 2. Call pay() — the RefundProtocol now pulls the approved USDC via
+  //    transferFrom. Read the nonce BEFORE pay() to learn the payment ID.
+  const publicClient = getPublicReader();
+  const nonceBefore = (await publicClient.readContract({
+    address: refundProtocolAddress,
+    abi: [{ type: "function", name: "nonce", stateMutability: "view", inputs: [], outputs: [{ name: "", type: "uint256" }] }],
+    functionName: "nonce",
+  })) as bigint;
+
+  onProgress?.("paying");
+  const payHash = await client.writeContract({
+    address: refundProtocolAddress,
+    abi: [
+      {
+        type: "function",
+        name: "pay",
+        stateMutability: "nonpayable",
+        inputs: [
+          { name: "to", type: "address" },
+          { name: "amount", type: "uint256" },
+          { name: "refundTo", type: "address" },
+        ],
+        outputs: [],
+      },
+    ],
+    functionName: "pay",
+    args: [recipient, amountBaseUnits, refundTo],
+    account: client.account!,
+    chain: arcTestnet,
+  });
+
+  // 3. Wait for the receipt — this is the real confirmation. If pay() reverted
+  //    (e.g. insufficient balance, blocklist), waitForTransactionReceipt throws
+  //    and the caller shows the failure instead of a false "submitted".
+  onProgress?.("confirming");
+  await waitForReceipt(payHash);
+
+  // The payment ID is the nonce we read before pay() incremented it.
+  return { hash: payHash, paymentId: nonceBefore };
+}
+
+/** Read-only public client for awaiting receipts + reading nonce(). */
+function getPublicReader() {
+  return createPublicClient({
+    chain: arcTestnet,
+    transport: http(arcTestnet.rpcUrls.default.http[0], { timeout: 30_000 }),
+  });
+}
+
+/** Await a tx receipt, reusing the wallet's chain definition. */
+async function waitForReceipt(hash: Hash): Promise<void> {
+  const publicClient = getPublicReader();
+  await publicClient.waitForTransactionReceipt({ hash, confirmations: 1, timeout: 60_000 });
 }
 
 /** Check if a thrown error is a user-rejected signature. */
