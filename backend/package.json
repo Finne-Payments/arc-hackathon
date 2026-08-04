@@ -10,7 +10,8 @@
     "start": "node --env-file=.env --import tsx/esm src/server.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "build": "echo backend runs TS via tsx (no compile step)"
   },
   "dependencies": {
     "@types/bcryptjs": "^2.4.6",
@@ -23,7 +24,9 @@
     "mongoose": "8.9.5",
     "swagger-jsdoc": "^6.3.0",
     "swagger-ui-express": "^5.0.1",
-    "viem": "^2.55.10"
+    "viem": "^2.55.10",
+    "@finne/domain": "*",
+    "@finne/config": "*"
   },
   "devDependencies": {
     "@types/cors": "^2.8.17",

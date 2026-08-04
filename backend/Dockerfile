@@ -1,47 +1,30 @@
-# Finné backend — Node/tsx app (Express API + indexer + anchor worker).
-#
-# The app runs TypeScript directly via tsx (no separate build/compile step;
-# see backend/package.json "start"). Source uses .ts import extensions, which
-# tsx resolves at runtime. MongoDB is reached over MONGO_URL (Atlas in the
-# demo) — no database runs in this image.
-FROM node:20-bookworm-slim AS deps
+# Finné backend Dockerfile.
+# Build context is the repo root (so workspace packages resolve).
+# Runs the Express API + indexer + scheduler via tsx (no compile step).
+FROM node:22-slim
 
 WORKDIR /app
 
-# Install all deps (including dev — tsx/typescript needed at runtime since the
-# app runs TypeScript directly via tsx, no separate build step).
-# package-lock.json is committed, so `npm ci` is reproducible.
+# Copy workspace root files + all workspace packages
 COPY package.json package-lock.json ./
-RUN npm ci
+COPY packages/ ./packages/
+COPY backend/package.json backend/tsconfig.json ./backend/
 
-# ---- runtime stage ----
-FROM node:20-bookworm-slim AS runtime
+# Install ALL dependencies (including devDeps — tsx is needed at runtime)
+# The backend runs TypeScript directly via tsx — no compile step.
+RUN npm install --include=dev
 
-# tini: proper PID 1 / signal handling so Ctrl-C and SIGTERM shut the app down
-# cleanly (the indexer + anchor worker run in-process and should drain).
-RUN apt-get update \
- && apt-get install -y --no-install-recommends tini \
- && rm -rf /var/lib/apt/lists/*
+# Also ensure tsx is globally available as a fallback
+RUN npm install -g tsx
 
-WORKDIR /app
+WORKDIR /app/backend
 
-# Bring in the installed node_modules from the deps stage, then the app source.
-COPY --from=deps /app/node_modules ./node_modules
-COPY package.json package-lock.json ./
-COPY src ./src
-COPY tsconfig.json ./
+# Copy backend source
+COPY backend/src ./src
 
-# Run as a non-root user. The backend holds one secret (REGISTRY_OPERATOR_PRIVATE_KEY)
-# at runtime; least-privilege is the default.
-RUN groupadd --system finne && useradd --system --gid finne --create-home finne \
- && chown -R finne:finne /app
-USER finne
-
-ENV NODE_ENV=production
 EXPOSE 4000
 
-# `npm start` = node --env-file=.env --import tsx/esm src/server.ts.
-# In Docker the env comes from compose's env_file, not a .env on disk, so we
-# run tsx directly without --env-file. NODE_OPTIONS lets tsx load via its loader.
-ENTRYPOINT ["/usr/bin/tini", "--"]
-CMD ["node", "--import", "tsx/esm", "src/server.ts"]
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 --start-period=15s \
+  CMD node -e "fetch('http://localhost:4000/health/live').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+
+CMD ["npx", "tsx", "src/server.ts"]

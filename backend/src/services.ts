@@ -48,7 +48,7 @@ export async function nextCaseNumber(): Promise<string> {
 
 /**
  * Readable, auto-derived case code: `{PLATFORM}-{RECIPIENT}-{seq}` (e.g.
- * `NB-MAYA-001`), sequenced per platform+recipient pair. Falls back to the
+ * `NORT-MAYA-001`), sequenced per platform+recipient pair. Falls back to the
  * canonical CASE-NNNN if either party key is missing. Fully derived — no caller
  * input. Stored on the Case as `caseCode` for display + search.
  */

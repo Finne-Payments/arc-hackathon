@@ -30,7 +30,7 @@ notificationRoutes.get("/notifications", requireAuthenticated, async (req, res, 
       const w = user?.walletAddress ?? "";
       query.recipientWallet = { $regex: new RegExp(`^${w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i") };
     } else {
-      query.platformKey = user?.platformKey ?? "northbeam";
+      query.platformKey = user?.platformKey ?? "northstar";
     }
 
     const all = await Notification.find(query).sort({ createdAt: -1 }).limit(30).lean();
@@ -83,7 +83,7 @@ notificationRoutes.post("/notifications/read-all", requireAuthenticated, async (
     if (role === "recipient") {
       query.recipientWallet = user?.walletAddress;
     } else {
-      query.platformKey = user?.platformKey ?? "northbeam";
+      query.platformKey = user?.platformKey ?? "northstar";
     }
 
     await Notification.updateMany(query, { $set: { readAt: new Date().toISOString() } });

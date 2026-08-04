@@ -4,6 +4,9 @@ import { connectDb } from "./db.ts";
 import { startIndexer } from "./indexer.ts";
 import { startAnchorWorker } from "./anchorWorker.ts";
 import { startDeadlineScheduler } from "./scheduler.ts";
+import { createV1Router } from "./v1/router.ts";
+import { createV1App, mountErrorHandler } from "./v1/app.ts";
+import { loadConfig } from "@finne/config";
 
 /* ============================================================================
    Server entry. Boot order (PRD §16.2):
@@ -45,8 +48,23 @@ async function main(): Promise<void> {
   startDeadlineScheduler();
 
   const app = createApp();
+
+  // Mount the v1 registrar API alongside the legacy routes.
+  // v1 health endpoints (/health/live, /health/ready) + all 36 operations (/v1/*).
+  const v1config = loadConfig();
+  // v1 middleware (CORS, JSON, request-ID) is added via createV1App, then routes.
+  const v1App = createV1App(v1config);
+  v1App.use(createV1Router(v1config));
+  app.use(v1App); // mount as sub-app — all v1 routes become available
+  // The v1 error handler is already mounted inside v1App via mountErrorHandler
+  // in the test setup. For the server, we call it on v1App before mounting.
+  // (mountErrorHandler was called above — see createV1App return pattern.)
+  // Actually we need to call mountErrorHandler on v1App after the router:
+  mountErrorHandler(v1App);
+
   app.listen(env.backendPort, () => {
     console.log(`[backend] Finné API on :${env.backendPort} (demoMode=${env.demoMode})`);
+    console.log(`[backend] v1 registrar API at /v1/* + /health/live`);
   });
 }
 
