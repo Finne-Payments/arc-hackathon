@@ -11,7 +11,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "build": "echo backend runs TS via tsx (no compile step)"
+    "build": "echo 'backend runs TS via tsx (no compile step)'"
   },
   "dependencies": {
     "@types/bcryptjs": "^2.4.6",
