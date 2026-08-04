@@ -15,6 +15,10 @@ import { Payment, Case as CaseModel, Correction, Job, Invitation } from "./model
 import { getEvidenceStore } from "../integrations/storage/localStore.ts";
 import { canonicalHash as backendCanonicalHash } from "../canonical.ts";
 import { submitSponsoredTransfer, pollTransaction, verifyWebhookSignature, walletInventoryCheck, getTransactionState } from "../integrations/circle/circleService.ts";
+import { assembleFrame, getLatestFrame } from "../agent/frame-assembly.ts";
+import { loadClauseParameters, DEMO_PACK_REF } from "../seed/policy-pack.ts";
+import { PolicyClause } from "./models.ts";
+import { recordHumanAction } from "../agent/model-client.ts";
 
 export function createV1Router(config: Config): Router {
   const router = Router();
@@ -414,6 +418,115 @@ export function createV1Router(config: Config): Router {
     try {
       const analysis = await svc.approveAnalysis(req.params.caseId);
       res.status(202).json({ analysisId: analysis.analysisId, status: "approved" });
+    } catch (e) { next(e); }
+  });
+
+  /* ------------------------------------------------------------------------ */
+  /* Decision frame (PRD Addendum A4 / FIN-120…127)                           */
+  /*                                                                          */
+  /* The verdict-free frame: turning questions (model) + outcome requirements  */
+  /* (templates) + unresolved items (computed). Generated synchronously with a */
+  /* 3-rung degrade ladder — never blocks the decision (P8).                  */
+  /* ------------------------------------------------------------------------ */
+
+  // 26a: GET /v1/cases/:caseId/frame — latest frame for the case room
+  router.get("/v1/cases/:caseId/frame", requirePerm("case:read"), async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const frame = await getLatestFrame(req.params.caseId);
+      res.json({ frame });
+    } catch (e) { next(e); }
+  });
+
+  // 26b: POST /v1/cases/:caseId/frame — assemble + persist a fresh frame
+  router.post("/v1/cases/:caseId/frame", requirePerm("analysis:run"), requireIdempotencyKey, async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const caseId = req.params.caseId;
+      const detail = await svc.getCaseDetail(caseId);
+      const c = detail.case;
+      const payment = detail.payment;
+
+      // Build the check input from the case record. Degrade gracefully when
+      // payment/work-order data is incomplete — checks return "missing" findings.
+      const clauses = await loadClauseParameters();
+      const checkInput = {
+        payment: {
+          amountMicroUsdc: payment?.amountMicroUsdc ?? c.challengedAmountMicroUsdc,
+          recipient: payment?.recipient ?? "",
+          payer: payment?.payer ?? "",
+          paidAt: payment?.paidAt ?? c.openedAt,
+        },
+        challengedAmountMicroUsdc: c.challengedAmountMicroUsdc,
+        claimType: c.claimType ?? "non_delivery",
+        allegation: c.allegation ?? "",
+        disputeOpenedAt: c.openedAt,
+        // Demo-bound: no work-order linkage in v1 yet, so deliverables come from
+        // the request body if provided, else a single contested deliverable.
+        deliverables: (req.body?.deliverables as any[]) ?? [{ name: "Contested deliverable", due: c.openedAt, acceptanceCriteria: "" }],
+        deliveryTimestamps: req.body?.deliveryTimestamps ?? {},
+        rejectionTimestamps: req.body?.rejectionTimestamps ?? {},
+        clauses,
+      };
+
+      const unresolvedInput = {
+        hasResponse: !!detail.response,
+        evidenceBySide: {
+          platform: detail.evidence.filter((e: any) => e.submittedBy !== "recipient").length,
+          recipient: detail.evidence.filter((e: any) => e.submittedBy === "recipient").length,
+        },
+        contestedAmountMicroUsdc: c.challengedAmountMicroUsdc,
+        deliverableAmountsMicroUsdc: req.body?.deliverableAmountsMicroUsdc ?? [],
+        deliverablesWithoutCriteria: (req.body?.deliverables as any[])?.filter((d) => !d.acceptanceCriteria).map((d) => d.name) ?? [],
+        findings: [], // filled by assembly after checks run; unresolved recomputes from its own inputs
+      };
+
+      const result = await assembleFrame({
+        caseId,
+        claimType: c.claimType ?? "non_delivery",
+        caseContext: req.body?.caseContext ?? `Dispute over ${c.challengedAmountMicroUsdc} micro-USDC. Claim: ${c.claimType ?? "non_delivery"}.`,
+        checkInput,
+        unresolvedInput,
+      });
+
+      res.status(201).json({
+        frameId: result.frameId,
+        frame: result.frame,
+        narrative: result.narrative,
+        degradeLevel: result.degradeLevel,
+      });
+    } catch (e) { next(e); }
+  });
+
+  // 26c: POST /v1/cases/:caseId/frame/actions — log a per-line reviewer action (FIN-127)
+  // Accepts { callId, action: "accept"|"edit"|"discard", lineId?, originalText?, editedText? }.
+  // For "edit", the edited text is stored ALONGSIDE the original line in the corpus.
+  router.post("/v1/cases/:caseId/frame/actions", requirePerm("analysis:approve"), requireIdempotencyKey, async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const body = req.body as {
+        callId?: string;
+        action?: string;
+        lineId?: string;
+        originalText?: string;
+        editedText?: string;
+        provenance?: string;
+      };
+      if (!body.callId || !body.action) throw validationError("callId and action required.");
+      const valid = ["accept", "edit", "discard"];
+      if (!valid.includes(body.action)) throw validationError(`action must be one of: ${valid.join(", ")}`);
+      await recordHumanAction(body.callId, body.action, {
+        lineId: body.lineId,
+        originalText: body.originalText,
+        editedText: body.editedText,
+        provenance: body.provenance as "template" | "computed" | "model" | undefined,
+      });
+      res.status(204).end();
+    } catch (e) { next(e); }
+  });
+
+  // 26d: GET /v1/policy-clauses — the demo policy pack (FIN-115 case-room render)
+  router.get("/v1/policy-clauses", requirePerm("case:read"), async (_req: Request, res: Response, next: NextFunction) => {
+    try {
+      const clauses = await PolicyClause.find({ packRef: DEMO_PACK_REF }).sort({ clauseNumber: 1 }).lean();
+      res.json({ clauses });
     } catch (e) { next(e); }
   });
 

@@ -14,8 +14,20 @@ import {
 } from "@finne/domain";
 import {
   Payment, Case, Evidence, Response as ResponseModel, Decision, Correction,
-  Analysis, Counter,
+  Analysis, Counter, PolicyClause,
 } from "./models.ts";
+import { getLatestFrame } from "../agent/frame-assembly.ts";
+import { DEMO_PACK_REF } from "../seed/policy-pack.ts";
+
+/** Load the demo policy-pack clauses (for the case-room evidence list, FIN-115). */
+async function getDemoClauses() {
+  try {
+    const rows = await PolicyClause.find({ packRef: DEMO_PACK_REF }).sort({ clauseNumber: 1 }).lean();
+    return rows;
+  } catch {
+    return [];
+  }
+}
 import {
   buildReceiptEnvelope, buildClaimEnvelope, buildResponseEnvelope,
   buildDecisionEnvelope, buildCorrectionInstructionEnvelope,
@@ -590,5 +602,9 @@ export async function getCaseDetail(caseId: string) {
   const decisions = await Decision.findOne({ caseId }).lean();
   const analyses = await Analysis.find({ caseId }).sort({ version: -1 }).lean();
   const correction = await Correction.findOne({ caseId }).lean();
-  return { case: caseDoc, payment, response, evidence, decision: decisions, analyses, correction };
+  // Agent layer (PRD Addendum A): latest decision frame + policy-pack clauses.
+  // Both degrade to null/empty if absent — the case room renders v1 without them.
+  const frame = await getLatestFrame(caseId);
+  const clauses = await getDemoClauses();
+  return { case: caseDoc, payment, response, evidence, decision: decisions, analyses, correction, frame, clauses };
 }

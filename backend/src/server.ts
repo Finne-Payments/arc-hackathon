@@ -7,6 +7,7 @@ import { startDeadlineScheduler } from "./scheduler.ts";
 import { createV1Router } from "./v1/router.ts";
 import { createV1App, mountErrorHandler } from "./v1/app.ts";
 import { loadConfig } from "@finne/config";
+import { seedDemoPolicyPack } from "./seed/policy-pack.ts";
 
 /* ============================================================================
    Server entry. Boot order (PRD §16.2):
@@ -26,6 +27,10 @@ async function main(): Promise<void> {
     console.error("[backend] FATAL: cannot connect to MongoDB:", e instanceof Error ? e.message : e);
     process.exit(1);
   }
+
+  // Seed the demo policy pack (clauses 4/7/9 + law line) if absent. Idempotent
+  // and best-effort — never blocks boot (PRD Addendum A §F, FIN-110/111/112).
+  void seedDemoPolicyPack();
 
   if (!env.registryOperatorKey) {
     console.warn("[backend] REGISTRY_OPERATOR_PRIVATE_KEY not set — anchor jobs will queue indefinitely.");

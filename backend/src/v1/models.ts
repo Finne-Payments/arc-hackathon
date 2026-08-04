@@ -460,6 +460,181 @@ const metaSchema = new Schema<MetaDoc>({
 });
 
 /* -------------------------------------------------------------------------- */
+/* Agent layer (PRD Addendum A / FIN-110, FIN-120, FIN-131)                   */
+/*                                                                            */
+/* Three append-only collections: PolicyClause (authored offline, FIN-110),   */
+/* DraftFrame (the verdict-free decision frame, FIN-120), and ModelCall       */
+/* (the corpus log — every model call recorded for audit + replay, FIN-131).  */
+/* All agent-authored payloads are strict:'throw' so smuggled fields fail.    */
+/* -------------------------------------------------------------------------- */
+
+export interface PolicyClauseDoc extends Document {
+  clauseId: string;
+  packRef: string; // hashed EvidenceItem this clause belongs to
+  clauseNumber: number;
+  text: string;
+  parameters: { hours?: number; days?: number };
+  jurisdiction?: string;
+  author: string;
+  reviewRef: string;
+  version: number;
+  createdAt: string;
+}
+const POLICY_CLAUSE_IMMUTABLE = [
+  "clauseId", "packRef", "clauseNumber", "text", "parameters", "jurisdiction", "author", "reviewRef", "version",
+];
+const policyClauseSchema = new Schema<PolicyClauseDoc>(
+  {
+    clauseId: { type: String, required: true, unique: true, index: true },
+    packRef: { type: String, required: true, index: true },
+    clauseNumber: { type: Number, required: true },
+    text: { type: String, required: true },
+    parameters: {
+      type: new Schema(
+        { hours: Number, days: Number },
+        { _id: false },
+      ),
+      default: {},
+    },
+    jurisdiction: String,
+    author: { type: String, required: true },
+    reviewRef: { type: String, required: true },
+    version: { type: Number, required: true },
+    createdAt: { type: String, default: () => new Date().toISOString() },
+  },
+  { collection: "v1_policy_clauses", strict: "throw" },
+);
+appendOnly(policyClauseSchema, "PolicyClause", POLICY_CLAUSE_IMMUTABLE);
+
+export interface DraftFrameDoc extends Document {
+  frameId: string;
+  caseId: string;
+  questions: { text: string; findingRefs: string[]; provenance: string }[];
+  requirements: {
+    outcome: string;
+    templateId: string;
+    filledParams: Record<string, string>;
+    provenance: string;
+  }[];
+  unresolved: { kind: string; refs: string[]; provenance: string }[];
+  modelDigest: { model: string; id: string; digest: string } | null;
+  citationDepth: { platform: number; recipient: number };
+  generatedAt: string;
+  degradeLevel: number; // 0=full, 1=no questions, 2=no frame
+  createdAt: string;
+}
+const DRAFT_FRAME_IMMUTABLE = [
+  "frameId", "caseId", "questions", "requirements", "unresolved", "citationDepth", "modelDigest", "generatedAt", "degradeLevel",
+];
+const draftFrameSchema = new Schema<DraftFrameDoc>(
+  {
+    frameId: { type: String, required: true, unique: true, index: true },
+    caseId: { type: String, required: true, index: true },
+    questions: [{
+      text: String,
+      findingRefs: [String],
+      provenance: { type: String, default: "model" },
+    }],
+    requirements: [{
+      outcome: String,
+      templateId: String,
+      filledParams: { type: Schema.Types.Mixed, default: {} },
+      provenance: { type: String, default: "template" },
+    }],
+    unresolved: [{
+      kind: String,
+      refs: [String],
+      provenance: { type: String, default: "computed" },
+    }],
+    modelDigest: Schema.Types.Mixed, // null when degraded to templates-only
+    citationDepth: {
+      type: new Schema({ platform: Number, recipient: Number }, { _id: false }),
+      default: { platform: 0, recipient: 0 },
+    },
+    generatedAt: { type: String, required: true },
+    degradeLevel: { type: Number, default: 0 },
+    createdAt: { type: String, default: () => new Date().toISOString() },
+  },
+  { collection: "v1_draft_frames", strict: "throw" },
+);
+appendOnly(draftFrameSchema, "DraftFrame", DRAFT_FRAME_IMMUTABLE);
+
+/**
+ * Corpus log (FIN-131) — every model call records input hash, model id+digest,
+ * output, validation result, and (later) the human's action reference. Append-
+ * only; in-place edits rejected. This is both the audit trail now and the
+ * labelled training set for fine-tuned small models later (Addendum §H).
+ */
+export interface ModelCallDoc extends Document {
+  callId: string;
+  task: string; // e.g. "frame.turning_questions", "narrative.summary"
+  modelDigest: { model: string; id: string; digest: string };
+  inputHash: string; // keccak256 of canonicalized input
+  output: string | null; // null on degrade
+  validation: "ok" | "degraded" | "blocked_by_filter" | "parse_failed" | "timeout" | "error";
+  humanActionRef: string | null; // FK to the reviewer action (filled later)
+  createdAt: string;
+}
+const MODEL_CALL_IMMUTABLE = [
+  "callId", "task", "modelDigest", "inputHash", "output", "validation", "createdAt",
+];
+const modelCallSchema = new Schema<ModelCallDoc>(
+  {
+    callId: { type: String, required: true, unique: true, index: true },
+    task: { type: String, required: true, index: true },
+    modelDigest: {
+      type: new Schema(
+        { model: String, id: String, digest: String },
+        { _id: false },
+      ),
+      required: true,
+    },
+    inputHash: { type: String, required: true },
+    output: String,
+    validation: { type: String, required: true },
+    humanActionRef: String,
+    createdAt: { type: String, default: () => new Date().toISOString() },
+  },
+  { collection: "v1_model_calls", strict: "throw" },
+);
+appendOnly(modelCallSchema, "ModelCall", MODEL_CALL_IMMUTABLE);
+
+/**
+ * Frame-line action log (FIN-127) — the reviewer's per-line action (accept /
+ * edit / discard) on a frame line, stored with the line's provenance. For an
+ * edit, the edited text is kept ALONGSIDE the original. Append-only corpus.
+ */
+export interface FrameActionDoc extends Document {
+  actionId: string;
+  caseId: string;
+  callId: string | null; // the model call that produced the line, if model-origin
+  lineId: string; // the frame line's ref (findingRef / templateId / unresolved kind)
+  action: "accept" | "edit" | "discard";
+  provenance: "template" | "computed" | "model";
+  originalText: string; // the line as the agent rendered it
+  editedText: string | null; // null unless action == "edit"
+  createdAt: string;
+}
+const FRAME_ACTION_IMMUTABLE = [
+  "actionId", "caseId", "callId", "lineId", "action", "provenance", "originalText", "editedText", "createdAt",
+];
+const frameActionSchema = new Schema<FrameActionDoc>(
+  {
+    actionId: { type: String, required: true, unique: true, index: true },
+    caseId: { type: String, required: true, index: true },
+    callId: { type: String, default: null, index: true },
+    lineId: { type: String, required: true },
+    action: { type: String, required: true, enum: ["accept", "edit", "discard"] },
+    provenance: { type: String, required: true, enum: ["template", "computed", "model"] },
+    originalText: { type: String, required: true },
+    editedText: { type: String, default: null },
+    createdAt: { type: String, default: () => new Date().toISOString() },
+  },
+  { collection: "v1_frame_actions", strict: "throw" },
+);
+appendOnly(frameActionSchema, "FrameAction", FRAME_ACTION_IMMUTABLE);
+
+/* -------------------------------------------------------------------------- */
 /* Model registration (guard against re-registration on hot reload)          */
 /* -------------------------------------------------------------------------- */
 
@@ -484,6 +659,11 @@ export const Job = register<JobDoc>("v1_Job", jobSchema);
 export const Counter = register<CounterDoc>("v1_Counter", counterSchema);
 export const ChainEvent = register<ChainEventDoc>("v1_ChainEvent", chainEventSchema);
 export const Meta = register<MetaDoc>("v1_Meta", metaSchema);
+// Agent layer (PRD Addendum A)
+export const PolicyClause = register<PolicyClauseDoc>("v1_PolicyClause", policyClauseSchema);
+export const DraftFrame = register<DraftFrameDoc>("v1_DraftFrame", draftFrameSchema);
+export const ModelCall = register<ModelCallDoc>("v1_ModelCall", modelCallSchema);
+export const FrameAction = register<FrameActionDoc>("v1_FrameAction", frameActionSchema);
 
 /* -------------------------------------------------------------------------- */
 /* Atomic counter helper (BE-02 step 4 — replaces countDocuments)             */
