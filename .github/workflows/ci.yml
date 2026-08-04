@@ -1,0 +1,92 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+  # ── TypeScript: install, typecheck, test, build ──────────────────────────
+  typescript:
+    name: TypeScript (install · typecheck · test · build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck (all workspaces)
+        run: npm run typecheck --workspaces --if-present
+
+      - name: Test (all workspaces)
+        run: npm run test --workspaces --if-present
+        env:
+          # mongodb-memory-server needs a writable cache path
+          CACHE_DIR: ${{ github.workspace }}/.cache/mongodb-binaries
+
+      - name: Build (all workspaces)
+        run: npm run build --workspaces --if-present
+
+  # ── Foundry: contract tests ──────────────────────────────────────────────
+  contracts:
+    name: Foundry (forge test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: nightly
+
+      - name: Build contracts
+        run: forge build
+        working-directory: contracts/refund-protocol
+
+      - name: Test contracts
+        run: forge test
+        working-directory: contracts/refund-protocol
+
+  # ── Secret scan ──────────────────────────────────────────────────────────
+  secret-scan:
+    name: Secret scan (gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ── RefundProtocol ABI quarantine check (RP-03) ──────────────────────────
+  abi-quarantine:
+    name: RP-03 — no RefundProtocol ABI in production bundles
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Check backend/src/abi/RefundProtocol.json is NOT imported by v1 routes
+        run: |
+          if grep -r "RefundProtocol.json" backend/src/v1/ 2>/dev/null; then
+            echo "FAIL: v1 routes import the quarantined RefundProtocol ABI."
+            exit 1
+          fi
+          if grep -r "refundByArbiter" backend/src/v1/ 2>/dev/null; then
+            echo "FAIL: v1 routes reference refundByArbiter (legacy escrow ABI)."
+            exit 1
+          fi
+          echo "PASS: no RefundProtocol ABI or refundByArbiter in v1 production code."

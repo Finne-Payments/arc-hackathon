@@ -1,41 +1,64 @@
-# Finné — local Docker deployment of the backend + web app.
-#
-# MongoDB stays external (Atlas via MONGO_URL, as in scripts/demo.sh); only the
-# two app services run here. Secrets are read from a .env file next to this
-# compose file (see .env.example) — compose injects them into the backend.
+# Finné — one-command Docker deployment.
 #
 # Usage:
-#   cp .env.example .env        # fill in MONGO_URL, contract addresses, operator key
-#   docker compose up --build   # web on :5173, backend on :4000
+#   cp .env.example .env           # edit MONGO_URL (Atlas) or leave default
+#   docker compose up --build      # web on :5173, backend on :4000
+#   docker compose down            # stop
 #
-# The DB starts empty — payouts and disputes are created dynamically from real
-# on-chain activity (the indexer) and the app flow. No seed step.
+# MongoDB: if .env has MONGO_URL pointing to Atlas, the backend uses it
+# directly. The local mongo service also starts but is unused — stop it
+# with:  docker compose stop mongo
 #
-# Money path is unchanged from the non-Docker build (PRD §4.1): Finné services
-# are read-only against the chain; the only key in these containers is the
-# registry operator key, which can only anchor hashes and cannot move USDC.
+# External credentials (Arc, Circle, AWS, IdP) are read from .env if present.
+
 services:
+  # ── MongoDB (local fallback; ignored if .env MONGO_URL points to Atlas) ──
+  mongo:
+    image: mongo:7
+    container_name: finne-mongo
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Backend (Express API + indexer + scheduler) ─────────────────────────
   backend:
-    build: ./backend
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
     container_name: finne-backend
     restart: unless-stopped
+    depends_on:
+      mongo:
+        condition: service_healthy
+        required: false
     env_file:
       - .env
     environment:
-      # Force a sensible default if .env omits it; NODE_ENV is set in the image.
-      BACKEND_PORT: 4000
+      NODE_ENV: local
+      BACKEND_PORT: "4000"
+      DEMO_MODE: "true"
+      # MONGO_URL comes from .env (Atlas) — if absent, falls back to local container
     ports:
       - "4000:4000"
-    # The Express API, the indexer, and the anchor worker all run in-process
-    # (PRD §7.2); this one container is the whole backend.
 
+  # ── Web (React SPA served by nginx, proxies /api → backend) ─────────────
   web:
-    build: ./web
+    build:
+      context: .
+      dockerfile: web/Dockerfile
     container_name: finne-web
     restart: unless-stopped
     depends_on:
       - backend
     ports:
       - "5173:80"
-    # nginx inside this container proxies /api/* → host "backend" on :4000
-    # (the BACKEND_HOST build arg in web/Dockerfile defaults to "backend").
+
+volumes:
+  mongo-data:
