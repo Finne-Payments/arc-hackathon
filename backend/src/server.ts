@@ -67,6 +67,22 @@ async function main(): Promise<void> {
   // Actually we need to call mountErrorHandler on v1App after the router:
   mountErrorHandler(v1App);
 
+  // Serve the web SPA static files (built into /app/web/dist by the Dockerfile).
+  // Any non-API route falls through to index.html (React Router handles client-side routing).
+  const webDist = "/app/web/dist";
+  try {
+    const fs = await import("node:fs");
+    if (fs.existsSync(webDist) && fs.existsSync(`${webDist}/index.html`)) {
+      app.use((await import("express")).static(webDist));
+      app.get("*", (_req: unknown, res: unknown) => {
+        (res as { sendFile: (f: string) => void }).sendFile(`${webDist}/index.html`);
+      });
+      console.log("[backend] serving web SPA from /app/web/dist");
+    }
+  } catch {
+    // No web dist — API-only mode (dev/test)
+  }
+
   app.listen(env.backendPort, () => {
     console.log(`[backend] Finné API on :${env.backendPort} (demoMode=${env.demoMode})`);
     console.log(`[backend] v1 registrar API at /v1/* + /health/live`);

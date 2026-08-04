@@ -230,10 +230,22 @@ export class FinneStack extends cdk.Stack {
       desiredCount: 1,
       assignPublicIp: false,
       healthCheckGracePeriod: cdk.Duration.seconds(30),
+      // Fail FAST if tasks keep failing health checks (minutes) instead of
+      // hanging the CloudFormation create for up to 3 hours. rollback: false so
+      // a failed deploy leaves the (empty) service in place for inspection.
+      circuitBreaker: { rollback: false },
     });
 
-    // ALB listener → backend on :4000 (the service IS the default target)
-    const backendListener = alb.addListener("BackendListener", {
+    // ALB listener → backend on :4000.
+    // The backend is the ONLY service behind this listener, so it is the default
+    // target for all paths. We deliberately do NOT add a second path-based
+    // addTargets() here: doing so creates a *second* target group that inherits
+    // the default health-check path of `GET /`, which returns 404 (the backend
+    // has no root handler — only /health/live, /v1/*, etc.). That second TG's
+    // 404 verdict marks the task unhealthy, killing it in a loop and hanging
+    // CloudFormation for up to 3 hours. One TG with the correct health check is
+    // both necessary and sufficient.
+    alb.addListener("BackendListener", {
       port: 80,
       protocol: elbv2.ApplicationProtocol.HTTP,
       defaultTargetGroups: [
@@ -251,15 +263,6 @@ export class FinneStack extends cdk.Stack {
           },
         }),
       ],
-    });
-
-    // Route /api/* path to the backend (so the web nginx proxy also works)
-    backendListener.addTargets("BackendPathTarget", {
-      priority: 10,
-      conditions: [elbv2.ListenerCondition.pathPatterns(["/api/*", "/v1/*", "/health/*"])],
-      port: 4000,
-      protocol: elbv2.ApplicationProtocol.HTTP,
-      targets: [backendService],
     });
 
     /* ======================================================================
@@ -296,6 +299,7 @@ export class FinneStack extends cdk.Stack {
       securityGroup: webSg,
       desiredCount: 1,
       assignPublicIp: false,
+      circuitBreaker: { rollback: false },
     });
 
     /* ======================================================================
