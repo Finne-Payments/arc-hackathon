@@ -16,6 +16,8 @@ import * as elbv2 from "aws-cdk-lib/aws-elasticloadbalancingv2";
 import * as iam from "aws-cdk-lib/aws-iam";
 import * as logs from "aws-cdk-lib/aws-logs";
 import * as cloudwatch from "aws-cdk-lib/aws-cloudwatch";
+import * as cloudfront from "aws-cdk-lib/aws-cloudfront";
+import * as cloudfront_origins from "aws-cdk-lib/aws-cloudfront-origins";
 import * as ecr from "aws-cdk-lib/aws-ecr";
 import { Construct } from "constructs";
 
@@ -319,6 +321,34 @@ export class FinneStack extends cdk.Stack {
     });
 
     /* ======================================================================
+       CloudFront — HTTPS front door over the ALB.
+
+       The ALB listener serves both the API and the SPA (the backend's
+       app.get("*") falls through to index.html), so a single default cache
+       behavior proxying everything is correct — no path split needed. We
+       DISABLE caching so an API + SPA never serves stale state during a demo;
+       this makes CloudFront behave exactly like hitting the ALB directly, just
+       with HTTPS + a stable URL. No domain → CloudFront's free default cert on
+       its *.cloudfront.net domain (still AWS-generated, but secure).
+       ====================================================================== */
+    const distribution = new cloudfront.Distribution(this, "FinneDistribution", {
+      defaultBehavior: {
+        origin: new cloudfront_origins.LoadBalancerV2Origin(alb, {
+          protocolPolicy: cloudfront.OriginProtocolPolicy.HTTP_ONLY, // ALB is HTTP
+        }),
+        // API + SPA must not be cached at the edge.
+        cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
+        // Allow POST/PUT/PATCH so API writes work.
+        allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
+        viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+      },
+      // US/EU edge locations only — cheapest price class (pennies for demo traffic).
+      priceClass: cloudfront.PriceClass.PRICE_CLASS_100,
+      enabled: true,
+      comment: "Finne app (hackathon)",
+    });
+
+    /* ======================================================================
        AWS-03: CloudWatch alarms
        ====================================================================== */
     new cloudwatch.Alarm(this, "BackendUnhealthyAlarm", {
@@ -350,7 +380,12 @@ export class FinneStack extends cdk.Stack {
        ====================================================================== */
     new cdk.CfnOutput(this, "AlbUrl", {
       value: `http://${alb.loadBalancerDnsName}`,
-      description: "Public URL for the Finné app",
+      description: "Direct ALB URL (debugging; insecure — prefer AppUrl)",
+    });
+
+    new cdk.CfnOutput(this, "AppUrl", {
+      value: `https://${distribution.distributionDomainName}`,
+      description: "Public HTTPS URL for the Finné app (via CloudFront)",
     });
 
     new cdk.CfnOutput(this, "EcrRepoUri", {

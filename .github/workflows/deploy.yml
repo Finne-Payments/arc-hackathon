@@ -188,8 +188,13 @@ jobs:
 
       - name: Emit the app URL
         run: |
-          ALB_URL=$(aws cloudformation describe-stacks --stack-name FinneStack \
-            --query 'Stacks[0].Outputs[?OutputKey==`AlbUrl`].OutputValue' --output text 2>/dev/null || echo "unknown")
-          echo "::notice::Finné deployed → $ALB_URL"
+          # Prefer the CloudFront HTTPS URL (AppUrl); fall back to the ALB URL.
+          APP_URL=$(aws cloudformation describe-stacks --stack-name FinneStack \
+            --query 'Stacks[0].Outputs[?OutputKey==`AppUrl`].OutputValue' --output text 2>/dev/null || echo "")
+          if [ -z "$APP_URL" ] || [ "$APP_URL" = "None" ]; then
+            APP_URL=$(aws cloudformation describe-stacks --stack-name FinneStack \
+              --query 'Stacks[0].Outputs[?OutputKey==`AlbUrl`].OutputValue' --output text 2>/dev/null || echo "unknown")
+          fi
+          echo "::notice::Finné deployed → $APP_URL"
           echo "### Deployed 🚀" >> $GITHUB_STEP_SUMMARY
-          echo "App URL: $ALB_URL" >> $GITHUB_STEP_SUMMARY
+          echo "App URL: $APP_URL" >> $GITHUB_STEP_SUMMARY
