@@ -10,8 +10,8 @@ import { z } from "zod";
 /* Stages                                                                      */
 /* -------------------------------------------------------------------------- */
 
-export type Stage = "local" | "test" | "staging" | "submission";
-export const STAGES: Stage[] = ["local", "test", "staging", "submission"];
+export type Stage = "local" | "test" | "staging" | "submission" | "production";
+export const STAGES: Stage[] = ["local", "test", "staging", "submission", "production"];
 
 /* -------------------------------------------------------------------------- */
 /* Arc Testnet config                                                          */
@@ -50,7 +50,7 @@ export type WalletInventory = z.infer<typeof walletInventorySchema>;
 /* -------------------------------------------------------------------------- */
 
 export const configSchema = z.object({
-  stage: z.enum(["local", "test", "staging", "submission"]),
+  stage: z.enum(["local", "test", "staging", "submission", "production"]),
   demoMode: z.boolean(),
 
   // Server
