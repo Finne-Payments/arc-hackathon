@@ -111,6 +111,8 @@ export interface WorkOrderRow {
   amount: string;
   currency: string;
   status: string;
+  /** Payment-time contract documents (arbiter-only downloads). */
+  documents?: WorkOrderDocument[];
 }
 
 export interface EvidenceRow {
@@ -124,6 +126,38 @@ export interface EvidenceRow {
   showOnlyAfterReply?: boolean;
   kind?: string;
   fileOrText?: never; // never exposed by the API (P3 — fingerprints only)
+  /** Mongo _id — used to request the arbiter-only download. */
+  _id?: string;
+  /** Where the evidence came from. */
+  source?: "text" | "upload" | "link";
+  filename?: string;
+  mimeType?: string;
+  sizeBytes?: number;
+  linkUrl?: string;
+  visibility?: "SHARED" | "ARBITER_ONLY";
+}
+
+/** A payment-time contract document attached to a work order. */
+export interface WorkOrderDocument {
+  documentId: string;
+  filename: string;
+  mimeType: string;
+  sizeBytes: number;
+  sha256: string;
+  objectKey: string;
+  uploadedAt: string;
+}
+
+/** An agent's summary of a document (sha-stamped). */
+export interface EvidenceAnnotation {
+  annotationId: string;
+  evidenceId: string;
+  ownerRef: string;
+  sourceSha256: string;
+  summary: string;
+  readerType: "pdf" | "link" | "text";
+  degraded: boolean;
+  generatedAt: string;
 }
 
 export interface CaseRow {
@@ -285,6 +319,33 @@ export const api = {
 
   addEvidence: (caseNumber: string, body: { type: string; title: string; fileOrText: string }) =>
     request<{ caseNumber: string }>(`/cases/${caseNumber}/evidence`, { method: "POST", body: JSON.stringify(body) }),
+
+  // --- Evidence documents (uploaded files, arbiter-only) + links ---
+  /** Allocate a presigned PUT URL for a case evidence file. */
+  allocateEvidenceUpload: (caseNumber: string, body: { filename: string; mimeType: string; declaredSizeBytes: number }) =>
+    request<{ uploadId: string; objectKey: string; uploadUrl: string; method: "PUT"; headers: Record<string, string>; expiresAt: string }>(`/cases/${caseNumber}/evidence/uploads`, { method: "POST", body: JSON.stringify(body) }),
+  /** Finalize an evidence file upload: verify bytes, record metadata, trigger the agent summary. */
+  completeEvidenceUpload: (caseNumber: string, uploadId: string, body: { title: string; filename: string }) =>
+    request<{ evidenceId: string; sha256: string; mimeType: string; sizeBytes: number }>(`/cases/${caseNumber}/evidence/uploads/${uploadId}/complete`, { method: "POST", body: JSON.stringify(body) }),
+  /** Add a link (e.g. YouTube) as evidence — shared visibility. */
+  addEvidenceLink: (caseNumber: string, body: { title: string; linkUrl: string }) =>
+    request<{ evidenceId: string }>(`/cases/${caseNumber}/evidence/links`, { method: "POST", body: JSON.stringify(body) }),
+  /** Arbiter-only: get a short-lived presigned download URL for an evidence file. */
+  downloadEvidence: (caseNumber: string, evidenceId: string) =>
+    request<{ url: string; expiresAt: string }>(`/cases/${caseNumber}/evidence/${evidenceId}/download`),
+  /** Agent document summaries for a case (the arbiter sees these as cards). */
+  caseAnnotations: (caseNumber: string) =>
+    request<{ annotations: EvidenceAnnotation[] }>(`/cases/${caseNumber}/annotations`),
+
+  // --- Work order documents (payment-time contracts, arbiter-only) ---
+  allocateWorkOrderDocument: (paymentId: string, body: { filename: string; mimeType: string; declaredSizeBytes: number }) =>
+    request<{ uploadId: string; objectKey: string; uploadUrl: string; method: "PUT"; headers: Record<string, string>; expiresAt: string }>(`/payouts/${paymentId}/documents/uploads`, { method: "POST", body: JSON.stringify(body) }),
+  completeWorkOrderDocument: (paymentId: string, uploadId: string, body: { filename: string }) =>
+    request<{ documentId: string; sha256: string; mimeType: string; sizeBytes: number }>(`/payouts/${paymentId}/documents/uploads/${uploadId}/complete`, { method: "POST", body: JSON.stringify(body) }),
+  downloadWorkOrderDocument: (paymentId: string, documentId: string) =>
+    request<{ url: string; expiresAt: string }>(`/payouts/${paymentId}/documents/${documentId}/download`),
+  workOrderAnnotations: (paymentId: string) =>
+    request<{ annotations: EvidenceAnnotation[] }>(`/payouts/${paymentId}/documents/annotations`),
 
   requestInfo: (caseNumber: string, body: { target: "platform" | "recipient"; text: string }) =>
     request<{ caseNumber: string; status: string; infoRequestCount: number }>(`/cases/${caseNumber}/requests`, { method: "POST", body: JSON.stringify(body) }),

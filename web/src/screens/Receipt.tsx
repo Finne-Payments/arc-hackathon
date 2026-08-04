@@ -186,6 +186,39 @@ export function Receipt({ v, actions, apiData }: { v: ViewModel; actions: FinneA
                 })}
               </div>
             )}
+
+            {/* Payment-time contracts/documents (arbiter-only downloads).
+                The agents read these and surface summaries in any dispute. */}
+            {workOrder?.documents && workOrder.documents.length > 0 && (
+              <div style={{ marginTop: 16, marginBottom: 16 }}>
+                <Eyebrow color="var(--color-fg-subtle)" style={{ margin: "4px 0 10px" }}>
+                  Contracts & documents
+                </Eyebrow>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {workOrder.documents.map((doc) => (
+                    <div key={doc.documentId} style={{ display: "flex", alignItems: "center", gap: 10, border: "1px solid var(--color-border)", borderRadius: "var(--radius-md)", padding: "9px 12px", fontSize: 13 }}>
+                      <span style={{ flex: 1, fontWeight: 500 }}>{doc.filename}</span>
+                      <span style={{ color: "var(--color-fg-subtle)", fontSize: 11 }}>{doc.mimeType} · {(doc.sizeBytes / 1024).toFixed(1)} KB</span>
+                      {v.isReviewer && (
+                        <button
+                          onClick={() =>
+                            api.downloadWorkOrderDocument(payout?.paymentId ?? "", doc.documentId).then((res) => window.open(res.url, "_blank")).catch(() => {})
+                          }
+                          style={{ fontSize: 11, fontWeight: 600, padding: "4px 10px", border: "1px solid var(--brand-200)", borderRadius: "var(--radius-sm)", background: "var(--brand-50)", color: "var(--brand-800)", cursor: "pointer" }}
+                        >
+                          View
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                  {!v.isReviewer && (
+                    <div style={{ fontSize: 11, color: "var(--color-fg-subtle)" }}>
+                      {workOrder.documents.length} document(s) on file · visible to the arbiter.
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
             <div style={{ fontSize: 13, color: "var(--color-fg-muted)", lineHeight: 1.55, margin: "14px 0 16px" }}>
               Policy: {policySummary}
             </div>

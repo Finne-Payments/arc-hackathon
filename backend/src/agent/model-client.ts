@@ -51,12 +51,14 @@ export interface CompleteInput {
   task: string;
   system: string;
   prompt: string;
+  /** Override the default 400-token output cap (e.g. longer summaries). */
+  maxTokens?: number;
 }
 
 let _modelDigestCache: { model: string; id: string; digest: string } | null = null;
 
 /** Model digest from config (FIN-100: pinned, recorded in docs/models.md). */
-function modelDigest(): { model: string; id: string; digest: string } {
+export function modelDigest(): { model: string; id: string; digest: string } {
   if (_modelDigestCache) return _modelDigestCache;
   const env = loadEnv();
   _modelDigestCache = {
@@ -148,8 +150,8 @@ export async function complete(input: CompleteInput): Promise<CompletionResult> 
 
   const env = loadEnv();
   return env.model.provider === "bedrock"
-    ? completeBedrock(input, env.model.timeoutMs, env.model.awsRegion)
-    : completeOpenAICompatible(input, env.model.baseUrl, env.model.timeoutMs);
+    ? completeBedrock(input, env.model.timeoutMs, env.model.awsRegion, input.maxTokens)
+    : completeOpenAICompatible(input, env.model.baseUrl, env.model.timeoutMs, input.maxTokens);
 }
 
 /* ============================================================================
@@ -161,6 +163,7 @@ async function completeOpenAICompatible(
   input: CompleteInput,
   baseUrl: string,
   timeoutMs: number,
+  maxTokens?: number,
 ): Promise<CompletionResult> {
   const url = `${baseUrl.replace(/\/$/, "")}/chat/completions`;
   const controller = new AbortController();
@@ -177,7 +180,7 @@ async function completeOpenAICompatible(
           { role: "user", content: input.prompt },
         ],
         temperature: 0.2, // low — the clerk prepares and points; no creative leaps
-        max_tokens: 400,
+        max_tokens: maxTokens ?? 400,
       }),
       signal: controller.signal,
     });
@@ -272,6 +275,7 @@ async function completeBedrock(
   input: CompleteInput,
   timeoutMs: number,
   region: string | null,
+  maxTokens?: number,
 ): Promise<CompletionResult> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -283,8 +287,8 @@ async function completeBedrock(
 
     // Converse API shape. System prompt is a top-level field (not a message),
     // and content blocks are arrays of { text }. inferenceConfig mirrors the
-    // openai-compatible params (temperature 0.2, maxTokens 400). The AbortSignal
-    // is passed to client.send so the SDK tears down the HTTP request on the 5s
+    // openai-compatible params (temperature 0.2, maxTokens). The AbortSignal
+    // is passed to client.send so the SDK tears down the HTTP request on the
     // P8 timeout — the authoritative contract, no manual race needed.
     const cmd = new ConverseCommand({
       modelId: modelName,
@@ -292,7 +296,7 @@ async function completeBedrock(
       messages: [{ role: "user", content: [{ text: input.prompt }] }],
       inferenceConfig: {
         temperature: 0.2, // low — the clerk prepares and points; no creative leaps
-        maxTokens: 400,
+        maxTokens: maxTokens ?? 400,
       },
     });
 

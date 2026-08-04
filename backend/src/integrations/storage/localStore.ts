@@ -7,12 +7,14 @@
 
 import { createHash } from "node:crypto";
 import { generateId } from "@finne/domain";
-import type { EvidenceStore, UploadAllocation, StoredEvidence } from "./types.ts";
+import type { EvidenceStore, UploadAllocation, StoredEvidence, UploadScope } from "./types.ts";
+import { MAX_UPLOAD_BYTES, sanitizeFilename } from "./uploadPolicy.ts";
 
 interface PendingUpload {
   uploadId: string;
   objectKey: string;
-  caseId: string;
+  scope: UploadScope;
+  ownerId: string;
   filename: string;
   mimeType: string;
   declaredSizeBytes: number;
@@ -26,9 +28,11 @@ interface StoredObject {
   mimeType: string;
   sizeBytes: number;
   version: number;
-  caseId: string;
+  scope: UploadScope;
+  ownerId: string;
   filename: string;
   storedAt: string;
+  bytes?: Uint8Array; // local-dev only: the actual bytes (so agents can read them locally)
 }
 
 /**
@@ -40,25 +44,41 @@ export class LocalEvidenceStore implements EvidenceStore {
   private pending = new Map<string, PendingUpload>();
   private stored = new Map<string, StoredObject>();
   private versionCounter = 0;
+  /** Local-dev upload bytes keyed by uploadId, written by the PUT receiver route. */
+  private uploadBytes = new Map<string, Uint8Array>();
+
+  /** Used by the local-dev PUT receiver to stash bytes for finalizeUpload. */
+  setUploadBytes(uploadId: string, bytes: Uint8Array): void {
+    this.uploadBytes.set(uploadId, bytes);
+  }
 
   async allocateUpload(params: {
-    caseId: string;
+    scope: UploadScope;
+    ownerId: string;
     filename: string;
     mimeType: string;
     declaredSizeBytes: number;
   }): Promise<UploadAllocation> {
+    // Sanitize the filename BEFORE it becomes part of the object key — no path
+    // traversal, no control chars. The owner id is also constrained by the route
+    // (a case number / payment id, never user free text).
+    const safeFilename = sanitizeFilename(params.filename);
     const uploadId = generateId("upload");
-    const objectKey = `evidence/${params.caseId}/${uploadId}/${params.filename}`;
+    const objectKey = `evidence/${params.scope}/${params.ownerId}/${uploadId}/${safeFilename}`;
     const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
 
     this.pending.set(uploadId, {
       uploadId,
       objectKey,
-      ...params,
+      scope: params.scope,
+      ownerId: params.ownerId,
+      filename: safeFilename,
+      mimeType: params.mimeType,
+      declaredSizeBytes: params.declaredSizeBytes,
       createdAt: new Date().toISOString(),
     });
 
-    // In the local impl, the "presigned URL" is a data: URL placeholder.
+    // In the local impl, the "presigned URL" is a route on the backend itself.
     // The real S3 impl generates a presigned PUT URL.
     return {
       uploadId,
@@ -74,11 +94,33 @@ export class LocalEvidenceStore implements EvidenceStore {
     const pending = this.pending.get(uploadId);
     if (!pending) throw new Error(`Upload ${uploadId} not found or already finalized.`);
 
-    // In the local impl, there's no real object to HEAD. We compute a
-    // deterministic sha256 from the upload metadata (the real S3 impl reads
-    // the actual object bytes and computes the real hash).
-    const hashInput = `${pending.caseId}:${pending.filename}:${pending.mimeType}:${pending.declaredSizeBytes}`;
-    const sha256 = createHash("sha256").update(hashInput).digest("hex");
+    // The local PUT receiver stashed the real bytes (if any). Use them to compute
+    // a real sha256; fall back to a deterministic hash from metadata when the PUT
+    // receiver was bypassed (e.g. legacy tests that skip the PUT step).
+    const bytes = this.uploadBytes.get(uploadId);
+
+    // Size enforcement: reject a bait-and-switch — the client PUTs more bytes
+    // than it declared on allocate, or more than the hard cap. Both are refused
+    // so a misbehaving client can't blow memory or stash oversized payloads.
+    if (bytes && bytes.length > pending.declaredSizeBytes) {
+      this.pending.delete(uploadId);
+      this.uploadBytes.delete(uploadId);
+      throw new Error(
+        `Uploaded payload (${bytes.length} bytes) exceeds the declared size (${pending.declaredSizeBytes} bytes). Upload rejected.`,
+      );
+    }
+    if (bytes && bytes.length > MAX_UPLOAD_BYTES) {
+      this.pending.delete(uploadId);
+      this.uploadBytes.delete(uploadId);
+      throw new Error(`Uploaded payload exceeds the 25 MB limit.`);
+    }
+
+    const sha256 = bytes
+      ? createHash("sha256").update(bytes).digest("hex")
+      : createHash("sha256")
+          .update(`${pending.scope}:${pending.ownerId}:${pending.filename}:${pending.mimeType}:${pending.declaredSizeBytes}`)
+          .digest("hex");
+    const sizeBytes = bytes ? bytes.length : pending.declaredSizeBytes;
 
     const evidenceId = generateId("ev");
     const version = ++this.versionCounter;
@@ -87,17 +129,21 @@ export class LocalEvidenceStore implements EvidenceStore {
       objectKey: pending.objectKey,
       sha256,
       mimeType: pending.mimeType,
-      sizeBytes: pending.declaredSizeBytes,
+      sizeBytes,
       version,
-      caseId: pending.caseId,
+      scope: pending.scope,
+      ownerId: pending.ownerId,
       filename: pending.filename,
       storedAt: new Date().toISOString(),
+      bytes,
     };
     this.stored.set(evidenceId, stored);
     this.pending.delete(uploadId);
+    this.uploadBytes.delete(uploadId);
 
     return {
       evidenceId,
+      objectKey: pending.objectKey,
       sha256,
       mimeType: stored.mimeType,
       sizeBytes: stored.sizeBytes,
@@ -105,20 +151,78 @@ export class LocalEvidenceStore implements EvidenceStore {
     };
   }
 
-  async getDownloadUrl(evidenceId: string): Promise<{ url: string; expiresAt: string }> {
-    const obj = this.stored.get(evidenceId);
-    if (!obj) throw new Error(`Evidence ${evidenceId} not found.`);
+  async getDownloadUrl(objectKey: string): Promise<{ url: string; expiresAt: string }> {
+    // Look up by objectKey (the route resolves evidenceId → objectKey first, or
+    // passes the key directly). The local-download route serves bytes by evidenceId.
+    const obj = [...this.stored.values()].find((o) => o.objectKey === objectKey);
+    if (!obj) throw new Error(`Evidence for objectKey ${objectKey} not found.`);
     const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
     return {
-      url: `http://localhost:4000/v1/local-download/${evidenceId}`,
+      url: `http://localhost:4000/v1/local-download/${obj.evidenceId}`,
       expiresAt,
     };
   }
+
+  async getObjectBytes(objectKey: string): Promise<Uint8Array> {
+    const obj = [...this.stored.values()].find((o) => o.objectKey === objectKey);
+    if (obj?.bytes) return obj.bytes;
+    // Local dev fallback: no bytes were captured (e.g. test skipped the PUT step).
+    // Return an empty payload so the reader degrades to "no text" rather than throwing.
+    return new Uint8Array(0);
+  }
+
+  /** Look up a stored object by evidenceId (used by local-download + routes). */
+  getStored(evidenceId: string): StoredObject | undefined {
+    return this.stored.get(evidenceId);
+  }
 }
 
-/** Factory: returns the configured evidence store (S3 in prod, local in dev). */
-export function getEvidenceStore(/* config: Config */): EvidenceStore {
-  // When config.storage.evidenceBucket is set, return new S3EvidenceStore(config).
-  // For now, return the local impl.
-  return new LocalEvidenceStore();
+let _singleton: LocalEvidenceStore | null = null;
+/** The shared local-dev store (one instance across the process). */
+export function getLocalStore(): LocalEvidenceStore {
+  if (!_singleton) _singleton = new LocalEvidenceStore();
+  return _singleton;
+}
+
+/** Reset the singleton + the factory cache (tests). */
+export function resetLocalStore(): void {
+  _singleton = null;
+  _factoryStore = null;
+}
+
+/**
+ * Factory: returns the configured evidence store (S3 in prod, local in dev).
+ * Kept here so existing `import { getEvidenceStore } from ".../localStore.ts"`
+ * callers resolve to the S3-vs-local decision. The S3 store is constructed only
+ * when EVIDENCE_BUCKET is configured; otherwise the shared local singleton.
+ */
+let _factoryStore: EvidenceStore | null = null;
+export function getEvidenceStore(): EvidenceStore {
+  if (_factoryStore) return _factoryStore;
+  // Read the bucket name via the typed config. require() keeps @aws-sdk out of
+  // the dev/test path — the S3 module is loaded only when a bucket exists.
+  try {
+    const { loadConfig } = require("@finne/config");
+    const config = loadConfig();
+    const bucket = config.storage.evidenceBucket;
+    if (bucket && bucket.trim().length > 0) {
+      const { S3EvidenceStore } = require("./s3Store.ts");
+      const store: EvidenceStore = new S3EvidenceStore({
+        bucket,
+        region: process.env.AWS_REGION ?? "us-east-1",
+        kmsKeyId: config.storage.kmsKeyId,
+      });
+      _factoryStore = store;
+      return store;
+    }
+  } catch {
+    /* config not loadable yet (e.g. test) — fall through to local */
+  }
+  _factoryStore = getLocalStore();
+  return _factoryStore;
+}
+
+/** Test hook: override the factory's store (or clear with null). */
+export function setEvidenceStoreForTest(store: EvidenceStore | null): void {
+  _factoryStore = store;
 }

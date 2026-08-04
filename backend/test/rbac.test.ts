@@ -1,12 +1,12 @@
 import { describe, it, expect } from "vitest";
 import { can, seatToRole, MATRIX, type Permission, type Role } from "../src/rbac.ts";
 
-/* RBAC matrix tests (PRD §6.2) — the 13 permissions × 5 roles. */
+/* RBAC matrix tests (PRD §6.2) — the 14 permissions × 5 roles. */
 
 const ALL_PERMISSIONS: Permission[] = [
   "workorder:create", "workorder:read", "payout:read", "case:open", "case:read",
   "case:respond", "case:add_evidence", "case:request_info", "case:decide",
-  "brief:read", "brief:write", "anchor:write", "demo:seed",
+  "evidence:download", "brief:read", "brief:write", "anchor:write", "demo:seed",
 ];
 
 describe("RBAC matrix", () => {
@@ -54,7 +54,7 @@ describe("RBAC matrix", () => {
     expect(seatToRole("agent")).toBe("agent_service");
   });
 
-  it("every role's permission set is a subset of the 13 known permissions", () => {
+  it("every role's permission set is a subset of the known permissions", () => {
     const roles: Role[] = ["reviewer", "recipient", "platform_viewer", "agent_service", "registry_operator"];
     for (const r of roles) {
       for (const p of MATRIX[r]) {

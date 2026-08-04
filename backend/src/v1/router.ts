@@ -343,7 +343,7 @@ export function createV1Router(config: Config): Router {
         throw validationError("caseId, filename, mimeType, declaredSizeBytes are required.");
       }
       const store = getEvidenceStore();
-      const allocation = await store.allocateUpload({ caseId, filename, mimeType, declaredSizeBytes });
+      const allocation = await store.allocateUpload({ scope: "case", ownerId: String(caseId), filename, mimeType, declaredSizeBytes });
       res.status(201).json({ ...allocation, visibility: visibility ?? "SHARED" });
     } catch (e) { next(e); }
   });

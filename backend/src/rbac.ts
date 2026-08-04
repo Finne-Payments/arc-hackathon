@@ -20,6 +20,7 @@ export type Permission =
   | "case:add_evidence"
   | "case:request_info"
   | "case:decide"
+  | "evidence:download"
   | "brief:read"
   | "brief:write"
   | "anchor:write"
@@ -46,6 +47,7 @@ export const MATRIX: Record<Role, Permission[]> = {
     "case:add_evidence",
     "case:request_info",
     "case:decide",
+    "evidence:download",
     "brief:read",
     "demo:seed",
   ],

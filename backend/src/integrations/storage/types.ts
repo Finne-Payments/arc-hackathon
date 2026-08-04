@@ -20,16 +20,24 @@ export interface UploadAllocation {
 
 export interface StoredEvidence {
   evidenceId: string;
+  /** The object key the bytes were stored under (so the caller can record it). */
+  objectKey: string;
   sha256: string;
   mimeType: string;
   sizeBytes: number;
   version: number;
 }
 
+/** Where an uploaded document belongs — a dispute case or a payment's work order. */
+export type UploadScope = "case" | "workorder";
+
 export interface EvidenceStore {
   /** Allocate an immutable object key + short-lived presigned upload URL. */
   allocateUpload(params: {
-    caseId: string;
+    /** Which entity the document belongs to — a dispute case or a work order. */
+    scope: UploadScope;
+    /** The caseNumber (scope "case") or paymentId (scope "workorder"). */
+    ownerId: string;
     filename: string;
     mimeType: string;
     declaredSizeBytes: number;
@@ -40,6 +48,9 @@ export interface EvidenceStore {
 
   /** Generate a fresh short-lived download URL (authorized per visibility). */
   getDownloadUrl(evidenceId: string): Promise<{ url: string; expiresAt: string }>;
+
+  /** Fetch the raw bytes of a stored object by its objectKey (for agent reading). */
+  getObjectBytes(objectKey: string): Promise<Uint8Array>;
 }
 
 /* -------------------------------------------------------------------------- */

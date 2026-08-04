@@ -1,7 +1,10 @@
 import { Router } from "express";
 import { requirePermission, requireInternal, requireChainConfigured, currentRole } from "../middleware.ts";
 import { recordDetectedPayment, getSharedReceipt, openedByForRole, openDispute } from "../services.ts";
-import { Payout, WorkOrder, User } from "../models/index.ts";
+import { attachWorkOrderDocument } from "../services/documents.ts";
+import { Payout, WorkOrder, User, EvidenceAnnotation } from "../models/index.ts";
+import { getEvidenceStore } from "../integrations/storage/localStore.ts";
+import { validateUploadDeclaration, sanitizeFilename } from "../integrations/storage/uploadPolicy.ts";
 import { scopeFor } from "../scope.ts";
 import { HttpError } from "../errors.ts";
 
@@ -193,6 +196,90 @@ payoutRoutes.post("/payouts/:paymentId/metadata", requirePermission("workorder:c
     }
 
     res.status(200).json({ payout, workOrder });
+  } catch (e) {
+    next(e);
+  }
+});
+
+/* ====================================================================== */
+/* Work order documents — payment-time contracts attached to a payout.    */
+/* Stored in S3, arbiter-only. Two-step presigned upload.                 */
+/* ====================================================================== */
+
+// Allocate a presigned PUT URL for a payment-time contract document.
+payoutRoutes.post("/payouts/:paymentId/documents/uploads", requirePermission("workorder:create"), async (req, res, next) => {
+  try {
+    const { filename, mimeType, declaredSizeBytes } = req.body ?? {};
+    // Central validation (same rules as case evidence).
+    const check = validateUploadDeclaration({
+      filename: String(filename ?? ""),
+      mimeType: String(mimeType ?? ""),
+      declaredSizeBytes: Number(declaredSizeBytes),
+    });
+    if (!check.ok) throw new HttpError(400, check.reason);
+    // The payout must already exist (chain-first gate).
+    const payout = await Payout.findOne({ paymentId: req.params.paymentId });
+    if (!payout) {
+      throw new HttpError(404, `No payout ${req.params.paymentId} — the on-chain pay() hasn't been detected yet.`);
+    }
+    const store = getEvidenceStore();
+    const allocation = await store.allocateUpload({
+      scope: "workorder",
+      ownerId: req.params.paymentId,
+      filename: sanitizeFilename(String(filename)),
+      mimeType: String(mimeType),
+      declaredSizeBytes: Number(declaredSizeBytes),
+    });
+    res.status(201).json(allocation);
+  } catch (e) {
+    next(e);
+  }
+});
+
+// Finalize a work order document upload + trigger the agent summary.
+payoutRoutes.post("/payouts/:paymentId/documents/uploads/:uploadId/complete", requirePermission("workorder:create"), async (req, res, next) => {
+  try {
+    const { filename } = req.body ?? {};
+    const store = getEvidenceStore();
+    const stored = await store.finalizeUpload(req.params.uploadId);
+    const result = await attachWorkOrderDocument({
+      paymentId: req.params.paymentId,
+      stored: {
+        sha256: stored.sha256,
+        mimeType: stored.mimeType,
+        sizeBytes: stored.sizeBytes,
+        objectKey: stored.objectKey,
+        filename: sanitizeFilename(String(filename ?? "contract")),
+      },
+    });
+    res.status(201).json({ documentId: result.documentId, sha256: stored.sha256, mimeType: stored.mimeType, sizeBytes: stored.sizeBytes });
+  } catch (e) {
+    next(e);
+  }
+});
+
+// Arbiter-only download of a work order document.
+payoutRoutes.get("/payouts/:paymentId/documents/:documentId/download", requirePermission("evidence:download"), async (req, res, next) => {
+  try {
+    const workOrder = await WorkOrder.findOne({ paymentId: req.params.paymentId }).lean();
+    if (!workOrder) throw new HttpError(404, `No work order for payment ${req.params.paymentId}.`);
+    const doc = (workOrder.documents ?? []).find((d) => d.documentId === req.params.documentId);
+    if (!doc) throw new HttpError(404, `Document ${req.params.documentId} not found.`);
+    const store = getEvidenceStore();
+    const url = await store.getDownloadUrl(doc.objectKey);
+    res.json(url);
+  } catch (e) {
+    next(e);
+  }
+});
+
+// Agent summaries for a payment's contract documents (the arbiter sees these).
+payoutRoutes.get("/payouts/:paymentId/documents/annotations", requirePermission("workorder:read"), async (req, res, next) => {
+  try {
+    const annotations = await EvidenceAnnotation.find({
+      ownerRef: { $regex: `^workorder:${req.params.paymentId}:` },
+    }).sort({ generatedAt: 1 }).lean();
+    res.json({ annotations });
   } catch (e) {
     next(e);
   }

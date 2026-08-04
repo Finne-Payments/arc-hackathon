@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import type { FinneActions, ViewModel } from "../useFinne";
 import type { ApiData } from "../useApi";
-import type { PayoutRow, CaseRow, AgentFrame } from "../api";
+import type { PayoutRow, CaseRow, AgentFrame, EvidenceRow, EvidenceAnnotation } from "../api";
 import { api } from "../api";
 import {
   BackLink,
@@ -14,6 +14,7 @@ import {
   StatusPill,
 } from "../components/primitives";
 import { Timeline, type TimelineEntry } from "../components/Timeline";
+import { FileUpload } from "../components/FileUpload";
 import { shortHex } from "../mappers";
 import { claimLabel } from "../domain/statusVocabulary";
 
@@ -34,13 +35,38 @@ function FileIcon({ kind }: { kind: "doc" | "video" }) {
   );
 }
 
+/** Friendly label for a video link host (YouTube, Loom, Vimeo, Finné, or the host). */
+function linkProvider(url: string): string {
+  try {
+    const u = new URL(url);
+    const host = u.hostname.toLowerCase().replace(/^www\./, "");
+    if (host.includes("youtube") || host === "youtu.be") return "YouTube";
+    if (host.includes("loom")) return "Loom";
+    if (host.includes("vimeo")) return "Vimeo";
+    if (host.includes("finne")) return "Finné";
+    return host;
+  } catch {
+    return "link";
+  }
+}
+
 export function CaseRoom({ v, actions, apiData }: { v: ViewModel; actions: FinneActions; apiData?: ApiData }) {
   const c = apiData?.activeCase ?? null;
   const caseDoc: CaseRow | null = (c?.case as CaseRow) ?? null;
   const caseNumber = caseDoc?.caseNumber ?? v.selectedCaseId ?? "";
   const payout: PayoutRow | null = (c?.payout as PayoutRow) ?? null;
   const responses = (c?.responses as { author: string; authorName: string; text: string; submittedAt: string }[]) ?? [];
-  const evidence = (c?.evidence as { title: string; submittedBy: string; submittedAt: string; sha256: string; type: string }[]) ?? [];
+  const evidence = (c?.evidence as EvidenceRow[]) ?? [];
+  // Arbiter-only: agent document summaries (fetched separately so they refresh
+  // after an upload triggers a new summary without reloading the whole case).
+  const [annotations, setAnnotations] = useState<EvidenceAnnotation[]>([]);
+  useEffect(() => {
+    if (!caseNumber) return;
+    api
+      .caseAnnotations(caseNumber)
+      .then((r) => setAnnotations(r.annotations))
+      .catch(() => setAnnotations([]));
+  }, [caseNumber, c?.evidence?.length]);
   const brief = c?.brief?.latest as { checks: { check: string; expected: string; found: string; result: string }[]; inconsistencies: string[]; missingItems: string[] } | undefined;
   // The v1 agent frame (turning questions + findings + unresolved). Null until the
   // agents run. frameStatus is non-null while they're running.
@@ -313,33 +339,82 @@ export function CaseRoom({ v, actions, apiData }: { v: ViewModel; actions: Finne
           {evidence.length === 0 && (
             <div style={{ fontSize: 13, color: "var(--color-fg-subtle)", padding: "4px 0" }}>No evidence submitted yet.</div>
           )}
-          {evidence.map((e, i) => (
-            <div key={i} style={{ display: "flex", alignItems: "flex-start", gap: 12, border: "1px solid var(--color-border)", borderRadius: "var(--radius-md)", padding: "14px 16px", fontSize: 13, background: e.submittedBy === "agent" ? "var(--brand-50)" : "var(--color-surface)" }}>
-              <div style={{ flexShrink: 0, marginTop: 1 }}>
-                <FileIcon kind={(e.type === "deliverable" || e.type === "message") ? "video" : "doc"} />
-              </div>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontWeight: 600, marginBottom: 4 }}>{e.title}</div>
-                <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", fontSize: 12, color: "var(--color-fg-subtle)" }}>
-                  <span style={{ border: `1px solid ${e.submittedBy === "agent" ? "var(--brand-200)" : "var(--color-border)"}`, borderRadius: "var(--radius-pill)", padding: "1px 8px", color: e.submittedBy === "agent" ? "var(--brand-800)" : "var(--color-fg-muted)" }}>
-                    {e.submittedBy === "platform" ? "Merchant" : e.submittedBy === "recipient" ? "Customer" : e.submittedBy}
-                  </span>
-                  <span>{new Date(e.submittedAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</span>
-                  <span style={{ fontFamily: "var(--font-mono)" }}>sha: {shortHex(e.sha256)}</span>
+          {evidence.map((e, i) => {
+            const isDoc = e.source === "upload";
+            const isLink = e.source === "link";
+            const isUploadedVideo = isDoc && !!e.mimeType && e.mimeType.startsWith("video/");
+            const isVideo = e.type === "deliverable" || e.type === "message" || isLink || isUploadedVideo;
+            const provider = isLink && e.linkUrl ? linkProvider(e.linkUrl) : null;
+            const evidenceId = String(e._id ?? i);
+            const annotation = annotations.find((a) => a.evidenceId === evidenceId || a.ownerRef.endsWith(`:${evidenceId}`));
+            const isArbiter = v.isReviewer;
+            return (
+              <div key={i} style={{ border: "1px solid var(--color-border)", borderRadius: "var(--radius-md)", padding: "14px 16px", fontSize: 13, background: e.submittedBy === "agent" ? "var(--brand-50)" : "var(--color-surface)" }}>
+                <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
+                  <div style={{ flexShrink: 0, marginTop: 1 }}>
+                    <FileIcon kind={isVideo ? "video" : "doc"} />
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontWeight: 600, marginBottom: 4 }}>
+                      {e.title}
+                      {isDoc && <span style={{ fontWeight: 400, color: "var(--color-fg-subtle)", fontSize: 11, marginLeft: 8 }}>{e.filename} · {e.mimeType}</span>}
+                      {isDoc && e.visibility === "ARBITER_ONLY" && (
+                        <span style={{ marginLeft: 8, fontSize: 10, fontWeight: 600, color: "var(--brand-700)", background: "var(--brand-50)", border: "1px solid var(--brand-200)", borderRadius: "var(--radius-pill)", padding: "1px 8px" }}>Arbiter-only</span>
+                      )}
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", fontSize: 12, color: "var(--color-fg-subtle)" }}>
+                      <span style={{ border: `1px solid ${e.submittedBy === "agent" ? "var(--brand-200)" : "var(--color-border)"}`, borderRadius: "var(--radius-pill)", padding: "1px 8px", color: e.submittedBy === "agent" ? "var(--brand-800)" : "var(--color-fg-muted)" }}>
+                        {e.submittedBy === "platform" ? "Merchant" : e.submittedBy === "recipient" ? "Customer" : e.submittedBy}
+                      </span>
+                      <span>{new Date(e.submittedAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</span>
+                      {e.sha256 && <span style={{ fontFamily: "var(--font-mono)" }}>sha: {shortHex(e.sha256)}</span>}
+                      {isDoc && e.sizeBytes ? <span>{(e.sizeBytes / 1024).toFixed(1)} KB</span> : null}
+                    </div>
+                    {/* Arbiter-only download for uploaded documents */}
+                    {isDoc && isArbiter && (
+                      <div style={{ marginTop: 8 }}>
+                        <button
+                          onClick={() =>
+                            api.downloadEvidence(caseNumber, evidenceId).then((r) => window.open(r.url, "_blank")).catch(() => {})
+                          }
+                          style={{ fontSize: 12, fontWeight: 600, padding: "5px 12px", border: "1px solid var(--brand-200)", borderRadius: "var(--radius-sm)", background: "var(--brand-50)", color: "var(--brand-800)", cursor: "pointer" }}
+                        >
+                          View document
+                        </button>
+                      </div>
+                    )}
+                    {/* Link evidence: show the provider + URL (shared, any video host) */}
+                    {isLink && e.linkUrl && (
+                      <div style={{ marginTop: 6, fontSize: 12, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                        {provider && (
+                          <span style={{ fontSize: 10, fontWeight: 600, color: "var(--brand-700)", background: "var(--brand-50)", border: "1px solid var(--brand-200)", borderRadius: "var(--radius-pill)", padding: "1px 8px" }}>{provider}</span>
+                        )}
+                        <a href={e.linkUrl} target="_blank" rel="noreferrer" style={{ color: "var(--brand-700)", wordBreak: "break-all" }}>Open video ↗</a>
+                      </div>
+                    )}
+                  </div>
                 </div>
+                {/* Agent document summary card (arbiter sees the per-doc insight) */}
+                {annotation && (
+                  <div style={{ marginTop: 10, borderTop: "1px dashed var(--color-border)", paddingTop: 10, display: "flex", gap: 10, alignItems: "flex-start" }}>
+                    <span style={{ flexShrink: 0, fontSize: 10, fontWeight: 700, letterSpacing: ".05em", textTransform: "uppercase", color: "var(--brand-700)", background: "var(--brand-50)", border: "1px solid var(--brand-200)", borderRadius: "var(--radius-pill)", padding: "2px 8px", whiteSpace: "nowrap" }}>
+                      {annotation.degraded ? "Agent note" : "Agent summary"}
+                    </span>
+                    <span style={{ fontSize: 12.5, color: "var(--color-fg-muted)", lineHeight: 1.55 }}>{annotation.summary}</span>
+                  </div>
+                )}
               </div>
-            </div>
-          ))}
+            );
+          })}
 
-          {/* newly added evidence items */}
           {/* add evidence composer */}
           {v.showAddEvidence && (
             <>
               {v.evPrompt && (
                 <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 12, border: "1.5px dashed var(--color-border-strong)", borderRadius: "var(--radius-md)", padding: "12px 14px", flexWrap: "wrap" }}>
-                  <SecondaryButton onClick={v.openEv} style={{ fontSize: 13, padding: "8px 14px" }}>Add evidence</SecondaryButton>
+                  <SecondaryButton onClick={v.openEv} style={{ fontSize: 13, padding: "8px 14px" }}>Add message</SecondaryButton>
                   <span style={{ fontSize: 12, color: "var(--color-fg-subtle)" }}>
-                    Anything you add as {v.evidenceAsLabel} is visible to both sides, dated and fingerprinted. Evidence closes when the case is decided.
+                    Text messages are visible to both sides. Documents (PDF/MD) and video links attach below.
                   </span>
                 </div>
               )}
@@ -377,6 +452,24 @@ export function CaseRoom({ v, actions, apiData }: { v: ViewModel; actions: Finne
                   </div>
                 </div>
               )}
+
+              {/* Document + link uploader. Uploaded files are arbiter-only;
+                  the uploader sees metadata (filename/sha) confirming it's on file.
+                  The agent reads each document and writes a summary card above. */}
+              <div style={{ marginTop: 12, border: "1px solid var(--color-border)", borderRadius: "var(--radius-md)", padding: "14px 16px", background: "var(--color-surface-2)" }}>
+                <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8 }}>Attach a document or link</div>
+                <FileUpload
+                  allocate={async (filename, mimeType, sizeBytes) =>
+                    (await api.allocateEvidenceUpload(caseNumber, { filename, mimeType, declaredSizeBytes: sizeBytes }))}
+                  complete={async (uploadId, filename) => {
+                    const res = await api.completeEvidenceUpload(caseNumber, uploadId, { title: filename, filename });
+                    return { evidenceId: res.evidenceId, filename, mimeType: res.mimeType, sizeBytes: res.sizeBytes, sha256: res.sha256 };
+                  }}                  onLink={async (title, url) => api.addEvidenceLink(caseNumber, { title, linkUrl: url })}
+                  onUploaded={() => actions.reloadCase()}
+                  label="Attach document or video"
+                  hint="PDF, MD, TXT, MP4 · arbiter-only"
+                />
+              </div>
             </>
           )}
         </div>

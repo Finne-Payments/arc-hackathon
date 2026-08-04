@@ -65,6 +65,20 @@ export interface WorkOrderDoc {
    * confirms, by the metadata endpoint). Indexed so getSharedReceipt resolves
    * it directly — no name-matching against seeded data. */
   paymentId: string | null;
+  /** Payment-time contracts/documents attached by the customer/merchant (PAY-DOC).
+   *  Stored in S3 (objectKey); only the arbiter may download. Surfaces in the
+   *  case context when a dispute opens so the agent reasons over the contract. */
+  documents: WorkOrderDocument[];
+}
+/** A document attached to a work order (a contract, brief, spec, etc.). */
+export interface WorkOrderDocument {
+  documentId: string;
+  filename: string;
+  mimeType: string;
+  sizeBytes: number;
+  sha256: string;
+  objectKey: string;
+  uploadedAt: string;
 }
 const workOrderSchema = new Schema<WorkOrderDoc>(
   {
@@ -76,6 +90,20 @@ const workOrderSchema = new Schema<WorkOrderDoc>(
     currency: String,
     status: String,
     paymentId: { type: String, default: null, index: true },
+    documents: {
+      type: [
+        {
+          documentId: String,
+          filename: String,
+          mimeType: String,
+          sizeBytes: Number,
+          sha256: String,
+          objectKey: String,
+          uploadedAt: String,
+        },
+      ],
+      default: [],
+    },
   },
   { collection: "workorders" },
 );
@@ -145,9 +173,26 @@ export interface EvidenceDoc {
   // UI helpers (not canonical-content)
   showOnlyAfterReply?: boolean;
   kind?: "doc" | "video";
+  // --- Document attachment fields (PAY-DOC) ---
+  /** Where the evidence came from: inline text, a file upload, or a link (e.g. YouTube). */
+  source?: "text" | "upload" | "link";
+  /** S3/local object key (for "upload"). Absent for text/link evidence. */
+  objectKey?: string;
+  /** Filename as the uploader named it (for "upload"). */
+  filename?: string;
+  /** MIME type of the uploaded file (for "upload"). */
+  mimeType?: string;
+  /** File size in bytes (for "upload"). */
+  sizeBytes?: number;
+  /** External URL (for "link", e.g. a YouTube link). */
+  linkUrl?: string;
+  /** Who may view the document bytes. File uploads are ARBITER_ONLY (only the
+   *  arbiter may download); text/link stay SHARED. */
+  visibility?: "SHARED" | "ARBITER_ONLY";
 }
 const EVIDENCE_IMMUTABLE = [
   "caseRef", "payoutRef", "submittedBy", "type", "title", "fileOrText", "sha256", "submittedAt",
+  "source", "objectKey", "filename", "mimeType", "sizeBytes", "linkUrl", "visibility",
 ];
 const evidenceSchema = new Schema<EvidenceDoc>(
   {
@@ -161,6 +206,13 @@ const evidenceSchema = new Schema<EvidenceDoc>(
     submittedAt: String,
     showOnlyAfterReply: { type: Boolean, default: false },
     kind: { type: String, default: "doc" },
+    source: { type: String, default: "text" },
+    objectKey: { type: String, default: null },
+    filename: { type: String, default: null },
+    mimeType: { type: String, default: null },
+    sizeBytes: { type: Number, default: 0 },
+    linkUrl: { type: String, default: null },
+    visibility: { type: String, default: "SHARED" },
   },
   { collection: "evidence" },
 );
@@ -433,6 +485,44 @@ const addressBookEntrySchema = new Schema<AddressBookEntryDoc>(
 );
 addressBookEntrySchema.index({ ownerUserId: 1, side: 1 });
 
+/* -------------------------------------------------------------------------- */
+/* Evidence annotation — an agent's summary stamped ON an evidence item (FIN-130). */
+/* The summary is keyed to the source sha256 (P7 stamped-or-silent): if the
+   underlying document changes, a new annotation is written, never an edit.
+   Mirrors the EvidenceAnnotation Zod schema in @finne/domain (schemas.ts:411). */
+/* -------------------------------------------------------------------------- */
+export interface EvidenceAnnotationDoc {
+  annotationId: string;
+  evidenceId: string; // the evidence item this summarizes (case evidence or workorder doc)
+  /** "case:<caseNumber>:<evidenceId>" or "workorder:<paymentId>:<documentId>". */
+  ownerRef: string;
+  sourceSha256: string; // the hash of the document the agent read — the stamp (P7)
+  summary: string;
+  readerType: "pdf" | "link" | "text" | "video";
+  modelDigest: string; // { model, id, digest } serialized
+  degraded: boolean; // true when the model was offline and no summary was produced
+  generatedAt: string;
+}
+const EVIDENCE_ANNOTATION_IMMUTABLE = [
+  "annotationId", "evidenceId", "ownerRef", "sourceSha256", "summary", "readerType",
+  "modelDigest", "degraded", "generatedAt",
+];
+const evidenceAnnotationSchema = new Schema<EvidenceAnnotationDoc>(
+  {
+    annotationId: { type: String, required: true, unique: true, index: true },
+    evidenceId: { type: String, required: true, index: true },
+    ownerRef: { type: String, required: true, index: true },
+    sourceSha256: { type: String, default: "" }, // "" for links (no content hash); the document sha otherwise
+    summary: { type: String, required: true },
+    readerType: { type: String, required: true, enum: ["pdf", "link", "text", "video"] },
+    modelDigest: { type: String, required: true },
+    degraded: { type: Boolean, default: false },
+    generatedAt: { type: String, required: true },
+  },
+  { collection: "evidence_annotations" },
+);
+appendOnly(evidenceAnnotationSchema, "EvidenceAnnotation", EVIDENCE_ANNOTATION_IMMUTABLE);
+
 /* ---- model registry (guard against re-registration across hot reloads / test imports) ---- */
 function register<T>(name: string, schema: Schema<T>): Model<T> {
   return (mongoose.models[name] as Model<T>) || mongoose.model<T>(name, schema);
@@ -452,3 +542,4 @@ export const Meta = register<MetaDoc>("Meta", metaSchema);
 export const User = register<UserDoc>("User", userSchema);
 export const Notification = register<NotificationDoc>("Notification", notificationSchema);
 export const AddressBookEntry = register<AddressBookEntryDoc>("AddressBookEntry", addressBookEntrySchema);
+export const EvidenceAnnotation = register<EvidenceAnnotationDoc>("EvidenceAnnotation", evidenceAnnotationSchema);

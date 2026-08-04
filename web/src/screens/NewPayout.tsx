@@ -66,6 +66,9 @@ export function NewPayout({ actions, apiData }: { actions: FinneActions; apiData
   const [settleImmediately, setSettleImmediately] = useState(false);
   const [status, setStatus] = useState<{ kind: "working" | "ok" | "err"; text: string } | null>(null);
   const [paying, setPaying] = useState(false);
+  // Payment-time contracts: collected as files here, uploaded to S3 AFTER the
+  // on-chain pay() confirms (the WorkOrder they attach to only exists then).
+  const [pendingContracts, setPendingContracts] = useState<File[]>([]);
 
   const numericAmount = Number(amount);
   const hasChain = !!rpAddress && rpAddress !== "0x0000000000000000000000000000000000000000";
@@ -111,16 +114,40 @@ export function NewPayout({ actions, apiData }: { actions: FinneActions; apiData
       if (id) {
         // Fire-and-forget: don't block the UI on metadata saving. If it fails,
         // the payout still exists on chain; the user can re-add details later.
+        // After metadata lands, upload the payment-time contracts to S3.
         (async () => {
+          let saved = false;
           for (let attempt = 0; attempt < 8; attempt++) {
             try {
               await api.savePayoutMetadata(id, { description: desc || undefined, deliverables: deliv, settleImmediately });
-              return; // saved
+              saved = true;
+              break; // saved
             } catch (err) {
               if (err instanceof ApiError && err.status === 404) {
                 await new Promise((r) => setTimeout(r, 1000)); // indexer hasn't caught up
               } else {
-                return; // real error — give up silently (payout is safe on chain)
+                break; // real error — give up silently (payout is safe on chain)
+              }
+            }
+          }
+          // Upload payment-time contracts now that the work order exists.
+          if (saved && pendingContracts.length > 0) {
+            for (const file of pendingContracts) {
+              try {
+                const allocation = await api.allocateWorkOrderDocument(id, {
+                  filename: file.name,
+                  mimeType: file.type || "application/octet-stream",
+                  declaredSizeBytes: file.size,
+                });
+                const putRes = await fetch(allocation.uploadUrl, {
+                  method: "PUT",
+                  headers: allocation.headers,
+                  body: file,
+                });
+                if (!putRes.ok) continue;
+                await api.completeWorkOrderDocument(id, allocation.uploadId, { filename: file.name });
+              } catch {
+                /* best-effort — the contract is optional; the payout is safe */
               }
             }
           }
@@ -236,6 +263,37 @@ export function NewPayout({ actions, apiData }: { actions: FinneActions; apiData
             </div>
           ))}
           <a onClick={addDeliverable} style={{ cursor: "pointer", fontSize: 13, fontWeight: 600, alignSelf: "flex-start" }}>+ Add a deliverable</a>
+        </div>
+
+        {/* contracts & documents — payment-time attachments, stored in S3,
+            arbiter-only. Collected here, uploaded after pay() confirms. */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <label style={{ fontSize: 13, fontWeight: 600 }}>Contracts & documents</label>
+          <div style={{ fontSize: 12.5, color: "var(--color-fg-subtle)", lineHeight: 1.5 }}>
+            Attach the contract, brief, or spec for this work. Stored securely; only the arbiter can view these if a dispute opens. The agents read them to summarize the terms.
+          </div>
+          <input
+            type="file"
+            accept=".pdf,.md,.markdown,.txt,.text,.json,.csv,.yaml,.yml,.mp4,.mov,.webm,.avi"
+            multiple
+            onChange={(e) => {
+              const files = Array.from(e.target.files ?? []);
+              setPendingContracts((prev) => [...prev, ...files]);
+              if (e.target) e.target.value = "";
+            }}
+            style={{ fontSize: 13, color: "var(--color-fg-muted)" }}
+          />
+          {pendingContracts.length > 0 && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {pendingContracts.map((f, i) => (
+                <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 13, border: "1px solid var(--color-border)", borderRadius: "var(--radius-md)", padding: "8px 12px", background: "var(--color-surface-2)" }}>
+                  <span style={{ flex: 1 }}>{f.name} <span style={{ color: "var(--color-fg-subtle)", fontSize: 11 }}>({(f.size / 1024).toFixed(1)} KB)</span></span>
+                  <a onClick={() => setPendingContracts((prev) => prev.filter((_, idx) => idx !== i))} title="Remove" style={{ cursor: "pointer", color: "var(--risk-600)", fontSize: 16 }}>×</a>
+                </div>
+              ))}
+              <div style={{ fontSize: 11, color: "var(--color-fg-subtle)" }}>Uploaded after the payment confirms on Arc.</div>
+            </div>
+          )}
         </div>
 
         {/* settle immediately */}

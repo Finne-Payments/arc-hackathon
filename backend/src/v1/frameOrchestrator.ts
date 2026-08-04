@@ -102,7 +102,16 @@ async function buildFrameInputFromShared(caseNumber: string, shared: SharedCaseB
   const workOrder = shared.workOrder as WorkOrderDoc | null;
   const caseDoc = shared.case as { allegationFreeText?: string; allegationClaimType?: string; allegationAmountContested?: string; openedAt?: string };
   const responses = shared.responses as { text?: string }[];
-  const evidence = shared.evidence as { submittedBy?: string }[];
+  const evidence = shared.evidence as {
+    _id?: string;
+    caseRef?: string | null;
+    submittedBy?: string;
+    title?: string;
+    source?: string;
+    filename?: string;
+    linkUrl?: string;
+    mimeType?: string;
+  }[];
 
   const clauses = await loadClauseParameters();
   const amountContested = caseDoc?.allegationAmountContested ?? payout?.amount ?? "0";
@@ -112,6 +121,27 @@ async function buildFrameInputFromShared(caseNumber: string, shared: SharedCaseB
     workOrder?.deliverables?.length
       ? workOrder.deliverables.map((d) => ({ name: d.name, due: d.due, acceptanceCriteria: d.acceptanceCriteria }))
       : [{ name: "Contested deliverable", due: caseDoc?.openedAt ?? new Date().toISOString(), acceptanceCriteria: "" }];
+
+  // --- Document summaries: look up agent annotations for this case's evidence +
+  // the work order's contract documents. These let the model reason over the
+  // actual contract / PDF content rather than just an evidence count. ---
+  let evidenceAnnotationMap = new Map<string, string>();
+  let contractAnnotationMap = new Map<string, string>();
+  try {
+    const { EvidenceAnnotation } = await import("../models/index.ts");
+    const evAnns = await EvidenceAnnotation.find({
+      ownerRef: { $regex: `^case:${caseNumber}:` },
+    }).lean();
+    for (const a of evAnns) evidenceAnnotationMap.set(a.evidenceId, (a as { summary?: string }).summary ?? "");
+    if (workOrder?.paymentId) {
+      const docAnns = await EvidenceAnnotation.find({
+        ownerRef: { $regex: `^workorder:${workOrder.paymentId}:` },
+      }).lean();
+      for (const a of docAnns) contractAnnotationMap.set(a.evidenceId, (a as { summary?: string }).summary ?? "");
+    }
+  } catch {
+    /* annotations unavailable — fall through to the count-only view */
+  }
 
   const checkInput = {
     payment: {
@@ -145,6 +175,26 @@ async function buildFrameInputFromShared(caseNumber: string, shared: SharedCaseB
   // Sourced caseContext: a plain-language summary of the real facts on file.
   const deliverableLines = deliverables.map((d) => `- ${d.name}${d.due ? ` (due ${d.due})` : ""}${d.acceptanceCriteria ? `; acceptance: ${d.acceptanceCriteria}` : ""}`).join("\n");
   const responseLines = responses.map((r) => r.text).filter(Boolean).join("\n");
+
+  // Per-evidence summaries (or the title/type when no annotation exists yet).
+  const evidenceLines = evidence.map((e) => {
+    const id = e._id ?? "";
+    const summary = evidenceAnnotationMap.get(String(id));
+    const side = e.submittedBy === "recipient" ? "customer" : "merchant";
+    if (summary) return `- "${e.title ?? "(untitled)"}" (submitted by ${side}; source: agent summary of ${e.source ?? "evidence"}):\n  ${summary}`;
+    if (e.source === "link" && e.linkUrl) return `- "${e.title}" — video link: ${e.linkUrl} (submitted by ${side}; source: evidence)`;
+    if (e.source === "upload") return `- "${e.title}" (${e.filename ?? "file"}, ${e.mimeType ?? "?"}; submitted by ${side}; source: evidence — document on file, summary pending)`;
+    return `- "${e.title ?? "(untitled)"}" (submitted by ${side}; source: evidence)`;
+  });
+
+  // Work-order contract documents + their summaries.
+  const contractDocs = workOrder?.documents ?? [];
+  const contractLines = contractDocs.map((d) => {
+    const summary = contractAnnotationMap.get(d.documentId);
+    if (summary) return `- "${d.filename}" (${d.mimeType}; source: agent summary of payment contract):\n  ${summary}`;
+    return `- "${d.filename}" (${d.mimeType}, ${d.sizeBytes} bytes; source: payment contract — document on file, summary pending)`;
+  });
+
   const caseContext = [
     "CASE CONTEXT (each fact labelled with its source)",
     "",
@@ -155,7 +205,8 @@ async function buildFrameInputFromShared(caseNumber: string, shared: SharedCaseB
     "DELIVERABLES (source: " + (workOrder ? "work order" : "placeholder") + ")",
     deliverableLines,
     responseLines ? `RECIPIENT REPLY (source: response)\n${responseLines}` : "RECIPIENT REPLY: none on file.",
-    evidence.length ? `EVIDENCE ON FILE: ${evidence.length} item(s).` : "EVIDENCE: none on file.",
+    contractDocs.length > 0 ? `PAYMENT CONTRACTS / DOCUMENTS (${contractDocs.length} on file)\n${contractLines.join("\n")}` : "PAYMENT CONTRACTS: none on file.",
+    evidence.length > 0 ? `EVIDENCE ON FILE (${evidence.length} item(s))\n${evidenceLines.join("\n")}` : "EVIDENCE: none on file.",
   ].join("\n");
 
   return {

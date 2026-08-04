@@ -17,6 +17,7 @@ import { authRoutes } from "./routes/auth.ts";
 import { notificationRoutes } from "./routes/notifications.ts";
 import { addressBookRoutes } from "./routes/addressBook.ts";
 import { walletRoutes } from "./routes/wallet.ts";
+import { localUploadRoutes } from "./integrations/storage/localUploadRoutes.ts";
 
 /** Mount Swagger UI at /api-docs. Gracefully skips if the packages aren't installed. */
 async function setupSwagger(app: express.Application): Promise<void> {
@@ -54,6 +55,12 @@ export function createApp(): express.Application {
     }
     next();
   });
+
+  // Local-dev upload/download receivers (raw-body routes for LocalEvidenceStore).
+  // MUST be mounted BEFORE express.json so the raw binary PUT body is read as a
+  // stream, not parsed as JSON. In prod the S3 store replaces these with real
+  // presigned URLs, so the routes are never hit. See localUploadRoutes.ts.
+  app.use(localUploadRoutes);
 
   app.use(express.json({ limit: "4mb" })); // PRD §11 — 4 MB body limit
   app.use(resolveSession);

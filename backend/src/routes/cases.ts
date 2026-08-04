@@ -7,7 +7,14 @@ import {
   requestInfo,
   recordDecision,
 } from "../services.ts";
-import { Case } from "../models/index.ts";
+import {
+  attachEvidenceDocument,
+  attachEvidenceLink,
+  resolveEvidenceObjectKey,
+} from "../services/documents.ts";
+import { Case, EvidenceAnnotation } from "../models/index.ts";
+import { getEvidenceStore } from "../integrations/storage/localStore.ts";
+import { validateUploadDeclaration, sanitizeFilename } from "../integrations/storage/uploadPolicy.ts";
 import { scopeFor } from "../scope.ts";
 import type { DecisionOutcome } from "../statusVocabulary.ts";
 import { HttpError } from "../errors.ts";
@@ -144,6 +151,107 @@ caseRoutes.post("/cases/:id/evidence", requirePermission("case:add_evidence"), a
     }
     await attachEvidence(req.params.id, submittedBy, String(type ?? "message"), String(title), String(fileOrText));
     res.status(201).json({ caseNumber: req.params.id });
+  } catch (e) {
+    next(e);
+  }
+});
+
+/* ====================================================================== */
+/* Evidence documents — uploaded files (PDF/MD/TXT) stored in S3,         */
+/* arbiter-only. Two-step presigned upload: allocate → PUT → complete.    */
+/* ====================================================================== */
+
+// Allocate a presigned PUT URL for a case evidence file.
+caseRoutes.post("/cases/:id/evidence/uploads", requirePermission("case:add_evidence"), async (req, res, next) => {
+  try {
+    const { filename, mimeType, declaredSizeBytes } = req.body ?? {};
+    // Central validation: allowed mime/extension + size cap + filename presence.
+    const check = validateUploadDeclaration({
+      filename: String(filename ?? ""),
+      mimeType: String(mimeType ?? ""),
+      declaredSizeBytes: Number(declaredSizeBytes),
+    });
+    if (!check.ok) throw new HttpError(400, check.reason);
+    const store = getEvidenceStore();
+    const allocation = await store.allocateUpload({
+      scope: "case",
+      ownerId: req.params.id,
+      filename: sanitizeFilename(String(filename)),
+      mimeType: String(mimeType),
+      declaredSizeBytes: Number(declaredSizeBytes),
+    });
+    res.status(201).json(allocation);
+  } catch (e) {
+    next(e);
+  }
+});
+
+// Finalize an upload: verify the object, compute sha256, record evidence metadata.
+caseRoutes.post("/cases/:id/evidence/uploads/:uploadId/complete", requirePermission("case:add_evidence"), async (req, res, next) => {
+  try {
+    const { title, filename } = req.body ?? {};
+    if (!title?.trim()) throw new HttpError(400, "title is required.");
+    const role = currentRole(req);
+    const store = getEvidenceStore();
+    const stored = await store.finalizeUpload(req.params.uploadId);
+    const result = await attachEvidenceDocument({
+      caseNumber: req.params.id,
+      submittedByRole: role,
+      title: String(title),
+      stored: {
+        evidenceId: stored.evidenceId,
+        sha256: stored.sha256,
+        mimeType: stored.mimeType,
+        sizeBytes: stored.sizeBytes,
+        objectKey: stored.objectKey,
+        filename: sanitizeFilename(String(filename ?? "document")),
+      },
+    });
+    res.status(201).json({ evidenceId: result.evidenceId, sha256: stored.sha256, mimeType: stored.mimeType, sizeBytes: stored.sizeBytes });
+  } catch (e) {
+    next(e);
+  }
+});
+
+// Add a link (e.g. YouTube) as evidence — shared visibility.
+caseRoutes.post("/cases/:id/evidence/links", requirePermission("case:add_evidence"), async (req, res, next) => {
+  try {
+    const { title, linkUrl } = req.body ?? {};
+    if (!title?.trim() || !linkUrl?.trim()) {
+      throw new HttpError(400, "title and linkUrl are required.");
+    }
+    const role = currentRole(req);
+    const result = await attachEvidenceLink({
+      caseNumber: req.params.id,
+      submittedByRole: role,
+      title: String(title),
+      linkUrl: String(linkUrl),
+    });
+    res.status(201).json({ evidenceId: result.evidenceId });
+  } catch (e) {
+    next(e);
+  }
+});
+
+// Arbiter-only download: get a short-lived presigned GET URL for an evidence file.
+caseRoutes.get("/cases/:id/evidence/:evidenceId/download", requirePermission("evidence:download"), async (req, res, next) => {
+  try {
+    const objectKey = await resolveEvidenceObjectKey(req.params.id, req.params.evidenceId);
+    const store = getEvidenceStore();
+    const url = await store.getDownloadUrl(objectKey);
+    res.json(url);
+  } catch (e) {
+    next(e);
+  }
+});
+
+// Per-case agent document summaries (the arbiter sees these as cards).
+caseRoutes.get("/cases/:id/annotations", requirePermission("case:read"), async (req, res, next) => {
+  try {
+    const annotations = await EvidenceAnnotation.find({
+      ownerRef: { $regex: `^case:${req.params.id}:` },
+    }).sort({ generatedAt: 1 }).lean();
+    res.json({ annotations });
   } catch (e) {
     next(e);
   }

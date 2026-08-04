@@ -655,10 +655,30 @@ export async function getSharedCase(caseNumber: string): Promise<SharedCaseBody>
 
   return {
     payout,
-    workOrder,
+    workOrder: workOrder
+      ? {
+          ...workOrder,
+          // Strip the internal S3 object keys from work-order documents before
+          // they reach any client. Downloads go through the evidence:download
+          // endpoint, which resolves the key server-side (never trusts client
+          // input). The document metadata (filename, mime, size, sha) stays so
+          // everyone can see what's on file; only the storage path is hidden.
+          documents: ((workOrder as { documents?: unknown[] }).documents ?? []).map((d) => {
+            const doc = d as Record<string, unknown>;
+            const { objectKey: _omit, ...publicDoc } = doc;
+            return publicDoc;
+          }),
+        }
+      : workOrder,
     case: caseDoc,
     responses,
-    evidence: evidence.map((e) => ({ ...e, fileOrText: undefined, sha256: e.sha256 })), // fingerprints only (P3)
+    // Fingerprints only (P3). Also strip the internal objectKey — the storage
+    // path is never exposed to clients; downloads are issued per-request via the
+    // evidence:download endpoint after the arbiter-only RBAC check passes.
+    evidence: evidence.map((e) => {
+      const { objectKey: _omit, ...publicEv } = e as Record<string, unknown>;
+      return { ...publicEv, fileOrText: undefined, sha256: (e as { sha256?: string }).sha256 };
+    }),
     brief: briefs.length ? { latest: briefs[briefs.length - 1], versions: briefs.length } : null,
     decision,
   };
@@ -687,10 +707,23 @@ export async function getSharedReceipt(paymentId: string): Promise<SharedReceipt
   const evidence = await Evidence.find({ payoutRef: paymentId }).lean();
   return {
     payout,
-    workOrder,
+    workOrder: workOrder
+      ? {
+          ...workOrder,
+          // Strip internal object keys (same posture as getSharedCase).
+          documents: ((workOrder as { documents?: unknown[] }).documents ?? []).map((d) => {
+            const doc = d as Record<string, unknown>;
+            const { objectKey: _omit, ...publicDoc } = doc;
+            return publicDoc;
+          }),
+        }
+      : workOrder,
     case: caseDoc,
     decision,
-    evidence: evidence.map((e) => ({ ...e, fileOrText: undefined })),
+    evidence: evidence.map((e) => {
+      const { objectKey: _omit, ...publicEv } = e as Record<string, unknown>;
+      return { ...publicEv, fileOrText: undefined };
+    }),
   };
 }
 
