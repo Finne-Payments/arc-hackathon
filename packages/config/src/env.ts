@@ -144,7 +144,7 @@ export function loadConfig(opts: LoadOptions = {}): Config {
   // Parse CORS origins
   const corsOrigins = (env.CORS_ORIGINS ?? "http://localhost:5173")
     .split(",")
-    .map((s) => s.trim())
+    .map((s: string) => s.trim())
     .filter(Boolean);
 
   // Parse wallets from env

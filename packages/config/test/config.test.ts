@@ -3,7 +3,7 @@
    ========================================================================== */
 
 import { describe, it, expect, beforeEach } from "vitest";
-import { loadConfig, isPlaceholder, assertNoMoneyKeys, ConfigError, parseManifest, ARC_TESTNET_DEFAULTS } from "../src/index.ts";
+import { loadConfig, isPlaceholder, assertNoMoneyKeys, parseManifest, ARC_TESTNET_DEFAULTS } from "../src/index.ts";
 
 function makeEnv(overrides: Record<string, string | undefined> = {}): Record<string, string | undefined> {
   return {

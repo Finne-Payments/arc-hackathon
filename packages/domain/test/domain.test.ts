@@ -6,21 +6,21 @@
 import { describe, it, expect } from "vitest";
 import {
   // roles
-  type Role, type Permission, can, RBAC_MATRIX,
+  type Role, can, RBAC_MATRIX,
   // states
-  type PaymentState, type CaseState, type PaymentEvent, type CaseEvent,
+  type PaymentState, type CaseState, type PaymentEvent, type CaseEvent, type CorrectionState,
   applyPaymentEvent, applyCaseEvent, applyCorrectionEvent,
   legalPaymentEvents, legalCaseEvents,
-  PAYMENT_EDGES, CASE_EDGES, CORRECTION_EDGES,
+  PAYMENT_EDGES, CASE_EDGES,
   PAYMENT_STATES, CASE_STATES, CORRECTION_STATES,
-  outcomeRequiresCorrection, MAX_INFO_REQUESTS, TERMINAL_CASE_STATES,
+  TERMINAL_CASE_STATES,
   IllegalTransitionError,
   // ids
   generateId, isOpaqueId, caseDisplayNumber,
   // usdc
   toMicroUsdc, fromMicroUsdc, isChallengeWithinBounds, subUsdc,
   // schemas
-  microUsdcSchema, agentFactPackSchema, validateNoVerdictKeys,
+  microUsdcSchema, validateNoVerdictKeys,
   reasonSchema,
 } from "../src/index.ts";
 
@@ -120,7 +120,7 @@ describe("case state machine", () => {
 
 describe("correction state machine", () => {
   it("follows the verified path", () => {
-    let s = "DRAFT" as const;
+    let s: CorrectionState = "DRAFT";
     s = applyCorrectionEvent(s, "wallet_intent_created");
     expect(s).toBe("AWAITING_SIGNATURE");
     s = applyCorrectionEvent(s, "submitted");
@@ -130,7 +130,7 @@ describe("correction state machine", () => {
   });
 
   it("supports decline", () => {
-    let s = "AWAITING_SIGNATURE" as const;
+    let s: CorrectionState = "AWAITING_SIGNATURE";
     s = applyCorrectionEvent(s, "declined");
     expect(s).toBe("DECLINED");
   });

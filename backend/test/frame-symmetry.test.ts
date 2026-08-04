@@ -3,7 +3,6 @@ import { fillOutcomeRequirements } from "../src/agent/frame-templates.ts";
 import { computeUnresolved } from "../src/agent/frame-unresolved.ts";
 import { computeCitationDepth } from "../src/agent/frame-assembly.ts";
 import { runChecks, type CheckInput } from "../src/proof/checks.ts";
-import type { CheckResult } from "../src/proof/checks.ts";
 
 /* FIN-126 — symmetry snapshot test. The licence to show the frame at all.
 
