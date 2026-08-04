@@ -1,0 +1,191 @@
+name: Deploy
+
+# Gate AWS Pipeline (AWS-03). On push to main:
+#   1. Re-run the quality gates (typecheck, test, secret-scan, abi-quarantine).
+#   2. Build + push backend + web images to ECR (tagged :latest + :<sha>).
+#   3. Sync production secrets into AWS Secrets Manager (finne/app-secrets).
+#   4. `cdk deploy --all` — FinneStack + FinneModelStack.
+#   5. Force a new ECS deployment so tasks pick up the new image.
+#
+# PRs and pushes to other branches do NOT deploy (the ci.yml workflow gates them).
+# Secrets flow: GitHub Actions secrets → written to AWS Secrets Manager at deploy
+# time → ECS pulls them at task start. No secret ever appears in the CFN template.
+#
+# Required GitHub secrets (see infra/SECRETS.md):
+#   AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION
+#   MONGO_URL, SESSION_SECRET, INTERNAL_TOKEN
+#   CIRCLE_API_KEY, CIRCLE_ENTITY_SECRET, CIRCLE_WALLET_SET_ID
+#   REGISTRY_OPERATOR_PRIVATE_KEY
+
+on:
+  push:
+    branches: [main, develop]
+
+# Prevent concurrent deploys — only the latest push wins.
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+permissions:
+  id-token: write   # for OIDC if role-to-assume is configured
+  contents: read
+
+jobs:
+  # ── Quality gates (re-run on main; deploy depends on these passing) ────────
+  test:
+    name: Gates (test · typecheck · scan · quarantine)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - name: Typecheck
+        run: npm run typecheck --workspaces --if-present
+      - name: Test
+        run: npm run test --workspaces --if-present
+        env:
+          CACHE_DIR: ${{ github.workspace }}/.cache/mongodb-binaries
+
+  # Runs the open-source gitleaks binary directly (no paid action license).
+  # gitleaks/gitleaks-action@v2 now requires a GITLEAKS_LICENSE for org repos.
+  secret-scan:
+    name: Secret scan (gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install gitleaks
+        run: |
+          VERSION=v8.21.2
+          curl -sSL "https://github.com/gitleaks/gitleaks/releases/download/${VERSION}/gitleaks_${VERSION#v}_linux_x64.tar.gz" \
+            | sudo tar -xz -C /usr/local/bin gitleaks
+      - name: Scan for leaked secrets
+        run: gitleaks detect --source . --config .gitleaks.toml --no-banner --redact --verbose
+
+  abi-quarantine:
+    name: RP-03 — no RefundProtocol ABI in production
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check v1 routes don't import the quarantined ABI
+        run: |
+          if grep -r "RefundProtocol.json" backend/src/v1/ 2>/dev/null; then exit 1; fi
+          if grep -r "refundByArbiter" backend/src/v1/ 2>/dev/null; then exit 1; fi
+          echo "PASS: no RefundProtocol ABI in v1 production code."
+
+  # ── Build + push images to ECR ────────────────────────────────────────────
+  build-and-push:
+    name: Build & push to ECR
+    needs: [test, secret-scan, abi-quarantine]
+    runs-on: ubuntu-latest
+    outputs:
+      ecr-uri: ${{ steps.ecr.outputs.registry }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Login to ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build backend image
+        run: |
+          docker build -t ${{ steps.ecr.outputs.registry }}/finne:backend \
+            -t ${{ steps.ecr.outputs.registry }}/finne:backend-${{ github.sha }} \
+            -f backend/Dockerfile .
+
+      - name: Build web image
+        run: |
+          docker build -t ${{ steps.ecr.outputs.registry }}/finne:web \
+            -t ${{ steps.ecr.outputs.registry }}/finne:web-${{ github.sha }} \
+            -f web/Dockerfile .
+
+      - name: Push images
+        run: |
+          docker push --all-tags ${{ steps.ecr.outputs.registry }}/finne
+
+  # ── Deploy: sync secrets + cdk deploy + force new task ────────────────────
+  deploy:
+    name: CDK deploy (FinneStack + FinneModelStack)
+    needs: [build-and-push]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Sync production secrets into Secrets Manager
+        # Writes the app secrets as a JSON object to finne/app-secrets. The ECS
+        # task reads individual keys from this secret at start. Secrets never
+        # appear in the CloudFormation template — only the secret *reference*.
+        # `create-or-update` so the first run creates it, later runs update it.
+        run: |
+          SECRET_JSON=$(jq -n \
+            --arg mongo "$MONGO_URL" \
+            --arg session "$SESSION_SECRET" \
+            --arg internal "$INTERNAL_TOKEN" \
+            --arg circle_key "$CIRCLE_API_KEY" \
+            --arg circle_secret "$CIRCLE_ENTITY_SECRET" \
+            --arg circle_set "$CIRCLE_WALLET_SET_ID" \
+            --arg reg_key "$REGISTRY_OPERATOR_PRIVATE_KEY" \
+            '{MONGO_URL:$mongo, SESSION_SECRET:$session, INTERNAL_TOKEN:$internal, CIRCLE_API_KEY:$circle_key, CIRCLE_ENTITY_SECRET:$circle_secret, CIRCLE_WALLET_SET_ID:$circle_set, REGISTRY_OPERATOR_PRIVATE_KEY:$reg_key}')
+          aws secretsmanager create-secret --name finne/app-secrets \
+            --secret-string "$SECRET_JSON" 2>/dev/null \
+            || aws secretsmanager put-secret-value --secret-id finne/app-secrets \
+                 --secret-string "$SECRET_JSON"
+          echo "Secrets synced to finne/app-secrets."
+        env:
+          MONGO_URL: ${{ secrets.MONGO_URL }}
+          SESSION_SECRET: ${{ secrets.SESSION_SECRET }}
+          INTERNAL_TOKEN: ${{ secrets.INTERNAL_TOKEN }}
+          CIRCLE_API_KEY: ${{ secrets.CIRCLE_API_KEY }}
+          CIRCLE_ENTITY_SECRET: ${{ secrets.CIRCLE_ENTITY_SECRET }}
+          CIRCLE_WALLET_SET_ID: ${{ secrets.CIRCLE_WALLET_SET_ID }}
+          REGISTRY_OPERATOR_PRIVATE_KEY: ${{ secrets.REGISTRY_OPERATOR_PRIVATE_KEY }}
+
+      - name: Install CDK
+        working-directory: infra/cdk
+        run: npm ci
+
+      - name: CDK deploy (both stacks)
+        working-directory: infra/cdk
+        run: npx cdk deploy --require-approval never --all
+        env:
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+          AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+          # Optional: HF token for gated models (empty for open Apache-2.0 weights)
+          HF_HUB_TOKEN: ${{ secrets.HF_HUB_TOKEN }}
+
+      - name: Force new ECS deployment (pick up the fresh image)
+        # The image tag :latest is immutable; force a new deployment so ECS
+        # pulls the just-pushed image rather than reusing a cached digest.
+        run: |
+          CLUSTER=finne
+          aws ecs update-service --cluster $CLUSTER --service FinneStack-BackendService --force-new-deployment || true
+          aws ecs update-service --cluster $CLUSTER --service FinneStack-WebService --force-new-deployment || true
+          echo "Forced new deployment for backend + web services."
+
+      - name: Emit the app URL
+        run: |
+          ALB_URL=$(aws cloudformation describe-stacks --stack-name FinneStack \
+            --query 'Stacks[0].Outputs[?OutputKey==`AlbUrl`].OutputValue' --output text 2>/dev/null || echo "unknown")
+          echo "::notice::Finné deployed → $ALB_URL"
+          echo "### Deployed 🚀" >> $GITHUB_STEP_SUMMARY
+          echo "App URL: $ALB_URL" >> $GITHUB_STEP_SUMMARY

@@ -70,11 +70,11 @@ function toPublic(u: any): PublicUser {
  *             type: object
  *             required: [email, password, role]
  *             properties:
- *               email: { type: string, example: "dana@northbeam.com" }
+ *               email: { type: string, example: "dana@northstar.com" }
  *               password: { type: string, example: "password123" }
  *               role: { type: string, enum: [reviewer, recipient, platform_viewer] }
  *               displayName: { type: string, example: "Dana Whitfield" }
- *               platformKey: { type: string, example: "northbeam" }
+ *               platformKey: { type: string, example: "northstar" }
  *     responses:
  *       201: { description: Account created, returns JWT + user }
  *       409: { description: Email already exists }
@@ -96,7 +96,7 @@ authRoutes.post("/auth/register", async (req, res, next) => {
       passwordHash,
       role,
       displayName: displayName || email,
-      platformKey: platformKey || "northbeam",
+      platformKey: platformKey || "northstar",
       walletAddress: null,
     });
 
@@ -283,7 +283,7 @@ authRoutes.post("/auth/wallet", async (req, res, next) => {
         role: seatToBackendRole(desiredSeat),
         seat: desiredSeat,
         displayName: `Wallet ${addr.slice(0, 6)}…${addr.slice(-4)}`,
-        platformKey: "northbeam",
+        platformKey: "northstar",
         walletAddress: addr,
       });
     }

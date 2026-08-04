@@ -1,0 +1,22 @@
+# Gitleaks configuration for Finné.
+#
+# gitleaks scans the full git history for leaked credentials. This config
+# extends the built-in default rules and allowlists the files that *intentionally*
+# contain secret-shaped PLACEHOLDERS (templates + docs), never real values.
+
+[extend]
+# Inherit all of gitleaks' built-in rules (AWS, Stripe, GitHub, private keys, …)
+useDefault = true
+
+# ── Global allowlist ────────────────────────────────────────────────────────
+# These paths contain placeholder/template values only (USER:PASSWORD, blanks,
+# ${{ secrets.* }}). Real secrets live in gitignored .env / .env.deploy files,
+# which gitleaks never reaches (they are not in git history).
+[allowlist]
+description = "Template + example files that intentionally contain secret-shaped placeholders"
+paths = [
+  '''\.env\.example$''',
+  '''backend/\.env\.example$''',
+  '''contracts/\.env\.deploy\.example$''',
+  '''infra/SECRETS\.md$''',
+]

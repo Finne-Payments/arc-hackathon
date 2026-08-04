@@ -4,6 +4,8 @@ import type { ApiData } from "../useApi";
 import { BackLink, PrimaryButton, SecondaryButton, TechChip, SpinnerLabel } from "../components/primitives";
 import { shortHex } from "../mappers";
 import { sameAddress, uid, useAddressBook, type AddressEntry } from "../useAddressBook";
+import { api, ApiError } from "../api";
+import { approveAndPay, isUserRejection } from "../wallet";
 
 /* ============================================================================
    New protected payout — essentials + work-order metadata, fully on-chain.
@@ -89,7 +91,6 @@ export function NewPayout({ actions, apiData }: { actions: FinneActions; apiData
     setStatus({ kind: "working", text: phaseText.connecting });
     try {
       // ---- 1. The contract side acts FIRST. ----
-      const { approveAndPay } = await import("../wallet.ts");
       const amountBase = BigInt(Math.round(numericAmount * 1_000_000));
       const { paymentId } = await approveAndPay(
         rpAddress as `0x${string}`,
@@ -111,7 +112,6 @@ export function NewPayout({ actions, apiData }: { actions: FinneActions; apiData
         // Fire-and-forget: don't block the UI on metadata saving. If it fails,
         // the payout still exists on chain; the user can re-add details later.
         (async () => {
-          const { api, ApiError } = await import("../api.ts");
           for (let attempt = 0; attempt < 8; attempt++) {
             try {
               await api.savePayoutMetadata(id, { description: desc || undefined, deliverables: deliv, settleImmediately });
@@ -135,7 +135,6 @@ export function NewPayout({ actions, apiData }: { actions: FinneActions; apiData
       });
       setTimeout(() => (id ? actions.viewReceipt(id) : actions.go("ledger")), 800);
     } catch (e) {
-      const { isUserRejection } = await import("../wallet.ts");
       if (isUserRejection(e)) {
         setStatus({ kind: "err", text: "Transaction rejected in your wallet." });
       } else {

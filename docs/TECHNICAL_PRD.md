@@ -1,5 +1,18 @@
 # Finné — Technical Product Requirements Document
 
+> **⚠️ MVP positioning note.** This document specifies the full as-built system
+> at a fine grain. The **hackathon MVP is registrar and evidence
+> infrastructure** — see [`scope/mvp-scope.md`](scope/mvp-scope.md) for the
+> ten-step target loop and P0/P1/P2 exclusions, and
+> [`../mvp-progress.md`](mvp-progress.md) for component status. The escrow
+> execution, arbiter-refund, debt / clawback / future-payout recovery, and
+> tranche mechanics described below are **capabilities of Circle's Refund
+> Protocol (the rail Finné sits above), not current MVP product claims**. They
+> are preserved as the rail's documented behaviour and as the superseded product
+> narrative in [`../LEGACY_NARRATIVE.md`](LEGACY_NARRATIVE.md). Finné never holds
+> funds, never decides by machine, and never signs a transaction; its own
+> contract (C2) only anchors hashes.
+
 ## The Dispute resolution system for stablecoin payouts, on Circle's Refund Protocol
 
 ---
@@ -114,7 +127,7 @@ The seven in-scope items of PRD v1.1 §3.1, all built and verified on the local 
 4. **Human decision** — reviewer chooses one of four actions: approve refund, reject refund (release), request more information (max 2), or close with no action. Approval triggers a wallet signature from the arbiter address.
 5. **On-chain execution** — the signed transaction calls `refundByArbiter`. Rejection leaves funds to become withdrawable when the lockup ends.
 6. **Final receipt** — decision, decision-maker, reason, timestamp, evidence bundle hash, refund tx hash and final status appended to the permanent receipt; decision hash anchored in C2.
-7. **Post-escrow clawback (scenario B)** — lockup expired, recipient withdrawn: an approved refund draws the arbiter reserve, the contract records a debt against the recipient, and the next payout repays the reserve automatically at the recipient's next withdrawal. Native contract behaviour (`depositArbiterFunds`, debt registration inside `refundByArbiter`, `_settleDebt` on `withdraw`); zero contract changes. Promoted to core scope by D3.
+7. **Post-escrow debt path (scenario B) — rail capability, OUT of MVP product scope.** Lockup expired, recipient withdrawn: an approved refund draws the arbiter reserve, the contract records a debt against the recipient, and the next payout repays the reserve automatically at the recipient's next withdrawal. Native contract behaviour (`depositArbiterFunds`, debt registration inside `refundByArbiter`, `_settleDebt` on `withdraw`); zero contract changes. Historically "promoted to core scope by D3"; under the current MVP positioning this is a capability of the rail, not a Finné product claim (see `LEGACY_NARRATIVE.md` and ADR 0003).
 
 ### 5.2 Phase 1 — Arc testnet deployment (open, hackathon-critical)
 
@@ -174,7 +187,7 @@ Deliberate asymmetries worth noting: the reviewer **cannot** respond to a case (
 
 ### 6.3 Session model — demo grade, by decision D7
 
-Sessions are **seeded, header-selected identities**, not authentication: the `x-finne-session` header names one of four hardcoded sessions (`reviewer` → Dana Whitfield · Northbeam Studios; `recipient` → Maya Reyes; `platform` → Parkline Market; `agent` → Finné proof agent, not selectable in the UI). Unknown values are ignored (→ 401 at the permission guard). No tokens, no signatures, no expiry. All seeded sessions carry `wallet: null` — the arbiter wallet lives in the browser, never in configuration.
+Sessions are **seeded, header-selected identities**, not authentication: the `x-finne-session` header names one of four hardcoded sessions (`reviewer` → Dana Whitfield · Northstar Creators; `recipient` → Maya Santos; `platform` → Parkline Market; `agent` → Finné proof agent, not selectable in the UI). Unknown values are ignored (→ 401 at the permission guard). No tokens, no signatures, no expiry. All seeded sessions carry `wallet: null` — the arbiter wallet lives in the browser, never in configuration.
 
 D7 (2026-07-29): *"RBAC is an enterprise-shaped permission layer (roles, matrix, route guards) over seeded header-selected sessions; no login/IdP build for 9 Aug."* The enterprise shape is real — the matrix, guards and 401/403 semantics are production-form. The **swap point for the main deployment is exactly one function**: `resolveSession` in `backend/src/middleware.ts` maps the transport credential to a `SessionContext {sessionId, role, displayName}`; replacing header lookup with IdP-verified identity (OIDC/SAML) touches nothing downstream (§21.1).
 
@@ -378,7 +391,7 @@ mapping(bytes32 => bool)   public withdrawalHashes; // EIP-712 replay guard
 | `settleDebt(recipient)` | **Anyone** (permissionless) | Nets debt against the recipient's current escrow. Not called in the demo — `withdraw` settles first automatically, which is the cleaner story. |
 | `setLockupSeconds(recipient, s)` | Arbiter wallet | Per-recipient lockup, default zero, capped at 180 days. Must be set before the first `pay` or there is no escrow window. Applied at `pay()` time only — existing payments keep their `releaseTimestamp`. |
 
-**Whole-payment refunds and the tranche rule (D6).** `_executeRefund` transfers the **full** original payment amount (even if partially withdrawn — that is precisely what creates scenario-B debt); the contract has no partial refund. Finné therefore pays **one payment per deliverable**: the demo work order settles as three payments of 33.33 / 33.33 / 33.34 USDC (D5), so a dispute over one deliverable touches only that payment. Tranche isolation is proven by `test_trancheIsolation` (refunding tranche 3 leaves tranches 1–2 escrowed and unrefunded).
+**Whole-payment refunds and the tranche rule (D6).** `_executeRefund` transfers the **full** original payment amount (even if partially withdrawn — that is precisely what creates scenario-B debt); the contract has no partial refund. The contract therefore requires **one payment per deliverable** for per-deliverable disputes: the canonical demo work order settles as three payments of 100 USDC each (300 USDC total), so a dispute over one deliverable touches only that payment. Tranche isolation is proven by `test_trancheIsolation` (refunding tranche 3 leaves tranches 1–2 escrowed and unrefunded). *(The earlier 33.33 / 33.33 / 33.34 split is documented in `LEGACY_NARRATIVE.md`.)*
 
 **The debt-path subtlety (proven in `contracts/test/DebtPath.t.sol`).** After a reserve-covered refund, the recipient's next `withdraw` only succeeds if total escrow ≥ debt + the withdrawn payment; the shortfall lands on the tail payment. In the canonical sequence (200 reserve; pay 100 → withdraw → refund draws reserve, debt 100; pay 150 + 120; withdraw 150): debt clears to 0, reserve is made whole at 200, the recipient nets 250 withdrawn with 20 left in escrow — *"the shortfall carried by the tail payment."* Engineering teams integrating payout schedulers must model this: **debt settlement is silent and automatic at the contract layer**, and the recipient's visible balance impact arrives at their next withdrawal, not at refund time.
 
@@ -1118,7 +1131,7 @@ flowchart TB
 
 ### 18.3 Seeded demo world (FIN-39/65, D5)
 
-Frozen fixtures (`seed/src/fixtures.ts`, JH-owned content): Northbeam Studios ↔ Maya Reyes; work order "Three product videos — spring launch", 100 USDC, three deliverables (due 30 Jun / 7 Jul / 12 Jul); videos 1–2 delivered with evidence, video 3 not; claim `work_not_delivered_in_full` contesting 33.34; Maya's expired-transfer-link reply; Dana's model written reason. Scenario A = dispute under review (or `withReply:false` → awaiting reply, for the live beat); Scenario B = lockup expired + withdrawn before the claim → reserve-covered refund + debt + repayment strip. Seeding is idempotent one-command, preserves the indexer heartbeat, and returns the contested `caseId`/`paymentIds` for UI focus.
+Frozen fixtures (`seed/src/fixtures.ts`, JH-owned content): Northstar Creators ↔ Maya Santos; work order "Three product videos — spring launch", 300 USDC (three deliverables at 100 USDC each, due 30 Jun / 7 Jul / 12 Jul); videos 1–2 delivered with evidence, video 3 not; claim `work_not_delivered_in_full` contesting 100 USDC; Maya's expired-transfer-link reply; Dana's model written reason. Scenario A = dispute under review (or `withReply:false` → awaiting reply, for the live beat); Scenario B = lockup expired + withdrawn before the claim → reserve-covered refund + debt + repayment strip (a rail capability — see `LEGACY_NARRATIVE.md`). Seeding is idempotent one-command, preserves the indexer heartbeat, and returns the contested `caseId`/`paymentIds` for UI focus.
 
 ### 18.4 Toolchain pins (build-breaking if loosened — see memory of failures)
 

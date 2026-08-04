@@ -1,47 +1,58 @@
-# Finné backend — Node/tsx app (Express API + indexer + anchor worker).
+# Finné backend Dockerfile — prod-hardened (multi-stage, non-root).
+# Build context is the repo root (so workspace packages resolve).
 #
-# The app runs TypeScript directly via tsx (no separate build/compile step;
-# see backend/package.json "start"). Source uses .ts import extensions, which
-# tsx resolves at runtime. MongoDB is reached over MONGO_URL (Atlas in the
-# demo) — no database runs in this image.
-FROM node:20-bookworm-slim AS deps
+# Stage 1 (builder): install ALL deps (incl. dev for tsx), copy source.
+# Stage 2 (runtime): slim image, prod deps + tsx, non-root user, no npx.
+# Runs the Express API + indexer + scheduler + agent worker via tsx.
+
+# ── Stage 1: builder ──────────────────────────────────────────────────────
+FROM node:22-slim AS builder
 
 WORKDIR /app
 
-# Install all deps (including dev — tsx/typescript needed at runtime since the
-# app runs TypeScript directly via tsx, no separate build step).
-# package-lock.json is committed, so `npm ci` is reproducible.
+# Copy workspace root files + all workspace packages
 COPY package.json package-lock.json ./
-RUN npm ci
+COPY packages/ ./packages/
+COPY backend/package.json backend/tsconfig.json ./backend/
 
-# ---- runtime stage ----
-FROM node:20-bookworm-slim AS runtime
+# Install ALL dependencies (devDeps needed for the tsx runtime + build tools)
+RUN npm install
 
-# tini: proper PID 1 / signal handling so Ctrl-C and SIGTERM shut the app down
-# cleanly (the indexer + anchor worker run in-process and should drain).
-RUN apt-get update \
- && apt-get install -y --no-install-recommends tini \
- && rm -rf /var/lib/apt/lists/*
+WORKDIR /app/backend
+
+# Copy backend source
+COPY backend/src ./src
+
+# ── Stage 2: runtime ──────────────────────────────────────────────────────
+FROM node:22-slim AS runtime
+
+# Install curl for the healthcheck (slim image doesn't ship it).
+RUN apt-get update && apt-get install -y --no-install-recommends curl \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Bring in the installed node_modules from the deps stage, then the app source.
-COPY --from=deps /app/node_modules ./node_modules
+# Copy workspace root + packages (source-consumed; no build step)
 COPY package.json package-lock.json ./
-COPY src ./src
-COPY tsconfig.json ./
+COPY packages/ ./packages/
+COPY backend/package.json backend/tsconfig.json ./backend/
 
-# Run as a non-root user. The backend holds one secret (REGISTRY_OPERATOR_PRIVATE_KEY)
-# at runtime; least-privilege is the default.
-RUN groupadd --system finne && useradd --system --gid finne --create-home finne \
- && chown -R finne:finne /app
-USER finne
+# Install prod deps only, plus tsx (the runtime TS loader — a devDependency in
+# package.json, so installed explicitly here to avoid shipping the full dev tree).
+RUN npm install --omit=dev && npm install tsx@^4
 
-ENV NODE_ENV=production
+WORKDIR /app/backend
+
+# Copy backend source from the builder stage
+COPY --from=builder /app/backend/src ./src
+
+# Drop to the non-root node user (ships with node:22-slim, uid 1000)
+USER node
+
 EXPOSE 4000
 
-# `npm start` = node --env-file=.env --import tsx/esm src/server.ts.
-# In Docker the env comes from compose's env_file, not a .env on disk, so we
-# run tsx directly without --env-file. NODE_OPTIONS lets tsx load via its loader.
-ENTRYPOINT ["/usr/bin/tini", "--"]
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 --start-period=15s \
+    CMD curl -f http://localhost:4000/health/live || exit 1
+
+# Direct tsx invocation (no npx resolution at runtime)
 CMD ["node", "--import", "tsx/esm", "src/server.ts"]

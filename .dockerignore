@@ -1,0 +1,52 @@
+# Finné — root .dockerignore (applies to both backend + web Docker builds).
+# Keeps secrets out of images and speeds up builds by excluding irrelevant files.
+
+# Secrets — NEVER in the image
+.env
+.env.*
+!.env.example
+contracts/.env.deploy
+
+# Dependencies (rebuilt in the image)
+**/node_modules
+
+# Build artifacts
+backend/dist
+web/dist
+**/coverage
+
+# Git + IDE
+.git
+.gitignore
+.gitmodules
+.vscode
+.idea
+.zcode
+
+# Docs + contracts (not needed in runtime images)
+docs/
+project/
+*.md
+!packages/*/README.md
+
+# Contract source + Foundry artifacts (not needed in Node images)
+contracts/
+research/
+
+# Docker
+docker-compose.yml
+
+# Do NOT exclude Dockerfiles — they're needed for the build
+
+# CDK + infra (prevents recursive asset copy)
+infra/
+cdk.out/
+**/cdk.out/
+
+# Model runtime (has its own Dockerfile + build context; not needed in Node images)
+model/
+
+# Agent skills (not needed in images, causes path-length issues)
+.agents/
+.zcode/
+project/

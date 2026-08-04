@@ -22,13 +22,13 @@ const ROLE_CARDS: Record<RoleKey, { name: string; title: string; desc: string; c
     color: "var(--brand-500)",
   },
   merchant: {
-    name: "Northbeam",
+    name: "Northstar",
     title: "Merchant",
     desc: "Creates payouts, opens disputes",
     color: "var(--warn-500)",
   },
   customer: {
-    name: "Maya Reyes",
+    name: "Maya Santos",
     title: "Customer",
     desc: "Receives payouts, withdraws",
     color: "var(--ok-500)",

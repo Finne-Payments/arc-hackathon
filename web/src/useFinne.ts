@@ -12,6 +12,8 @@ import type {
   WalletSim,
 } from "./types";
 import { ROLE_ALLOWED, ROLE_HOME } from "./domain/access";
+import { api } from "./api";
+import { signRefund, isUserRejection } from "./wallet";
 
 /**
  * useFinne is the single source of truth for the prototype.
@@ -215,9 +217,9 @@ export function useFinne(initialRole: Role = "arbiter") {
 
     const previews: Record<string, string> = {
       approve:
-        "33 USDC reverts from escrow to Northbeam’s refund address, fixed when the payment was made; the remaining 67 USDC stays protected for Maya until 13 August. If the money had already been withdrawn, the refund draws on the arbiter reserve and is clawed back from Maya’s future payouts.",
+        "The contested 100 USDC returns to Northstar’s refund address, fixed when the payment was made; the remaining 200 USDC stays protected for Maya. Your written reasons are recorded and shown to both sides.",
       reject:
-        "The payout stands; Maya can withdraw the full 100 USDC when the protection window ends on 13 August. Your reasons are shown to both sides.",
+        "The payout stands; Maya can withdraw the full 300 USDC when the protection window ends. Your reasons are shown to both sides.",
       close:
         "The dispute ends with no refund. The payout continues on its original schedule and the case record is locked.",
     };
@@ -234,7 +236,7 @@ export function useFinne(initialRole: Role = "arbiter") {
     const reqSent = reqLog.length > 0;
     const lastReq = reqLog[reqLog.length - 1];
     const nameFor = (t: InfoTarget) =>
-      t === "merchant" ? "the merchant (Northbeam Studios)" : "the customer (Maya Reyes)";
+      t === "merchant" ? "the merchant (Northstar Creators)" : "the customer (Maya Santos)";
     const reqSentLabel = !reqSent
       ? ""
       : reqLog.length === 1
@@ -330,7 +332,6 @@ export function useFinne(initialRole: Role = "arbiter") {
         const caseNumber = state.selectedCaseId ?? "";
         if (!caseNumber) return;
         try {
-          const { api } = await import("./api.ts");
           await api.requestInfo(caseNumber, { target: backendTarget as "platform" | "recipient", text: t });
           setState((s) => ({
             ...s,
@@ -367,7 +368,6 @@ export function useFinne(initialRole: Role = "arbiter") {
         const caseNumber = state.selectedCaseId ?? "";
         if (!caseNumber) return;
         try {
-          const { api } = await import("./api.ts");
           await api.addEvidence(caseNumber, {
             type: "message",
             title: t.slice(0, 80),
@@ -390,7 +390,6 @@ export function useFinne(initialRole: Role = "arbiter") {
         if (!caseNumber) return;
         patch({ replySending: true });
         try {
-          const { api } = await import("./api.ts");
           await api.respond(caseNumber, { text: t });
           setState((s) => ({ ...s, replyText: "", replySending: false, caseStage: "under_review", caseVersion: s.caseVersion + 1 }));
         } catch {
@@ -456,7 +455,6 @@ export function useFinne(initialRole: Role = "arbiter") {
        * calls this after receiving the unsigned tx from the API.
        */
       signRefundWithWallet: async (unsignedTx: { to: string; abi: unknown[]; functionName: string; args: (string | number)[] }) => {
-        const { signRefund, isUserRejection } = await import("./wallet.ts");
         try {
           patch({ decPhase: "awaiting" });
           const txHash = await signRefund(unsignedTx as never);

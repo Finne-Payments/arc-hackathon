@@ -43,7 +43,7 @@ export interface LedgerView {
 }
 
 const RECIPIENT_LABEL: Record<string, string> = {
-  maya: "Maya Reyes",
+  maya: "Maya Santos",
   jonah: "Jonah Park",
   priya: "Priya Nair",
   tomas: "Tomás Rivera",
@@ -174,8 +174,8 @@ export function caseToListView(c: CaseRow, payout: PayoutRow | undefined): CaseL
       : c.infoRequestCount > 0 && stage !== "decided"
         ? "More information requested"
         : "Under review";
-  const merchant = payout ? platformName(payout.platformKey) : "Northbeam Studios";
-  const customer = payout ? RECIPIENT_LABEL[payout.recipientKey] ?? "Maya Reyes" : "Maya Reyes";
+  const merchant = payout ? platformName(payout.platformKey) : "Northstar Creators";
+  const customer = payout ? RECIPIENT_LABEL[payout.recipientKey] ?? "Maya Santos" : "Maya Santos";
   return {
     caseId: c.caseNumber,
     parties: `${merchant} ↔ ${customer}`,
@@ -216,8 +216,9 @@ export function evidenceToView(e: EvidenceRow): EvidenceView {
 
 export function platformName(key: string): string {
   switch (key) {
-    case "northbeam":
-      return "Northbeam Studios";
+    case "northstar":
+    case "northbeam": // legacy key — still resolves for older records
+      return "Northstar Creators";
     case "halcyon":
       return "Halcyon Press";
     case "copperline":
@@ -367,13 +368,13 @@ export function stageFromCase(c: SharedCase | null): CaseStage {
 export function roleBadge(role: Role): { label: string; dot: string } {
   switch (role) {
     case "arbiter":
-      return { label: "Arbiter · Dana Whitfield · Northbeam Studios", dot: "var(--brand-500)" };
+      return { label: "Arbiter · Dana Whitfield · Northstar Creators", dot: "var(--brand-500)" };
     case "merchant":
-      return { label: "Merchant · Northbeam Studios", dot: "var(--warn-500)" };
+      return { label: "Merchant · Northstar Creators", dot: "var(--warn-500)" };
     case "platform":
       return { label: "Platform · Parkline Market · view access", dot: "var(--brand-400)" };
     default:
-      return { label: "Customer · Maya Reyes", dot: "var(--ok-500)" };
+      return { label: "Customer · Maya Santos", dot: "var(--ok-500)" };
   }
 }
 

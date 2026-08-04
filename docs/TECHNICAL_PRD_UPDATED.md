@@ -1,5 +1,12 @@
 # Finné — Technical PRD (build-status deltas)
 
+> **⚠️ MVP positioning note.** This document records what was built. The
+> **hackathon MVP is registrar and evidence infrastructure** — see
+> [`scope/mvp-scope.md`](scope/mvp-scope.md) and
+> [`mvp-progress.md`](mvp-progress.md). Escrow execution, arbiter-refund, debt
+> and clawback are capabilities of the rail Finné sits above, not MVP product
+> claims (see [`LEGACY_NARRATIVE.md`](LEGACY_NARRATIVE.md)).
+
 **Companion to** `docs/TECHNICAL_PRD.md` (v2.0, 30 July 2026).
 **Date:** 31 July 2026 · **Pass 2:** real blockchain integration (contracts + indexer + anchor worker + wallet) + all hardcoded values eliminated.
 

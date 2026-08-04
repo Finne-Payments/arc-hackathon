@@ -1,9 +1,10 @@
 import { useState } from "react";
 import type { FinneActions, ViewModel } from "../useFinne";
 import type { ApiData } from "../useApi";
-import type { CaseRow } from "../api";
+import { api, type CaseRow } from "../api";
 import { Eyebrow, PrimaryButton, StatusPill, SpinnerLabel } from "../components/primitives";
 import { payoutToRecipientView, recipientStats } from "../mappers";
+import { connectWallet, signWithdraw, isUserRejection } from "../wallet";
 
 /**
  * Derive the recipient's *real* case stage from the open case (if any), so the
@@ -209,8 +210,6 @@ function Row({
     setWithdrawing(true);
     setWithdrawMsg("Opening your wallet…");
     try {
-      const { connectWallet, signWithdraw } = await import("../wallet.ts");
-      const { api } = await import("../api.ts");
       const cfg = await api.config();
       const rpAddr = cfg.refundProtocolAddress ?? "";
       if (!rpAddr) throw new Error("RefundProtocol address not configured.");
@@ -220,7 +219,6 @@ function Row({
       await signWithdraw(rpAddr, row.paymentId);
       setWithdrawMsg("Withdrawal confirmed — the indexer will update your balance.");
     } catch (e) {
-      const { isUserRejection } = await import("../wallet.ts");
       setWithdrawMsg(isUserRejection(e) ? "Withdrawal rejected in your wallet." : e instanceof Error ? e.message : "Withdrawal failed.");
     } finally {
       setWithdrawing(false);

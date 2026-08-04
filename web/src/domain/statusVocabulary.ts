@@ -1,12 +1,26 @@
 /* ============================================================================
-   Status vocabulary (PRD §10.3, GAP-W1). UI wording lives in exactly one module.
-   This is the web-side mirror of the backend's statusVocabulary — the single
-   source of truth for the words + dots the screens render. Until a real shared
-   @finne/domain workspace package exists, both apps import an identical copy;
-   the two MUST stay in lockstep (any change is made here and in the backend).
+   Status vocabulary — UI wording lives in exactly one shared module.
+   Now re-exports from the @finne/domain workspace package (FND-02). The legacy
+   escrow-model words below are a compatibility shim kept only until BE-02/UI-01
+   migrate the backend models and screens to the registrar vocabulary.
    ========================================================================== */
 
-/** Display word for each payment state. */
+// Shared constants — single source of truth in @finne/domain
+import { MAX_INFO_REQUESTS } from "@finne/domain";
+export { PAYMENT_WORDS, CASE_WORDS } from "@finne/domain";
+export { MAX_INFO_REQUESTS };
+
+/** The minimum length for a decision reason (DEC-01). Mirrors backend. */
+export const MIN_DECISION_REASON = 20;
+
+/* ============================================================================
+   Legacy escrow-model display words (compatibility shim).
+   These map the OLD payment/case states the current backend still emits
+   (ESCROWED, DEBT_OUTSTANDING, EXECUTED, …). They will be removed when UI-01
+   migrates the screens to the registrar vocabulary (OBSERVED/VERIFIED/…).
+   ========================================================================== */
+
+/** Legacy display word for each OLD payment state. @deprecated use PAYMENT_WORDS */
 export const PAYMENT_WORD: Record<string, string> = {
   ESCROWED: "Protected",
   DISPUTED: "Disputed",
@@ -28,9 +42,16 @@ export const PAYMENT_DOT: Record<string, "warn" | "brand" | "ok" | "risk" | "ink
   WITHDRAWN: "ink",
   DEBT_OUTSTANDING: "risk",
   DEBT_SETTLED: "ok",
+  // registrar-model states (forward-compat)
+  OBSERVED: "warn",
+  VERIFIED: "brand",
+  REJECTED: "risk",
+  PROOF_DRAFT: "warn",
+  ANCHORED: "ok",
+  UNDISPUTED: "ok",
 };
 
-/** Display word for each case state (EXECUTED deliberately maps to the money word). */
+/** Legacy display word for each OLD case state. @deprecated use CASE_WORDS */
 export const CASE_WORD: Record<string, string> = {
   OPEN: "Opened",
   AWAITING_RESPONSE: "Awaiting response",
@@ -40,16 +61,8 @@ export const CASE_WORD: Record<string, string> = {
   CLOSED: "Closed",
 };
 
-/** The PRD §11.2 minimum length for a decision reason. */
-export const MIN_DECISION_REASON = 20;
-/** The PRD §10.2 cap on information requests per case. */
-export const MAX_INFO_REQUESTS = 2;
-
 /* ============================================================================
    Claim-type vocabulary (mirrors backend claimVocabulary.ts — keep in lockstep).
-   allegationClaimType on a case is a free string; these are the recognised
-   dispute reasons, each mapped to a human-readable label for tags/pills.
-   Unknown codes fall back to the raw string.
    ========================================================================== */
 export const CLAIM_LABEL: Record<string, string> = {
   work_not_delivered_in_full: "Work not delivered in full",

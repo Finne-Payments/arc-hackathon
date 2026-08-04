@@ -73,7 +73,7 @@ caseRoutes.get("/cases/:id", requirePermission("case:read"), async (req, res, ne
 caseRoutes.post("/cases/:id/responses", requirePermission("case:respond"), async (req, res, next) => {
   try {
     const { text, evidence } = req.body ?? {};
-    await submitResponse(req.params.id, "recipient", "Maya Reyes", {
+    await submitResponse(req.params.id, "recipient", "Maya Santos", {
       text: String(text ?? ""),
       evidence: Array.isArray(evidence) ? evidence : [],
     });

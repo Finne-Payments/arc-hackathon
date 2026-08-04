@@ -1,0 +1,50 @@
+# Finné web — nginx config template.
+# The nginx:alpine entrypoint runs envsubst over this file, replacing
+# ${BACKEND_HOST} at container start. Defaults to "backend" (compose service
+# name); on ECS the CDK sets BACKEND_HOST to the ALB DNS name.
+#
+# Serves the SPA static files and proxies /api to the backend.
+
+server {
+    listen 80;
+    server_name _;
+    root /usr/share/nginx/html;
+    index index.html;
+
+    # SPA fallback — all routes serve index.html (React Router client-side routing)
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    # API proxy — /api/* and /v1/* go to the backend (container or ALB)
+    location /api/ {
+        proxy_pass http://${BACKEND_HOST}:4000/;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 60s;
+    }
+
+    location /v1/ {
+        proxy_pass http://${BACKEND_HOST}:4000/v1/;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 60s;
+    }
+
+    location /health/ {
+        proxy_pass http://${BACKEND_HOST}:4000/health/;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_read_timeout 10s;
+    }
+
+    # Gzip
+    gzip on;
+    gzip_types text/css application/javascript application/json;
+}
