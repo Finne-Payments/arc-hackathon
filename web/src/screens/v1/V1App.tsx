@@ -138,6 +138,7 @@ export function V1App() {
             caseId={selectedCaseId}
             challengedAmountMicroUsdc={data.activeCase.case.challengedAmountMicroUsdc}
             actions={actions}
+            data={data}
             onDone={() => { selectCase(selectedCaseId); }}
             onBack={() => setScreen("case")}
           />

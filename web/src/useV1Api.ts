@@ -37,6 +37,8 @@ export interface V1Actions {
   anchorReceipt: (paymentId: string) => Promise<boolean>;
   allocateEvidence: (caseId: string, filename: string, mime: string, size: number) => Promise<string | null>;
   completeEvidence: (uploadId: string, caseId: string, title: string) => Promise<boolean>;
+  /** Generate the verdict-free decision frame (Addendum A4). Degrade-safe. */
+  runFrame: (caseId: string) => Promise<boolean>;
 }
 
 const INITIAL: V1Data = {
@@ -122,6 +124,17 @@ export function useV1Api(): { data: V1Data; actions: V1Actions } {
     } catch { return false; }
   }, [loadCase, refresh]);
 
+  // Decision frame (PRD Addendum A4): assemble the verdict-free frame. The
+  // backend degrades safely when the model is unplugged (rung 1/2); the action
+  // still returns true so the panel re-renders with whatever frame exists.
+  const runFrame = useCallback(async (caseId: string) => {
+    try {
+      await v1api.runFrame(caseId, {}, idemKey("frame"));
+      await loadCase(caseId);
+      return true;
+    } catch { return false; }
+  }, [loadCase]);
+
   const createCorrection = useCallback(async (caseId: string) => {
     try {
       const result = await v1api.createCorrectionInstruction(caseId, idemKey("cor"));
@@ -195,6 +208,7 @@ export function useV1Api(): { data: V1Data; actions: V1Actions } {
       createCorrection, declineCorrection, verifyCorrection,
       importPayment, demoPayout, anchorReceipt,
       allocateEvidence, completeEvidence,
+      runFrame,
     },
   };
 }

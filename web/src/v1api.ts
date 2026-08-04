@@ -116,6 +116,48 @@ export interface V1Correction {
   expiresAt: string;
 }
 
+/* Agent layer — decision frame + policy clauses (PRD Addendum A / FIN-120, FIN-115).
+   The frame is verdict-free: questions (model-phrased) + requirements (templates)
+   + unresolved (computed). Provenance flag per line so model lines are marked. */
+export interface V1FrameQuestion {
+  text: string;
+  findingRefs: string[];
+  provenance: "template" | "computed" | "model";
+}
+export interface V1FrameRequirement {
+  outcome: "RECIPIENT_UPHELD" | "PLATFORM_UPHELD" | "PARTIAL_PLATFORM_UPHELD" | "DISMISSED_INSUFFICIENT_EVIDENCE";
+  templateId: string;
+  filledParams: Record<string, string>;
+  provenance: "template";
+}
+export interface V1FrameUnresolved {
+  kind: "unanswered_reply" | "uncountered_evidence" | "contested_amount_mismatch" | "absent_acceptance_criteria" | "missing_written_rejection";
+  refs: string[];
+  provenance: "computed";
+}
+export interface V1Frame {
+  frameId: string;
+  caseId: string;
+  questions: V1FrameQuestion[];
+  requirements: V1FrameRequirement[];
+  unresolved: V1FrameUnresolved[];
+  citationDepth: { platform: number; recipient: number };
+  modelDigest: { model: string; id: string; digest: string } | null;
+  generatedAt: string;
+  degradeLevel: number; // 0=full, 1=no questions, 2=no frame
+}
+export interface V1Clause {
+  clauseId: string;
+  packRef: string;
+  clauseNumber: number;
+  text: string;
+  parameters: { hours?: number; days?: number };
+  jurisdiction?: string;
+  author: string;
+  reviewRef: string;
+  version: number;
+}
+
 export interface V1CaseDetail {
   case: V1Case;
   payment: V1Payment | null;
@@ -124,6 +166,8 @@ export interface V1CaseDetail {
   decision: V1Decision | null;
   analyses: Array<{ analysisId: string; version: number; status: string; analysisHash: string }>;
   correction: V1Correction | null;
+  frame: V1Frame | null;
+  clauses: V1Clause[];
 }
 
 export interface V1Meta {
@@ -227,6 +271,27 @@ export const v1api = {
       body: JSON.stringify(body),
       idempotencyKey,
     }),
+
+  /* Decision frame (PRD Addendum A4) — verdict-free, degrade-safe */
+  getFrame: (caseId: string) =>
+    v1request<{ frame: V1Frame | null }>(`/v1/cases/${caseId}/frame`),
+  runFrame: (
+    caseId: string,
+    body: { deliverables?: unknown[]; deliveryTimestamps?: Record<string, string | null>; deliverableAmountsMicroUsdc?: string[]; caseContext?: string },
+    idempotencyKey: string,
+  ) =>
+    v1request<{ frameId: string; frame: V1Frame; narrative: string | null; degradeLevel: number }>(`/v1/cases/${caseId}/frame`, {
+      method: "POST",
+      body: JSON.stringify(body),
+      idempotencyKey,
+    }),
+  logFrameAction: (caseId: string, callId: string, action: string, idempotencyKey: string) =>
+    v1request<void>(`/v1/cases/${caseId}/frame/actions`, {
+      method: "POST",
+      body: JSON.stringify({ callId, action }),
+      idempotencyKey,
+    }),
+  getPolicyClauses: () => v1request<{ clauses: V1Clause[] }>(`/v1/policy-clauses`),
 
   /* Corrections */
   createCorrectionInstruction: (caseId: string, idempotencyKey: string) =>

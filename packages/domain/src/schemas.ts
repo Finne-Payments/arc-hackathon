@@ -240,9 +240,279 @@ export function validateNoVerdictKeys(obj: unknown, path = ""): void {
   }
 }
 
+/**
+ * Keys banned specifically on a DraftFrame (Addendum §H): the frame is
+ * "attention, not conclusion" (P6), so any ranking/score/confidence field is a
+ * defect even though it isn't a verdict per se. Used by validateDraftFrame().
+ *
+ * NOTE: the structural field names `outcome` and `decision` are deliberately
+ * EXCLUDED here. The Addendum §H DraftFrame spec requires `requirements[]
+ * (outcome, template id, filled params)`, and §E.1 states outcome-requirement
+ * lines are "safe to name outcomes" precisely because they are template-authored
+ * (provenance: "template", enforced by the schema). What is banned is the frame
+ * SCORING or RANKING outcomes, or declaring one correct — caught by the terms
+ * below plus the conclusion-language scan.
+ */
+const FORBIDDEN_FRAME_KEYS = [
+  ...FORBIDDEN_VERDICT_KEYS.filter((k) => k !== "outcome" && k !== "decision"),
+  "score",
+  "ranking",
+  "rank",
+  "confidence",
+  "weight",
+  "preference",
+  "winner",
+  "loser",
+  "stronger",
+  "weaker",
+  "favor",
+  "favour",
+];
+
+/**
+ * Validate a DraftFrame: run the schema, then recursively reject any verdict /
+ * score / confidence / ranking key or banned language. This is the licence to
+ * render the frame at all (FIN-126 symmetry test depends on this being strict).
+ *
+ * The scan runs against the RAW input (before zod strips unknown keys) so that
+ * smuggled banned keys are caught even if the schema would discard them.
+ */
+export function validateDraftFrame(obj: unknown): DraftFrame {
+  // 1. Scan the raw input FIRST — catches banned keys the model might smuggle
+  //    that zod would otherwise silently strip on .parse().
+  const scan = (node: unknown, p: string): void => {
+    if (node === null || typeof node !== "object") return;
+    if (Array.isArray(node)) {
+      node.forEach((item, i) => scan(item, `${p}[${i}]`));
+      return;
+    }
+    for (const [key, value] of Object.entries(node as Record<string, unknown>)) {
+      const lowerKey = key.toLowerCase();
+      if (FORBIDDEN_FRAME_KEYS.includes(lowerKey)) {
+        throw new Error(
+          `Forbidden frame key "${key}" at ${p || "root"}. The frame directs attention; it never scores, ranks, or marks an outcome correct (P6).`,
+        );
+      }
+      if (typeof value === "string") {
+        const lower = value.toLowerCase();
+        if (
+          lower.includes("i find in favor of") ||
+          lower.includes("the agent concludes that the recipient is liable") ||
+          lower.includes("the stronger case") ||
+          lower.includes("should be upheld") ||
+          lower.includes("the correct outcome is")
+        ) {
+          throw new Error(`Forbidden conclusion language in "${key}" at ${p || "root"}.`);
+        }
+      }
+      scan(value, p ? `${p}.${key}` : key);
+    }
+  };
+  scan(obj, "");
+  // 2. Then parse — structural validation + defaulting (provenance flags etc.).
+  return draftFrameSchema.parse(obj);
+}
+
 export type ReceiptEnvelope = z.infer<typeof receiptEnvelopeSchema>;
 export type ClaimEnvelope = z.infer<typeof claimEnvelopeSchema>;
 export type ResponseEnvelope = z.infer<typeof responseEnvelopeSchema>;
 export type DecisionEnvelope = z.infer<typeof decisionEnvelopeSchema>;
 export type CorrectionInstructionEnvelope = z.infer<typeof correctionInstructionEnvelopeSchema>;
 export type AgentFactPack = z.infer<typeof agentFactPackSchema>;
+
+/* -------------------------------------------------------------------------- */
+/* Agent layer records (PRD Addendum A §H / FIN-130)                           */
+/*                                                                            */
+/* Four typed records, defined now (including post-hackathon ones) so corpus  */
+/* logging is uniform from day one. Every model-touched record is run through */
+/* validateNoVerdictKeys() before render — the clerk prepares, never decides. */
+/* Banned fields per record are enforced by the validators below.             */
+/* -------------------------------------------------------------------------- */
+
+/** Model-digest stamp — provenance for any model-touched line (FIN-133). */
+const modelDigestSchema = z.object({
+  model: z.string(), // e.g. "gpt-oss-20b" — config only, never a model name in call sites
+  id: z.string(), // served-model id
+  digest: z.string(), // pinned digest (FIN-100)
+});
+
+/**
+ * DraftFrame (FIN-120, Addendum A4) — the verdict-free replacement for a draft
+ * verdict. Three parts: turning questions (model-phrased), outcome requirements
+ * (template-authored, no model), unresolved items (computed). Stored SEPARATE
+ * from the AgentBrief: briefs carry findings, frames live with the decider.
+ *
+ * BANNED: any verdict, score, confidence, or outcome-ranking field. Provenance
+ * is carried per-line so the post-filter (FIN-103) knows which lines it polices.
+ */
+export const draftFrameSchema = z.object({
+  schemaVersion: z.literal(1),
+  frameId: z.string(),
+  caseId: z.string(),
+  questions: z.array(
+    z.object({
+      text: z.string(),
+      findingRefs: z.array(z.string()),
+      provenance: z.enum(["template", "computed", "model"]).default("model"),
+    }),
+  ),
+  requirements: z.array(
+    z.object({
+      outcome: z.enum([
+        "RECIPIENT_UPHELD",
+        "PLATFORM_UPHELD",
+        "PARTIAL_PLATFORM_UPHELD",
+        "DISMISSED_INSUFFICIENT_EVIDENCE",
+      ]),
+      templateId: z.string(),
+      filledParams: z.record(z.string(), z.string()),
+      provenance: z.literal("template"), // outcome lines are template-authored by construction
+    }),
+  ),
+  unresolved: z.array(
+    z.object({
+      kind: z.enum([
+        "unanswered_reply",
+        "uncountered_evidence",
+        "contested_amount_mismatch",
+        "absent_acceptance_criteria",
+        "missing_written_rejection",
+      ]),
+      refs: z.array(z.string()),
+      provenance: z.literal("computed"),
+    }),
+  ),
+  /**
+   * Citation depth per party (FIN-126 symmetry). A count of distinct
+   * evidence/check references that support each side's POSITION, computed from
+   * the findings + unresolved items. The frame is generated blind to which
+   * outcome the findings favour (P6): this field is what the symmetry test
+   * asserts is balanced — both parties' material cited at equal depth.
+   *
+   * This is a STRUCTURAL count, not a score: it counts references, it never
+   * weighs them. Equal depth does NOT mean equal merit; it means the frame
+   * hasn't quietly enriched one side.
+   */
+  citationDepth: z.object({
+    platform: z.number().int().min(0),
+    recipient: z.number().int().min(0),
+  }),
+  modelDigest: modelDigestSchema.nullable(), // null when the frame degraded to templates-only
+  generatedAt: z.string().datetime(),
+  // FORBIDDEN — validateFrameNoVerdict() rejects verdict/score/confidence/ranking
+});
+
+/**
+ * EvidenceAnnotation (FIN-130, A2 post-hackathon) — a stamped summary written
+ * ON an existing EvidenceItem, never as a new fact. Schema defined now; no
+ * runtime in this build. BANNED: new facts without a source hash; references
+ * outside the evidence table.
+ */
+export const evidenceAnnotationSchema = z.object({
+  schemaVersion: z.literal(1),
+  annotationId: z.string(),
+  evidenceId: z.string(),
+  sourceSha256: sha256Schema, // the hash of the evidence it read — the stamp (P7)
+  summary: z.string(),
+  spansCited: z.array(z.string()), // byte/line spans within the source
+  readerType: z.enum(["pdf", "thread", "link", "image", "text"]),
+  modelDigest: modelDigestSchema,
+}).strict(); // FIN-130: reject unknown keys — an annotation may not smuggle new facts
+
+/**
+ * ProposedCase (FIN-130, A5 post-hackathon) — a person opens the case; the
+ * agent only proposes from patterns. Schema defined now; no runtime.
+ * BANNED: any auto-open flag or case-status field.
+ */
+export const proposedCaseSchema = z.object({
+  schemaVersion: z.literal(1),
+  proposalId: z.string(),
+  patternId: z.enum([
+    "unmatched_payment",
+    "repeat_clawback",
+    "clustered_drawdown",
+  ]),
+  eventsCited: z.array(z.string()),
+  receiptRefs: z.array(z.string()),
+  proposalText: z.string(),
+  // FORBIDDEN — no autoOpen, no status field (enforced by .strict() + validateProposedCase)
+}).strict();
+
+/**
+ * PolicyClause (FIN-110) — a clause from a hashed policy pack, authored offline
+ * and reviewed by a person (P10). Runtime insertion is rejected at the model
+ * layer. Parameters carry the clause's numeric windows (hours/days).
+ */
+export const policyClauseSchema = z.object({
+  schemaVersion: z.literal(1),
+  clauseId: z.string(),
+  packRef: z.string(), // the hashed EvidenceItem this clause belongs to
+  clauseNumber: z.number().int().positive(), // e.g. 4, 7, 9
+  text: z.string(), // plain-language clause, ≤ 3 sentences
+  parameters: z.object({
+    hours: z.number().int().positive().optional(), // clause 4 grace window
+    days: z.number().int().positive().optional(), // clause 7 acceptance period
+  }),
+  jurisdiction: z.string().optional(), // e.g. "Ireland"
+  author: z.string(), // who authored it (offline)
+  reviewRef: z.string(), // human-review reference (PR link)
+  version: z.number().int().positive(),
+}).strict();
+
+export type DraftFrame = z.infer<typeof draftFrameSchema>;
+export type EvidenceAnnotation = z.infer<typeof evidenceAnnotationSchema>;
+export type ProposedCase = z.infer<typeof proposedCaseSchema>;
+export type PolicyClause = z.infer<typeof policyClauseSchema>;
+export type ModelDigest = z.infer<typeof modelDigestSchema>;
+
+/* -------------------------------------------------------------------------- */
+/* Per-record validators (FIN-130)                                            */
+/*                                                                            */
+/* Every agent record is validated before persist: .strict() rejects unknown  */
+/* keys, then validateNoVerdictKeys rejects verdict-shaped keys/banned language*/
+/* at any depth. "Attempted verdict field on any record fails at the model    */
+/* layer" — these validators are the model-layer gate.                         */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Validate an EvidenceAnnotation: strict parse + verdict-key scan. A2 readers
+ * (post-hackathon) may only annotate existing evidence; new facts or unstamped
+ * claims are rejected here.
+ */
+export function validateEvidenceAnnotation(obj: unknown): EvidenceAnnotation {
+  const parsed = evidenceAnnotationSchema.parse(obj);
+  validateNoVerdictKeys(parsed);
+  return parsed;
+}
+
+/**
+ * Validate a ProposedCase: strict parse + verdict-key scan + explicit rejection
+ * of auto-open/status fields. A person opens the case; the agent only proposes.
+ */
+export function validateProposedCase(obj: unknown): ProposedCase {
+  // Scan raw input for banned proposal fields BEFORE strict parse strips them.
+  if (obj && typeof obj === "object" && !Array.isArray(obj)) {
+    const keys = Object.keys(obj as Record<string, unknown>);
+    const banned = keys.find((k) =>
+      ["autoopen", "auto_open", "status", "state", "caseid", "case_id"].includes(k.toLowerCase()),
+    );
+    if (banned) {
+      throw new Error(
+        `Forbidden field "${banned}" on ProposedCase. A person opens the case; the agent never auto-opens (P6, FIN-130).`,
+      );
+    }
+  }
+  const parsed = proposedCaseSchema.parse(obj);
+  validateNoVerdictKeys(parsed);
+  return parsed;
+}
+
+/**
+ * Validate a PolicyClause: strict parse + verdict-key scan. Runtime insertion of
+ * a clause is rejected — clauses are authored offline, reviewed, versioned (P10).
+ */
+export function validatePolicyClause(obj: unknown): PolicyClause {
+  const parsed = policyClauseSchema.parse(obj);
+  validateNoVerdictKeys(parsed);
+  return parsed;
+}

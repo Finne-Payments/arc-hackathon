@@ -14,6 +14,12 @@ export const ID_PREFIXES = {
   decision: "dec",
   invitation: "inv",
   response: "resp",
+  // Agent layer (PRD Addendum A / FIN-130)
+  frame: "frame",
+  annotation: "annot",
+  proposal: "propcase",
+  clause: "clause",
+  modelcall: "mcall",
 } as const;
 
 /**

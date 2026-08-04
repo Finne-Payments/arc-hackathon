@@ -5,8 +5,10 @@
    ========================================================================== */
 
 import { useState } from "react";
-import { type V1Actions, formatUsdc } from "../../useV1Api.ts";
+import { type V1Actions, type V1Data, formatUsdc } from "../../useV1Api.ts";
+import { v1api } from "../../v1api.ts";
 import { Card, PrimaryButton, SecondaryButton } from "../../components/primitives.tsx";
+import { FramePanel } from "./FramePanel.tsx";
 
 type Outcome = "RECIPIENT_UPHELD" | "PLATFORM_UPHELD" | "PARTIAL_PLATFORM_UPHELD" | "DISMISSED_INSUFFICIENT_EVIDENCE";
 
@@ -18,11 +20,12 @@ const OUTCOMES: Array<{ value: Outcome; title: string; desc: string; needsCorrec
 ];
 
 export function DecisionScreen({
-  caseId, challengedAmountMicroUsdc, actions, onDone, onBack,
+  caseId, challengedAmountMicroUsdc, actions, data, onDone, onBack,
 }: {
   caseId: string;
   challengedAmountMicroUsdc: string;
   actions: V1Actions;
+  data: V1Data;
   onDone: () => void;
   onBack: () => void;
 }) {
@@ -32,6 +35,24 @@ export function DecisionScreen({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
+  const [generatingFrame, setGeneratingFrame] = useState(false);
+
+  // Decision frame (Addendum A4): the agent prepares a verdict-free frame beside
+  // the reason box. Accepting a line appends it (editable) to the rationale.
+  const frame = data.activeCase?.frame ?? null;
+  const handleGenerateFrame = async () => {
+    setGeneratingFrame(true);
+    await actions.runFrame(caseId);
+    setGeneratingFrame(false);
+  };
+  const handleAcceptLine = (text: string) => {
+    setRationale((r) => (r.trim() ? `${r.trim()}\n\n${text}` : text));
+  };
+  // FIN-127: editing a line logs the original alongside the edited text (corpus).
+  // The edited text then lands in the reason box, like an accept.
+  const handleEditLine = (originalText: string, editedText: string) => {
+    void v1api.logFrameAction(caseId, originalText, JSON.stringify({ action: "edit", originalText, editedText }), `edit_${Date.now().toString(36)}`);
+  };
 
   const selected = OUTCOMES.find((o) => o.value === outcome);
   const rationaleValid = rationale.trim().length >= 20;
@@ -63,7 +84,7 @@ export function DecisionScreen({
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 16, maxWidth: 600, margin: "0 auto" }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 16, maxWidth: 900, margin: "0 auto" }}>
       <div>
         <SecondaryButton onClick={onBack} style={{ fontSize: 12, padding: "6px 12px", marginBottom: 8 }}>← Back to case</SecondaryButton>
         <div style={{ fontSize: 18, fontWeight: 700 }}>Record a human decision</div>
@@ -106,20 +127,31 @@ export function DecisionScreen({
         </Card>
       )}
 
-      {/* Rationale */}
-      <Card shadow="var(--shadow-xs)" style={{ padding: 14 }}>
-        <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>Written reasons (min 20 characters)</div>
-        <textarea
-          className="finne-textarea"
-          value={rationale}
-          onChange={(e) => setRationale(e.target.value)}
-          placeholder="Explain the decision in plain words. Both sides will read this."
-          style={{ width: "100%", minHeight: 80, fontSize: 13 }}
+      {/* Rationale + Decision frame (Addendum A4) — side by side */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, alignItems: "start" }}>
+        <Card shadow="var(--shadow-xs)" style={{ padding: 14 }}>
+          <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>Written reasons (min 20 characters)</div>
+          <textarea
+            className="finne-textarea"
+            value={rationale}
+            onChange={(e) => setRationale(e.target.value)}
+            placeholder="Explain the decision in plain words. Both sides will read this."
+            style={{ width: "100%", minHeight: 80, fontSize: 13 }}
+          />
+          <div style={{ fontSize: 11, color: rationaleValid ? "var(--ok-600)" : "var(--color-fg-subtle)", marginTop: 4 }}>
+            {rationale.trim().length}/20 characters minimum
+          </div>
+        </Card>
+
+        <FramePanel
+          frame={frame}
+          narrative={null}
+          generating={generatingFrame}
+          onGenerate={handleGenerateFrame}
+          onAcceptLine={handleAcceptLine}
+          onEditLine={handleEditLine}
         />
-        <div style={{ fontSize: 11, color: rationaleValid ? "var(--ok-600)" : "var(--color-fg-subtle)", marginTop: 4 }}>
-          {rationale.trim().length}/20 characters minimum
-        </div>
-      </Card>
+      </div>
 
       {error && (
         <div style={{ background: "var(--risk-soft)", border: "1px solid var(--risk-border)", borderRadius: "var(--radius-md)", padding: "8px 12px", fontSize: 12, color: "var(--risk-600)" }}>
