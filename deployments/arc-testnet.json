@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "stage": "submission",
+  "chainId": 5042002,
+  "chainName": "Arc Testnet",
+  "rpcUrl": "https://rpc.testnet.arc.io",
+  "explorerUrl": "https://testnet.arcscan.app",
+  "registry": {
+    "name": "FinneCaseRegistry",
+    "address": "0x297730EaF53C95B9d8322b9Af5e48b47227D1e82",
+    "deploymentTx": "0xbf555687e7b3825a066fc07e2319c18e3293929f52503f74fc1a01957732a99e",
+    "deploymentBlock": 55262050,
+    "deployer": "0x8e5618d427335F865A1E693162417D991f3d8030",
+    "compilerVersion": "0.8.24",
+    "optimizerRuns": 200,
+    "abiHash": "_pending_",
+    "bytecodeHash": "_pending_",
+    "verificationUrl": "https://testnet.arcscan.app/address/0x297730EaF53C95B9d8322b9Af5e48b47227D1e82"
+  },
+  "usdc": {
+    "address": "0x3600000000000000000000000000000000000000",
+    "decimals": 6,
+    "name": "USD Coin (Arc Testnet)"
+  },
+  "roleHolders": {
+    "registryAdmin": "0x8e5618d427335F865A1E693162417D991f3d8030",
+    "platform": "0xA6DB6ab71FFf9FA4AB6B1742F01eF7CeaD365b82",
+    "reviewer": "0x18a01318e1f99F2B8393980091Ec7992Cb80f500",
+    "agent": "0xf0D99646c32c6dF75774b17499Eefa853b6b6a09"
+  },
+  "refundProtocol": {
+    "address": "0x6EE86fEE126C94CD3bE0d2a5187F69368965f989",
+    "note": "Legacy/research reference only — not used by the production registrar"
+  },
+  "gitCommit": "_pending_",
+  "deployedAt": "2026-08-04T16:50:00.000Z"
+}

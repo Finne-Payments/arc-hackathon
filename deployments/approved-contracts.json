@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "description": "Deployment allowlist (RP-03). Only contracts listed here may be deployed or referenced by production code. The RefundProtocol (Circle's escrow) is explicitly NOT on this list — it is research/legacy only.",
+  "approved": [
+    {
+      "name": "FinneCaseRegistry",
+      "artifactPath": "contracts/refund-protocol/src/FinneCaseRegistry.sol",
+      "bytecodeHash": "_pending_con_05_",
+      "abiHash": "_pending_con_05_",
+      "deployable": true,
+      "description": "Finné's production registrar — non-custodial, AccessControl + Pausable."
+    }
+  ],
+  "quarantined": [
+    {
+      "name": "RefundProtocol",
+      "artifactPath": "contracts/refund-protocol/src/RefundProtocol.sol",
+      "reason": "Circle's escrow — research/legacy reference only (UNSAFE_REFERENCE_ONLY). Not deployable by Finné. Not imported by v1 production code.",
+      "deployable": false
+    }
+  ]
+}
