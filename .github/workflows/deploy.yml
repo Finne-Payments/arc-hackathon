@@ -19,11 +19,11 @@ name: Deploy
 
 on:
   push:
-    branches: [main]
+    branches: [main, develop]
 
-# Prevent concurrent deploys — only the latest push to main wins.
+# Prevent concurrent deploys — only the latest push wins.
 concurrency:
-  group: deploy-main
+  group: deploy
   cancel-in-progress: false
 
 permissions:
@@ -51,6 +51,8 @@ jobs:
         env:
           CACHE_DIR: ${{ github.workspace }}/.cache/mongodb-binaries
 
+  # Runs the open-source gitleaks binary directly (no paid action license).
+  # gitleaks/gitleaks-action@v2 now requires a GITLEAKS_LICENSE for org repos.
   secret-scan:
     name: Secret scan (gitleaks)
     runs-on: ubuntu-latest
@@ -58,9 +60,13 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: gitleaks/gitleaks-action@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install gitleaks
+        run: |
+          VERSION=v8.21.2
+          curl -sSL "https://github.com/gitleaks/gitleaks/releases/download/${VERSION}/gitleaks_${VERSION#v}_linux_x64.tar.gz" \
+            | sudo tar -xz -C /usr/local/bin gitleaks
+      - name: Scan for leaked secrets
+        run: gitleaks detect --source . --config .gitleaks.toml --no-banner --redact --verbose
 
   abi-quarantine:
     name: RP-03 — no RefundProtocol ABI in production
