@@ -449,6 +449,9 @@ export function useFinne(initialRole: Role = "arbiter") {
       },
       dismissStrip: () => patch({ stripDismissed: true }),
       printPage: () => window.print(),
+      /** Bump caseVersion so App reloads the active case (used after the agent
+          refresh action so the new frame/status flows into the case room). */
+      reloadCase: () => patch({ caseVersion: state.caseVersion + 1 }),
       /**
        * Sign a refund with the reviewer's browser wallet (D1). Falls back to the
        * labeled simulation (D11) when no wallet is detected. The Decision screen

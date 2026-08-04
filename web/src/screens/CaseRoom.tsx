@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import type { FinneActions, ViewModel } from "../useFinne";
 import type { ApiData } from "../useApi";
-import type { PayoutRow, CaseRow } from "../api";
+import type { PayoutRow, CaseRow, AgentFrame } from "../api";
 import { api } from "../api";
 import {
   BackLink,
@@ -42,6 +42,11 @@ export function CaseRoom({ v, actions, apiData }: { v: ViewModel; actions: Finne
   const responses = (c?.responses as { author: string; authorName: string; text: string; submittedAt: string }[]) ?? [];
   const evidence = (c?.evidence as { title: string; submittedBy: string; submittedAt: string; sha256: string; type: string }[]) ?? [];
   const brief = c?.brief?.latest as { checks: { check: string; expected: string; found: string; result: string }[]; inconsistencies: string[]; missingItems: string[] } | undefined;
+  // The v1 agent frame (turning questions + findings + unresolved). Null until the
+  // agents run. frameStatus is non-null while they're running.
+  const frame = c?.frame ?? null;
+  const frameStatus = c?.frameStatus ?? null;
+  const [refreshing, setRefreshing] = useState(false);
 
   const [timeline, setTimeline] = useState<TimelineEntry[]>([]);
   const [timelineLoading, setTimelineLoading] = useState(false);
@@ -377,11 +382,27 @@ export function CaseRoom({ v, actions, apiData }: { v: ViewModel; actions: Finne
         </div>
       </Card>
 
-      {/* (c) the agent's brief — checks/missing-items when one exists, a clear
-          empty state otherwise (no fake "None identified." placeholders). */}
+      {/* (c) the agent's brief — the verdict-free decision frame (turning questions,
+          findings, unresolved items). Auto-runs when the dispute opens; a Refresh
+          button re-reads on-chain + off-chain data and re-runs the agents. Falls
+          back to the legacy brief table if only that exists, or an empty state. */}
       <Card shadow="var(--shadow-xs)" padding="22px 24px" style={{ marginBottom: 16 }}>
-        <Eyebrow style={{ marginBottom: 12 }}>The agent's brief</Eyebrow>
-        {hasBrief ? (
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+          <Eyebrow style={{ marginBottom: 0 }}>The agent's brief</Eyebrow>
+          <button
+            onClick={() => { setRefreshing(true); api.refreshCase(caseNumber).then(() => actions.reloadCase()).finally(() => setRefreshing(false)); }}
+            disabled={refreshing}
+            style={{ fontSize: 11, fontWeight: 600, padding: "4px 12px", border: "1px solid var(--color-border)", borderRadius: "var(--radius-sm)", background: "var(--color-surface)", color: "var(--color-fg)", cursor: refreshing ? "default" : "pointer", opacity: refreshing ? 0.6 : 1 }}
+          >
+            {refreshing ? "Refreshing…" : "↻ Refresh"}
+          </button>
+        </div>
+
+        {frame ? (
+          <AgentBriefFrame frame={frame} />
+        ) : frameStatus?.running ? (
+          <AgentBriefRunning stages={frameStatus.stages} />
+        ) : hasBrief ? (
           <>
             <div style={{ border: "1px solid var(--color-border)", borderRadius: "var(--radius-md)", overflow: "hidden", marginBottom: 14 }}>
               <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1.3fr .8fr", gap: 12, padding: "9px 14px", background: "var(--color-surface-2)", borderBottom: "1px solid var(--color-border)", fontSize: 11, fontWeight: 600, letterSpacing: ".04em", textTransform: "uppercase", color: "var(--color-fg-subtle)" }}>
@@ -415,7 +436,7 @@ export function CaseRoom({ v, actions, apiData }: { v: ViewModel; actions: Finne
           </>
         ) : (
           <div style={{ padding: "8px 2px 4px", color: "var(--color-fg-muted)", fontSize: 13.5, lineHeight: 1.6 }}>
-            The proof agent hasn’t reviewed this case yet. It runs automatically when a dispute opens and again whenever evidence is added — its findings (what’s on file, what’s missing) will appear here. It never renders a verdict.
+            The agents are preparing this case. They run automatically when a dispute opens and again whenever evidence is added — their findings (what’s on file, what’s missing) will appear here. If nothing appears shortly, press Refresh. It never renders a verdict.
           </div>
         )}
       </Card>
@@ -487,6 +508,83 @@ export function CaseRoom({ v, actions, apiData }: { v: ViewModel; actions: Finne
           </SecondaryButton>
         </div>
       )}
+    </div>
+  );
+}
+
+/* ============================================================================
+   Agent brief renderers — the verdict-free decision frame shown in the legacy
+   case room. `AgentBriefFrame` renders the persisted frame (turning questions,
+   unresolved items); `AgentBriefRunning` shows per-stage progress while the
+   Bedrock calls are in flight.
+   ========================================================================== */
+
+const STAGE_LABEL: Record<string, string> = {
+  proof_checks: "Proof checks",
+  turning_questions: "Turning questions",
+  narrative: "Narrative summary",
+  assemble: "Assemble frame",
+};
+
+function AgentBriefFrame({ frame }: { frame: AgentFrame }) {
+  return (
+    <>
+      {frame.questions.length > 0 && (
+        <div style={{ marginBottom: 14 }}>
+          <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: ".04em", textTransform: "uppercase", color: "var(--color-fg-subtle)", marginBottom: 6 }}>Questions the case turns on</div>
+          {frame.questions.map((q, i) => (
+            <div key={i} style={{ display: "flex", gap: 8, alignItems: "flex-start", padding: "5px 0", fontSize: 13, color: "var(--color-fg)", lineHeight: 1.5 }}>
+              <span style={{ color: "var(--brand-600)", flexShrink: 0 }}>→</span>
+              <span style={{ flex: 1 }}>{q.text}</span>
+              {q.provenance === "model" && (
+                <span style={{ fontSize: 9, fontFamily: "var(--font-mono)", color: "var(--color-fg-subtle)", background: "var(--color-surface-2)", padding: "1px 5px", borderRadius: "var(--radius-xs)", flexShrink: 0 }}>model</span>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+      {frame.unresolved.length > 0 && (
+        <div style={{ marginBottom: 14 }}>
+          <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: ".04em", textTransform: "uppercase", color: "var(--color-fg-subtle)", marginBottom: 6 }}>Unresolved</div>
+          {frame.unresolved.map((u, i) => (
+            <div key={i} style={{ display: "flex", gap: 8, alignItems: "center", padding: "4px 0", fontSize: 13, color: "var(--color-fg-muted)" }}>
+              <span style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--warn-500)", flexShrink: 0 }} />
+              {u.kind.replace(/_/g, " ")}
+            </div>
+          ))}
+        </div>
+      )}
+      <div style={{ fontSize: 12, color: "var(--color-fg-subtle)", borderTop: "1px solid var(--color-border)", paddingTop: 12 }}>
+        Prepared by the Finné agent from on-chain + off-chain facts. It prepares and points; it does not decide.
+        {frame.degradeLevel > 0 && <span style={{ color: "var(--warn-600)" }}> ⚠ simplified (model offline).</span>}
+      </div>
+    </>
+  );
+}
+
+function AgentBriefRunning({ stages }: { stages: { name: string; status: string }[] }) {
+  return (
+    <div style={{ padding: "8px 2px 4px" }}>
+      <SpinnerLabel label="Agents are preparing this case…" />
+      <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 6 }}>
+        {stages.map((s) => {
+          const done = s.status === "done";
+          const degraded = s.status === "degraded";
+          return (
+            <div key={s.name} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: "var(--color-fg-muted)" }}>
+              <span style={{ width: 8, height: 8, borderRadius: "50%", flexShrink: 0, background: done ? "var(--ok-500)" : degraded ? "var(--warn-500)" : "var(--brand-500)" }} />
+              <span style={{ flex: 1 }}>{STAGE_LABEL[s.name] ?? s.name}</span>
+              {done ? (
+                <span style={{ fontSize: 10, color: "var(--ok-600)" }}>done</span>
+              ) : degraded ? (
+                <span style={{ fontSize: 10, color: "var(--warn-600)" }}>degraded</span>
+              ) : (
+                <span style={{ fontSize: 10, color: "var(--brand-600)" }}>running…</span>
+              )}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }

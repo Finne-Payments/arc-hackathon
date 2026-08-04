@@ -11,6 +11,9 @@ import { Case } from "../models/index.ts";
 import { scopeFor } from "../scope.ts";
 import type { DecisionOutcome } from "../statusVocabulary.ts";
 import { HttpError } from "../errors.ts";
+import { getLatestFrame } from "../agent/frame-assembly.ts";
+import { getFrameStatus } from "../v1/frameStatus.ts";
+import { assembleForCaseByNumber } from "../v1/frameOrchestrator.ts";
 
 /* ============================================================================
    Case routes (PRD §11.2). The shared case body is byte-identical across
@@ -52,7 +55,43 @@ caseRoutes.get("/cases", requirePermission("case:read"), async (req, res, next) 
  */
 caseRoutes.get("/cases/:id", requirePermission("case:read"), async (req, res, next) => {
   try {
-    res.json(await getSharedCase(req.params.id));
+    const body = await getSharedCase(req.params.id);
+    // Attach the agent frame + running status. Keyed on caseNumber directly so
+    // this works for BOTH legacy and v1 cases — the case in the URL is the key
+    // the agents use. No v1-layer lookup required.
+    let frame: unknown = null;
+    let frameStatus: unknown = null;
+    try {
+      frame = await getLatestFrame(req.params.id);
+      frameStatus = getFrameStatus(req.params.id);
+    } catch {
+      // frame store absent in some setups — frame stays null.
+    }
+    res.json({ ...body, frame, frameStatus });
+  } catch (e) {
+    next(e);
+  }
+});
+
+/**
+ * POST /cases/:id/refresh — re-fetch on-chain + off-chain data and re-run the
+ * agent pipeline for this case (by case number). Works for every case visible
+ * in the case room — legacy or v1 — because the agents key on caseNumber, the
+ * same identifier in the URL. Builds the frame input directly from the shared
+ * case body (payout + work order + evidence + responses).
+ */
+caseRoutes.post("/cases/:id/refresh", requirePermission("case:read"), async (req, res, next) => {
+  try {
+    const caseNumber = req.params.id;
+    // Confirm the case exists (throws 404 via getSharedCase if not).
+    await getSharedCase(caseNumber);
+    const result = await assembleForCaseByNumber(caseNumber);
+    res.status(201).json({
+      frameId: result.frameId,
+      frame: result.frame,
+      narrative: result.narrative,
+      degradeLevel: result.degradeLevel,
+    });
   } catch (e) {
     next(e);
   }

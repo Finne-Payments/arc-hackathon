@@ -72,6 +72,12 @@ export interface FrameAssemblyInput {
   caseContext: string; // short human summary for the model (parties, allegation)
   checkInput: CheckInput;
   unresolvedInput: UnresolvedInput;
+  /**
+   * Optional progress callback for the UI/status layer. Fired at the start of
+   * each named stage with its outcome. Never throws (the caller wraps it).
+   * Used by the case room to surface "agents running" per-stage status.
+   */
+  onStage?: (stage: "proof_checks" | "turning_questions" | "narrative" | "assemble", status: "done" | "degraded") => void;
 }
 
 export interface FrameAssemblyResult {
@@ -110,8 +116,10 @@ export async function assembleFrame(input: FrameAssemblyInput): Promise<FrameAss
       .join("; ");
     requirements = fillOutcomeRequirements(input.claimType, findings);
     unresolved = computeUnresolved(input.unresolvedInput);
+    input.onStage?.("proof_checks", "done");
   } catch (e) {
     console.warn("[frame-assembly] deterministic stage failed — degrading:", e instanceof Error ? e.message : e);
+    input.onStage?.("proof_checks", "degraded");
   }
 
   // --- Rung 2 gate: if there is no usable record (no requirements AND no
@@ -126,9 +134,11 @@ export async function assembleFrame(input: FrameAssemblyInput): Promise<FrameAss
     input.caseContext,
     findings,
   );
+  input.onStage?.("turning_questions", questionsDegraded ? "degraded" : "done");
 
   // --- Narrative (model) — may degrade ----------------------------------
   const narrativeRes = await generateNarrative(input.caseContext, findingsSummary);
+  input.onStage?.("narrative", narrativeRes.degraded ? "degraded" : "done");
 
   // --- Determine degrade rung -------------------------------------------
   const degradeLevel = questionsDegraded ? 1 : 0;
@@ -174,6 +184,7 @@ export async function assembleFrame(input: FrameAssemblyInput): Promise<FrameAss
     degradeLevel,
     createdAt: new Date().toISOString(),
   });
+  input.onStage?.("assemble", "done");
 
   console.log(
     `[frame-assembly] frame ${frameId} for case ${input.caseId} — rung ${degradeLevel} ` +

@@ -26,6 +26,64 @@ Both expose the same `/v1/chat/completions` interface, so the backend's model
 client (`backend/src/agent/model-client.ts`, FIN-101) is identical across
 environments — only the `MODEL_BASE_URL` differs in `.env`.
 
+## Hackathon profile: AWS Bedrock (temporary exception to P9/D7)
+
+> ⚠️ **This is a deliberate, temporary deviation from P9/D7.** Routing case
+> content to a hosted external model service is permitted only for the
+> hackathon, only when self-hosted GPUs are inaccessible. It is gated so it can
+> never be enabled by accident.
+
+The model client (`backend/src/agent/model-client.ts`) dispatches on
+`MODEL_PROVIDER`:
+
+- `openai-compatible` (default) — the self-hosted posture above (P9/D7). No
+  behaviour change; this is the production path.
+- `bedrock` — inference is delegated to **AWS Bedrock** via the
+  `@aws-sdk/client-bedrock-runtime` `Converse` API. This is a **hosted external
+  model**, so case content (the dispute summary + contested findings) IS sent
+  to AWS. The deviation is acknowledged explicitly at boot.
+
+### Why it does not weaken FIN-102
+
+Bedrock authenticates via **IAM** (`AWS_PROFILE`, or
+`AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY` + `AWS_REGION`) — **not** an API
+key. FIN-102's forbidden-key list (`AWS_BEDROCK_*`, `BEDROCK_*`,
+`OPENAI_API_KEY`, …) is left untouched and still boot-fails on those names; the
+standard IAM env vars never match it. So the existing guardrail tests stay green.
+
+### The opt-in guardrail (`assertBedrockHackathonOptIn`)
+
+The backend refuses to boot with `MODEL_PROVIDER=bedrock` unless the operator
+**also** sets:
+
+```
+MODEL_PROVIDER=bedrock
+MODEL_NAME=amazon.nova-lite-v1:0        # a Bedrock model id (config only)
+MODEL_BEDROCK_HACKATHON_OPT_IN=true      # explicit acknowledgement of the deviation
+AWS_REGION=us-east-1                     # required — Bedrock needs a region
+AWS_PROFILE=finne                        # OR AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY
+```
+
+Without the opt-in flag, boot fails with a message naming the P9/D7 deviation.
+Without a region, boot fails because the IAM credential chain needs one. Grant
+the IAM principal `bedrock:InvokeModel` on the chosen model.
+
+### Everything else still applies
+
+The provider switch is the **only** thing that changes. The P8 5s hard timeout +
+degrade contract, the FIN-103 outcome-word post-filter, FIN-130 verdict-field
+rejection, FIN-133 provenance flags, and FIN-131 corpus logging all run
+**downstream** of the provider and are identical for both paths. The agent still
+prepares and points; it never decides, and the loop never depends on it.
+
+### Model choice
+
+`amazon.nova-lite-v1:0` is the default recommendation — cheap and available with
+no console "model access" request. The Anthropic (Claude) and Meta (Llama)
+families are also usable but require enabling model access in the Bedrock
+console first. To swap, change `MODEL_NAME` (config only — no code change,
+FIN-101 swap rule).
+
 ## The production model service (FinneModelStack)
 
 In AWS, the model runs on a dedicated GPU EC2 instance provisioned by the
@@ -140,7 +198,11 @@ never the thing the case depends on.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `MODEL_BASE_URL` | `http://model:8000/v1` | OpenAI-compatible endpoint. Empty/`disabled` = models-unplugged. |
-| `MODEL_NAME` | `Qwen/Qwen2.5-3B-Instruct` | Served model name (config only — never in call sites). Must match the model baked into the image. |
+| `MODEL_PROVIDER` | `openai-compatible` | Inference backend. `openai-compatible` (self-hosted, P9/D7) or `bedrock` (hackathon exception — gated by the opt-in below). |
+| `MODEL_BASE_URL` | `http://model:8000/v1` | OpenAI-compatible endpoint. Empty/`disabled` = models-unplugged. Ignored when `MODEL_PROVIDER=bedrock`. |
+| `MODEL_NAME` | `Qwen/Qwen2.5-3B-Instruct` | Served model name / Bedrock model id (config only — never in call sites). Must match the model baked into the image, or a Bedrock model id (e.g. `amazon.nova-lite-v1:0`). |
 | `MODEL_DIGEST` | unset | Pinned digest for reproducibility. |
 | `MODEL_TIMEOUT_MS` | `5000` | Hard timeout per call (P8). |
+| `MODEL_BEDROCK_HACKATHON_OPT_IN` | unset | Must be literally `true` to enable `MODEL_PROVIDER=bedrock` (the P9/D7 deviation acknowledgement). |
+| `AWS_REGION` | unset | Required for the Bedrock client (provider=bedrock). |
+| `AWS_PROFILE` / `AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY` | unset | IAM credentials for Bedrock (not an API key). Grant `bedrock:InvokeModel`. |

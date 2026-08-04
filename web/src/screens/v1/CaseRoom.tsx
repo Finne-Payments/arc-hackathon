@@ -6,7 +6,8 @@
 
 import { useState } from "react";
 import { type V1Data, type V1Actions, formatUsdc, shortAddr } from "../../useV1Api.ts";
-import { Card, PrimaryButton, SecondaryButton, Spinner } from "../../components/primitives.tsx";
+import type { V1CaseContext } from "../../v1api.ts";
+import { Card, PrimaryButton, SecondaryButton, Spinner, SpinnerLabel } from "../../components/primitives.tsx";
 
 const CASE_LABELS: Record<string, string> = {
   OPEN: "Open — awaiting response",
@@ -205,10 +206,20 @@ export function CaseRoom({
         </Card>
       )}
 
+      {/* Case context — the sourced on-chain + off-chain facts the agents reason
+          over (and that the arbiter reviews). Each fact is labelled by source
+          per P7 (stamped or silent). A "Refresh" action re-fetches chain data
+          and re-runs the agents. */}
+      {activeCase.caseContext && (
+        <CaseContextCard ctx={activeCase.caseContext} onRefresh={() => actions.refreshCase(caseId)} />
+      )}
+
       {/* Agent frame — the verdict-free findings (Addendum A4 / FIN-115).
-          Shows the turning questions (clickable clause citations) + a summary of
-          what the checks found. The frame prepares; it never decides. */}
-      {activeCase.frame && (
+          Three states: a persisted frame, agents currently running, or neither
+          (manual "Prepare frame" affordance). The agents auto-run when the
+          dispute opens; the running card shows per-stage progress while the
+          Bedrock calls are in flight. */}
+      {activeCase.frame ? (
         <Card shadow="var(--shadow-xs)" style={{ padding: 18 }}>
           <div style={{ fontFamily: "var(--font-mono)", fontWeight: 600, fontSize: 10, letterSpacing: ".06em", textTransform: "uppercase", color: "var(--color-fg-subtle)", marginBottom: 8, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <span>Agent frame</span>
@@ -243,6 +254,20 @@ export function CaseRoom({
             The agent prepares and points. It never decides. Citation depth — platform {activeCase.frame.citationDepth.platform} · recipient {activeCase.frame.citationDepth.recipient}.
           </div>
         </Card>
+      ) : activeCase.frameStatus?.running ? (
+        <AgentsRunningCard stages={activeCase.frameStatus.stages} />
+      ) : (
+        <Card shadow="var(--shadow-xs)" style={{ padding: 18 }}>
+          <div style={{ fontFamily: "var(--font-mono)", fontWeight: 600, fontSize: 10, letterSpacing: ".06em", textTransform: "uppercase", color: "var(--color-fg-subtle)", marginBottom: 8 }}>
+            Agent frame
+          </div>
+          <div style={{ fontSize: 13, color: "var(--color-fg-muted)", marginBottom: 12, lineHeight: 1.5 }}>
+            No frame yet. The agent can prepare a verdict-free frame: the questions the case turns on, what each outcome requires, and what's unresolved.
+          </div>
+          <PrimaryButton onClick={() => actions.runFrame(caseId)} style={{ fontSize: 12, padding: "8px 14px" }}>
+            Prepare frame
+          </PrimaryButton>
+        </Card>
       )}
 
       {/* Decision */}
@@ -274,5 +299,158 @@ export function CaseRoom({
         </PrimaryButton>
       )}
     </div>
+  );
+}
+
+/* ============================================================================
+   AgentsRunningCard — shown while the agent pipeline is in flight (the few
+   seconds the Bedrock calls take after a dispute opens). Lists each stage with
+   its status so the reviewer can see the agents are working, not stalled.
+   ========================================================================== */
+
+const STAGE_LABEL: Record<string, string> = {
+  proof_checks: "Proof checks",
+  turning_questions: "Turning questions",
+  narrative: "Narrative summary",
+  assemble: "Assemble frame",
+};
+
+function AgentsRunningCard({ stages }: { stages: { name: string; status: string }[] }) {
+  return (
+    <Card shadow="var(--shadow-xs)" style={{ padding: 18 }}>
+      <div style={{ fontFamily: "var(--font-mono)", fontWeight: 600, fontSize: 10, letterSpacing: ".06em", textTransform: "uppercase", color: "var(--color-fg-subtle)", marginBottom: 10 }}>
+        Agents running
+      </div>
+      <SpinnerLabel label="Preparing the verdict-free frame…" />
+      <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 6 }}>
+        {stages.map((s) => {
+          const done = s.status === "done";
+          const degraded = s.status === "degraded";
+          return (
+            <div key={s.name} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "var(--color-fg-muted)" }}>
+              <span style={{ width: 8, height: 8, borderRadius: "50%", flexShrink: 0, background: done ? "var(--ok-500)" : degraded ? "var(--warn-500)" : "var(--brand-500)" }} />
+              <span style={{ flex: 1 }}>{STAGE_LABEL[s.name] ?? s.name}</span>
+              {done ? (
+                <span style={{ fontSize: 10, color: "var(--ok-600)" }}>done</span>
+              ) : degraded ? (
+                <span style={{ fontSize: 10, color: "var(--warn-600)" }}>degraded</span>
+              ) : (
+                <span style={{ fontSize: 10, color: "var(--brand-600)" }}>running…</span>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      <div style={{ marginTop: 10, fontSize: 10, color: "var(--color-fg-subtle)", fontStyle: "italic" }}>
+        The agent prepares and points. It never decides.
+      </div>
+    </Card>
+  );
+}
+
+/* ============================================================================
+   CaseContextCard — the sourced on-chain + off-chain facts the agents reasoned
+   over. Renders beside the frame so the arbiter sees the same reality the model
+   used. Each section is labelled by source (P7 stamped-or-silent). A Refresh
+   button re-fetches chain data and re-runs the agents.
+   ========================================================================== */
+
+const EYEBROW: React.CSSProperties = {
+  fontFamily: "var(--font-mono)", fontWeight: 600, fontSize: 10, letterSpacing: ".06em",
+  textTransform: "uppercase", color: "var(--color-fg-subtle)", marginBottom: 8,
+};
+const SRC: React.CSSProperties = {
+  fontSize: 9, fontFamily: "var(--font-mono)", color: "var(--color-fg-subtle)",
+  background: "var(--ink-50)", padding: "1px 5px", borderRadius: "var(--radius-xs)",
+};
+const ROW: React.CSSProperties = { display: "flex", gap: 8, alignItems: "center", padding: "3px 0", fontSize: 12, color: "var(--color-fg-muted)" };
+
+function CaseContextCard({ ctx, onRefresh }: { ctx: V1CaseContext; onRefresh: () => void }) {
+  const [refreshing, setRefreshing] = useState(false);
+  const refresh = async () => {
+    setRefreshing(true);
+    try { await onRefresh(); } finally { setRefreshing(false); }
+  };
+
+  return (
+    <Card shadow="var(--shadow-xs)" style={{ padding: 18 }}>
+      <div style={{ ...EYEBROW, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <span>Case context · sources the agents used</span>
+        <SecondaryButton onClick={refresh} disabled={refreshing} style={{ fontSize: 10, padding: "3px 10px", letterSpacing: 0, textTransform: "none" }}>
+          {refreshing ? "Refreshing…" : "↻ Refresh"}
+        </SecondaryButton>
+      </div>
+
+      {/* Dispute */}
+      <div style={{ fontSize: 12, color: "var(--color-fg)", lineHeight: 1.5, marginBottom: 12 }}>
+        <strong>{ctx.allegation || "(no allegation)"}</strong>
+        <div style={{ fontSize: 11, color: "var(--color-fg-muted)", marginTop: 2 }}>
+          Claim: {ctx.claimType.replace(/_/g, " ")}. Challenged: {formatUsdc(ctx.challengedAmountMicroUsdc)}. Opened {new Date(ctx.disputeOpenedAt).toLocaleString()}.
+        </div>
+      </div>
+
+      {/* On-chain payment state */}
+      {ctx.paymentOnChain ? (
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ fontSize: 11, fontWeight: 600, marginBottom: 4 }}>On-chain payment state <span style={SRC}>on-chain</span></div>
+          <div style={ROW}>Amount: <strong>{ctx.paymentOnChain.amountDisplay} USDC</strong></div>
+          <div style={ROW}>Withdrawn: {ctx.paymentOnChain.withdrawnAmountDisplay} USDC · Refunded: {ctx.paymentOnChain.refunded ? "yes" : "no"}</div>
+          <div style={ROW}>Release: {new Date(ctx.paymentOnChain.releaseTimestamp).toLocaleString()}</div>
+        </div>
+      ) : (
+        <div style={{ fontSize: 11, color: "var(--warn-600)", marginBottom: 12 }}>
+          {ctx.onChainUnavailable ? "On-chain state unavailable (RPC unreachable or payment not indexed)." : "No on-chain payment link."}
+        </div>
+      )}
+
+      {/* Chain figures */}
+      {ctx.chainFigures && (
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ fontSize: 11, fontWeight: 600, marginBottom: 4 }}>Reserves <span style={SRC}>on-chain</span></div>
+          <div style={ROW}>Arbiter reserve: {ctx.chainFigures.arbiterReserve} USDC</div>
+          <div style={ROW}>Recipient debt: {ctx.chainFigures.recipientDebt} USDC</div>
+        </div>
+      )}
+
+      {/* Deliverables */}
+      <div style={{ marginBottom: 12 }}>
+        <div style={{ fontSize: 11, fontWeight: 600, marginBottom: 4 }}>
+          Deliverables <span style={SRC}>{ctx.deliverables[0]?.source ?? "none"}</span>
+        </div>
+        {ctx.deliverables.map((d, i) => (
+          <div key={i} style={ROW}>
+            <span style={{ flex: 1 }}>{d.name}{d.due ? ` (due ${new Date(d.due).toLocaleDateString()})` : ""}</span>
+            {d.acceptanceCriteria && <span style={{ fontSize: 10, color: "var(--color-fg-subtle)" }}>{d.acceptanceCriteria}</span>}
+          </div>
+        ))}
+      </div>
+
+      {/* Evidence */}
+      {ctx.evidence.length > 0 && (
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ fontSize: 11, fontWeight: 600, marginBottom: 4 }}>Evidence <span style={SRC}>evidence</span></div>
+          {ctx.evidence.map((e) => (
+            <div key={e.evidenceId} style={ROW}>
+              <span style={{ flex: 1 }}>{e.title}</span>
+              <span style={{ fontSize: 10, color: "var(--color-fg-subtle)" }}>by {shortAddr(e.submittedBy)}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Response */}
+      {ctx.response && (
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ fontSize: 11, fontWeight: 600, marginBottom: 4 }}>Recipient reply <span style={SRC}>off-chain</span></div>
+          <div style={{ fontSize: 12, color: "var(--color-fg-muted)", lineHeight: 1.45, padding: "6px 10px", background: "var(--color-surface)", borderRadius: "var(--radius-sm)", border: "1px solid var(--color-border)" }}>
+            {ctx.response.text}
+          </div>
+        </div>
+      )}
+
+      <div style={{ fontSize: 10, color: "var(--color-fg-subtle)", fontStyle: "italic" }}>
+        Facts only — the agents prepare, they never decide. Each fact is sourced; refresh re-reads the chain and re-runs the agents.
+      </div>
+    </Card>
   );
 }

@@ -164,12 +164,16 @@ jobs:
         working-directory: infra/cdk
         run: npm ci
 
-      - name: CDK deploy (both stacks)
+      - name: CDK deploy (app stack; Bedrock replaces the GPU model stack)
         working-directory: infra/cdk
         run: npx cdk deploy --require-approval never --all
         env:
           AWS_REGION: ${{ secrets.AWS_REGION }}
           AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+          # The GPU model stack (FinneModelStack) is OFF — the agent layer uses
+          # Amazon Bedrock via the ECS task role instead. Set to "true" to bring
+          # back the self-hosted vLLM GPU instance.
+          MODEL_DEPLOY: "false"
           # Optional: HF token for gated models (empty for open Apache-2.0 weights)
           HF_HUB_TOKEN: ${{ secrets.HF_HUB_TOKEN }}
 

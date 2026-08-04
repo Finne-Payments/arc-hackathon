@@ -45,6 +45,16 @@ services:
       BACKEND_PORT: "4000"
       DEMO_MODE: "true"
       # MONGO_URL comes from .env (Atlas) — if absent, falls back to local container
+      # Bedrock auth: the SDK reads AWS_PROFILE and looks it up in ~/.aws/credentials.
+      # The host's ~/.aws is mounted read-only below (into the node user's home, since
+      # the container runs as USER node uid 1000). This is a local-dev convenience —
+      # prod ECS uses the task role, not a mounted profile.
+      AWS_PROFILE: "${AWS_PROFILE:-finne}"
+      AWS_REGION: "${AWS_REGION:-us-east-1}"
+    volumes:
+      # Read-only mount of the host AWS config so the container can resolve the
+      # AWS_PROFILE for Bedrock (IAM auth, not an API key). Harmless if absent.
+      - "${HOME}/.aws:/home/node/.aws:ro"
     ports:
       - "4000:4000"
 

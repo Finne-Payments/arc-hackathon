@@ -165,6 +165,32 @@ export interface DecisionRow {
   registryAnchorTx: string | null;
 }
 
+export interface FrameQuestion {
+  text: string;
+  findingRefs: string[];
+  provenance: "template" | "computed" | "model";
+}
+export interface FrameUnresolvedItem {
+  kind: string;
+  refs: string[];
+  provenance: "computed";
+}
+export interface AgentFrame {
+  frameId: string;
+  caseId: string;
+  questions: FrameQuestion[];
+  requirements: { outcome: string; templateId: string; filledParams: Record<string, string>; provenance: "template" }[];
+  unresolved: FrameUnresolvedItem[];
+  citationDepth: { platform: number; recipient: number };
+  degradeLevel: number; // 0=full, 1=no questions, 2=no frame
+  generatedAt: string;
+}
+export interface AgentFrameStatus {
+  running: boolean;
+  stages: { name: string; status: "running" | "done" | "degraded" }[];
+  error: string | null;
+}
+
 export interface SharedCase {
   payout: PayoutRow;
   workOrder: WorkOrderRow | null;
@@ -173,6 +199,10 @@ export interface SharedCase {
   evidence: EvidenceRow[];
   brief: { latest: BriefRow; versions: number } | null;
   decision: DecisionRow | null;
+  /** The v1 agent frame (turning questions + findings) — null until the agents run. */
+  frame: AgentFrame | null;
+  /** Non-null while the agent pipeline is running (drives the "agents running" card). */
+  frameStatus: AgentFrameStatus | null;
 }
 
 export interface SharedReceipt {
@@ -242,6 +272,10 @@ export const api = {
 
   cases: () => request<{ cases: CaseRow[] }>("/cases"),
   case: (caseNumber: string) => request<SharedCase>(`/cases/${caseNumber}`),
+
+  /** Re-fetch on-chain + off-chain data and re-run the agent pipeline. */
+  refreshCase: (caseNumber: string) =>
+    request<{ frameId: string; frame: AgentFrame | null; narrative: string | null; degradeLevel: number }>(`/cases/${caseNumber}/refresh`, { method: "POST", body: JSON.stringify({}) }),
 
   openDispute: (paymentId: string, body: { claimType: string; freeText: string; amountContested: string }) =>
     request<{ caseNumber: string; status: string }>(`/payouts/${paymentId}/disputes`, { method: "POST", body: JSON.stringify(body) }),

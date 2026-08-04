@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { assertNoExternalModelKeys } from "../src/env.ts";
+import { assertNoExternalModelKeys, assertBedrockHackathonOptIn } from "../src/env.ts";
 
 /* FIN-102 — no external model API in any environment (P9, D7). The backend
    refuses to boot when a vendor model key is present. The self-hosted runtime
@@ -50,6 +50,60 @@ describe("FIN-102 no-external-model-key assertion", () => {
   it("does not match unrelated keys containing 'API'", () => {
     expect(() =>
       assertNoExternalModelKeys({ SOME_OTHER_API_CONFIG: "x", INTERNAL_TOKEN: "y" }),
+    ).not.toThrow();
+  });
+});
+
+/* HACKATHON EXCEPTION — Bedrock opt-in guardrail. MODEL_PROVIDER=bedrock routes
+   dispute content to a HOSTED external model (AWS Bedrock), deviating from P9/D7
+   (no case content sent to an external model API). The deviation must be
+   impossible to trigger by accident: bedrock is refused at boot unless the
+   operator also sets the explicit opt-in flag AND an AWS region (Bedrock uses
+   IAM, not an API key). When the opt-in is absent, the default posture holds. */
+
+describe("Bedrock hackathon opt-in assertion", () => {
+  it("allows the default provider (openai-compatible) with no opt-in", () => {
+    expect(() =>
+      assertBedrockHackathonOptIn({ MODEL_PROVIDER: "openai-compatible" }),
+    ).not.toThrow();
+  });
+
+  it("allows an unset provider (defaults to openai-compatible)", () => {
+    expect(() => assertBedrockHackathonOptIn({})).not.toThrow();
+  });
+
+  it("refuses bedrock WITHOUT the opt-in flag (the deviation must be deliberate)", () => {
+    expect(() =>
+      assertBedrockHackathonOptIn({ MODEL_PROVIDER: "bedrock", AWS_REGION: "us-east-1" }),
+    ).toThrow(/MODEL_BEDROCK_HACKATHON_OPT_IN=true/);
+  });
+
+  it("refuses bedrock when opt-in is anything other than literal 'true'", () => {
+    expect(() =>
+      assertBedrockHackathonOptIn({
+        MODEL_PROVIDER: "bedrock",
+        MODEL_BEDROCK_HACKATHON_OPT_IN: "yes",
+        AWS_REGION: "us-east-1",
+      }),
+    ).toThrow(/MODEL_BEDROCK_HACKATHON_OPT_IN=true/);
+  });
+
+  it("refuses bedrock with the opt-in but NO region (IAM auth needs a region)", () => {
+    expect(() =>
+      assertBedrockHackathonOptIn({
+        MODEL_PROVIDER: "bedrock",
+        MODEL_BEDROCK_HACKATHON_OPT_IN: "true",
+      }),
+    ).toThrow(/AWS_REGION/);
+  });
+
+  it("allows bedrock ONLY with opt-in=true AND a region", () => {
+    expect(() =>
+      assertBedrockHackathonOptIn({
+        MODEL_PROVIDER: "bedrock",
+        MODEL_BEDROCK_HACKATHON_OPT_IN: "true",
+        AWS_REGION: "us-east-1",
+      }),
     ).not.toThrow();
   });
 });

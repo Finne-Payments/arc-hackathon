@@ -158,6 +158,71 @@ export interface V1Clause {
   version: number;
 }
 
+/* Agent pipeline status — non-null while the agents are running for a case
+   (or briefly after). Lets the case room show an "agents running" card with
+   per-stage progress instead of a blank "no frame" state. */
+export interface V1FrameStage {
+  name: "proof_checks" | "turning_questions" | "narrative" | "assemble";
+  status: "running" | "done" | "degraded";
+}
+export interface V1FrameStatus {
+  running: boolean;
+  startedAt: string;
+  stages: V1FrameStage[];
+  finishedAt: string | null;
+  error: string | null;
+}
+
+/* Structured case context — the sourced on-chain + off-chain facts the agents
+   reasoned over. Rendered in the case room so the arbiter sees the same facts
+   the model used. Every fact carries a source label (P7). */
+export interface V1ContextDeliverable {
+  name: string;
+  due: string | null;
+  acceptanceCriteria: string | null;
+  source: "work_order" | "placeholder";
+}
+export interface V1ContextEvidence {
+  evidenceId: string;
+  title: string;
+  submittedBy: string;
+  sha256: string;
+  mimeType: string;
+}
+export interface V1ContextChainEvent {
+  eventName: string;
+  txHash: string;
+  block: number | null;
+  seenAt: string;
+}
+export interface V1ContextPaymentOnChain {
+  to: string;
+  amountDisplay: string;
+  releaseTimestamp: string;
+  refundTo: string;
+  withdrawnAmountDisplay: string;
+  refunded: boolean;
+}
+export interface V1CaseContext {
+  allegation: string;
+  claimType: string;
+  challengedAmountMicroUsdc: string;
+  disputeOpenedAt: string;
+  paymentAmountMicroUsdc: string;
+  payer: string;
+  recipient: string;
+  paidAt: string;
+  paymentTxHash: string;
+  response: { text: string; submittedAt: string } | null;
+  deliverables: V1ContextDeliverable[];
+  evidence: V1ContextEvidence[];
+  clauses: { clauseNumber: number; text: string; parameters: Record<string, number> }[];
+  paymentOnChain: V1ContextPaymentOnChain | null;
+  chainFigures: { arbiterReserve: string; recipientDebt: string } | null;
+  chainEvents: V1ContextChainEvent[];
+  onChainUnavailable: boolean;
+}
+
 export interface V1CaseDetail {
   case: V1Case;
   payment: V1Payment | null;
@@ -167,6 +232,8 @@ export interface V1CaseDetail {
   analyses: Array<{ analysisId: string; version: number; status: string; analysisHash: string }>;
   correction: V1Correction | null;
   frame: V1Frame | null;
+  frameStatus: V1FrameStatus | null;
+  caseContext: V1CaseContext | null;
   clauses: V1Clause[];
 }
 
@@ -283,6 +350,14 @@ export const v1api = {
     v1request<{ frameId: string; frame: V1Frame; narrative: string | null; degradeLevel: number }>(`/v1/cases/${caseId}/frame`, {
       method: "POST",
       body: JSON.stringify(body),
+      idempotencyKey,
+    }),
+  /** Re-fetch on-chain + off-chain data and re-run the agents (the explicit
+      "refresh case data" action). Returns the freshly assembled frame. */
+  refreshCase: (caseId: string, idempotencyKey: string) =>
+    v1request<{ frameId: string; frame: V1Frame; narrative: string | null; degradeLevel: number }>(`/v1/cases/${caseId}/refresh`, {
+      method: "POST",
+      body: JSON.stringify({}),
       idempotencyKey,
     }),
   logFrameAction: (caseId: string, callId: string, action: string, idempotencyKey: string) =>

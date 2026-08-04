@@ -18,6 +18,8 @@ import {
 } from "./models.ts";
 import { getLatestFrame } from "../agent/frame-assembly.ts";
 import { DEMO_PACK_REF } from "../seed/policy-pack.ts";
+import { getFrameStatus } from "./frameStatus.ts";
+import { buildCaseContext } from "./caseContext.ts";
 
 /** Load the demo policy-pack clauses (for the case-room evidence list, FIN-115). */
 async function getDemoClauses() {
@@ -241,6 +243,18 @@ export async function openCase(input: OpenCaseInput) {
   });
 
   await Promise.all([caseDoc.save(), payment.save()]);
+
+  // Auto-run the agent pipeline (deterministic proof checks + Bedrock questions
+  // + narrative). Fire-and-forget — case-open returns immediately; the reviewer
+  // sees an "agents running" status (via getCaseDetail().frameStatus) until the
+  // frame lands. The Bedrock calls take a few seconds; the case never blocks.
+  // Lazy import to avoid a module cycle (orchestrator imports getCaseDetail).
+  void import("./frameOrchestrator.ts")
+    .then(({ assembleForCase }) => assembleForCase(caseId))
+    .catch((e) =>
+      console.error(`[openCase] auto frame-assembly failed for ${caseId}:`, e instanceof Error ? e.message : e),
+    );
+
   return { caseDoc, claimHash: envelope.claimHash };
 }
 
@@ -293,6 +307,13 @@ export async function submitResponse(params: {
   });
 
   await Promise.all([caseDoc.save(), responseDoc.save()]);
+
+  // T3 trigger (Addendum §C): a new reply arrived — re-run the agent pipeline so
+  // the frame reflects the recipient's response. Fire-and-forget, non-blocking.
+  void import("./frameOrchestrator.ts")
+    .then(({ assembleForCase }) => assembleForCase(params.caseId))
+    .catch((e) => console.error(`[submitResponse] auto frame-assembly failed for ${params.caseId}:`, e instanceof Error ? e.message : e));
+
   return { caseDoc, responseDoc };
 }
 
@@ -547,6 +568,13 @@ export async function recordEvidence(params: {
     submittedAt: new Date().toISOString(),
   });
   await evidence.save();
+
+  // T2 trigger (Addendum §C): new evidence arrived — re-run the agent pipeline so
+  // the frame reflects the updated evidence record. Fire-and-forget.
+  void import("./frameOrchestrator.ts")
+    .then(({ assembleForCase }) => assembleForCase(params.caseId))
+    .catch((e) => console.error(`[recordEvidence] auto frame-assembly failed for ${params.caseId}:`, e instanceof Error ? e.message : e));
+
   return evidence;
 }
 
@@ -606,5 +634,21 @@ export async function getCaseDetail(caseId: string) {
   // Both degrade to null/empty if absent — the case room renders v1 without them.
   const frame = await getLatestFrame(caseId);
   const clauses = await getDemoClauses();
-  return { case: caseDoc, payment, response, evidence, decision: decisions, analyses, correction, frame, clauses };
+  // frameStatus: non-null only while the agent pipeline is running (or briefly
+  // after). Lets the UI render an "agents running" card without polling.
+  const frameStatus = getFrameStatus(caseId);
+  // Build the structured case context once (on-chain + off-chain sourced facts)
+  // and share it with the frame input builder so the chain is read once. Built
+  // lazily so a downstream caller that only needs the frame doesn't pay for it.
+  const detailSoFar = { case: caseDoc, payment, response, evidence, decision: decisions, analyses, correction, frame, frameStatus, clauses };
+  return detailSoFar;
+}
+
+/**
+ * The structured case context (sourced on-chain + off-chain facts the agents
+ * reason over). Built on demand from a getCaseDetail() result so the chain is
+ * read at most once per request. Exported for the frame orchestrator + UI.
+ */
+export async function getCaseContext(detail: Awaited<ReturnType<typeof getCaseDetail>>) {
+  return buildCaseContext(detail);
 }

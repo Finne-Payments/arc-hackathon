@@ -15,8 +15,9 @@ import { Payment, Case as CaseModel, Correction, Job, Invitation } from "./model
 import { getEvidenceStore } from "../integrations/storage/localStore.ts";
 import { canonicalHash as backendCanonicalHash } from "../canonical.ts";
 import { submitSponsoredTransfer, pollTransaction, verifyWebhookSignature, walletInventoryCheck, getTransactionState } from "../integrations/circle/circleService.ts";
-import { assembleFrame, getLatestFrame } from "../agent/frame-assembly.ts";
-import { loadClauseParameters, DEMO_PACK_REF } from "../seed/policy-pack.ts";
+import { getLatestFrame } from "../agent/frame-assembly.ts";
+import { assembleForCase } from "./frameOrchestrator.ts";
+import { DEMO_PACK_REF } from "../seed/policy-pack.ts";
 import { PolicyClause } from "./models.ts";
 import { recordHumanAction } from "../agent/model-client.ts";
 
@@ -277,7 +278,32 @@ export function createV1Router(config: Config): Router {
   router.get("/v1/cases/:caseId", requirePerm("case:read"), async (req: Request, res: Response, next: NextFunction) => {
     try {
       const detail = await svc.getCaseDetail(req.params.caseId);
-      res.json(detail);
+      // Attach the structured case context (sourced on-chain + off-chain facts)
+      // so the case room can render what the agents reasoned over. Built on
+      // demand here; degrades to null if the chain is unreachable.
+      const caseContext = await svc.getCaseContext(detail).catch(() => null);
+      res.json({ ...detail, caseContext });
+    } catch (e) { next(e); }
+  });
+
+  // 18a: POST /v1/cases/:caseId/refresh — re-fetch on-chain + off-chain data and
+  // re-run the agent pipeline. The explicit "restart the agents" action for the
+  // reviewer: rebuilds the case context (fresh chain reads) then assembles a new
+  // frame. Reuses assembleForCase + frameStatus (the "agents running" card).
+  router.post("/v1/cases/:caseId/refresh", requirePerm("analysis:run"), requireIdempotencyKey, async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const result = await assembleForCase(req.params.caseId, {
+        deliverables: req.body?.deliverables,
+        deliveryTimestamps: req.body?.deliveryTimestamps,
+        rejectionTimestamps: req.body?.rejectionTimestamps,
+        deliverableAmountsMicroUsdc: req.body?.deliverableAmountsMicroUsdc,
+      });
+      res.status(201).json({
+        frameId: result.frameId,
+        frame: result.frame,
+        narrative: result.narrative,
+        degradeLevel: result.degradeLevel,
+      });
     } catch (e) { next(e); }
   });
 
@@ -438,55 +464,16 @@ export function createV1Router(config: Config): Router {
   });
 
   // 26b: POST /v1/cases/:caseId/frame — assemble + persist a fresh frame
+  // (manual re-run; the auto-trigger on case-open uses the same orchestrator).
   router.post("/v1/cases/:caseId/frame", requirePerm("analysis:run"), requireIdempotencyKey, async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const caseId = req.params.caseId;
-      const detail = await svc.getCaseDetail(caseId);
-      const c = detail.case;
-      const payment = detail.payment;
-
-      // Build the check input from the case record. Degrade gracefully when
-      // payment/work-order data is incomplete — checks return "missing" findings.
-      const clauses = await loadClauseParameters();
-      const checkInput = {
-        payment: {
-          amountMicroUsdc: payment?.amountMicroUsdc ?? c.challengedAmountMicroUsdc,
-          recipient: payment?.recipient ?? "",
-          payer: payment?.payer ?? "",
-          paidAt: payment?.paidAt ?? c.openedAt,
-        },
-        challengedAmountMicroUsdc: c.challengedAmountMicroUsdc,
-        claimType: c.claimType ?? "non_delivery",
-        allegation: c.allegation ?? "",
-        disputeOpenedAt: c.openedAt,
-        // Demo-bound: no work-order linkage in v1 yet, so deliverables come from
-        // the request body if provided, else a single contested deliverable.
-        deliverables: (req.body?.deliverables as any[]) ?? [{ name: "Contested deliverable", due: c.openedAt, acceptanceCriteria: "" }],
-        deliveryTimestamps: req.body?.deliveryTimestamps ?? {},
-        rejectionTimestamps: req.body?.rejectionTimestamps ?? {},
-        clauses,
-      };
-
-      const unresolvedInput = {
-        hasResponse: !!detail.response,
-        evidenceBySide: {
-          platform: detail.evidence.filter((e: any) => e.submittedBy !== "recipient").length,
-          recipient: detail.evidence.filter((e: any) => e.submittedBy === "recipient").length,
-        },
-        contestedAmountMicroUsdc: c.challengedAmountMicroUsdc,
-        deliverableAmountsMicroUsdc: req.body?.deliverableAmountsMicroUsdc ?? [],
-        deliverablesWithoutCriteria: (req.body?.deliverables as any[])?.filter((d) => !d.acceptanceCriteria).map((d) => d.name) ?? [],
-        findings: [], // filled by assembly after checks run; unresolved recomputes from its own inputs
-      };
-
-      const result = await assembleFrame({
-        caseId,
-        claimType: c.claimType ?? "non_delivery",
-        caseContext: req.body?.caseContext ?? `Dispute over ${c.challengedAmountMicroUsdc} micro-USDC. Claim: ${c.claimType ?? "non_delivery"}.`,
-        checkInput,
-        unresolvedInput,
+      const result = await assembleForCase(req.params.caseId, {
+        deliverables: req.body?.deliverables,
+        deliveryTimestamps: req.body?.deliveryTimestamps,
+        rejectionTimestamps: req.body?.rejectionTimestamps,
+        deliverableAmountsMicroUsdc: req.body?.deliverableAmountsMicroUsdc,
+        caseContext: req.body?.caseContext,
       });
-
       res.status(201).json({
         frameId: result.frameId,
         frame: result.frame,

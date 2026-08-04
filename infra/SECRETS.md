@@ -127,9 +127,9 @@ npm run cdk:deploy
 ## 6. Operational notes
 
 - **Force a redeploy without code change**: `aws ecs update-service --cluster finne --service FinneStack-BackendService --force-new-deployment`.
-- **SSM into the model instance** (no SSH key): `aws ssm start-session --target <instance-id>` (from `FinneModelStack/ModelInstanceId` output).
-- **Swap the model**: change `MODEL_NAME` in the CDK or set it as a GitHub-deployed env var, then redeploy. The `userDataCausesReplacement` flag spins up a new instance with the new model.
-- **Run models-unplugged** (cheapest, agent degrades to templates): set `MODEL_DEPLOY=false` before deploying — the model stack is skipped and `MODEL_BASE_URL=disabled`.
+- **Model runtime (hackathon)**: the agent layer uses **Amazon Bedrock** (`amazon.nova-lite-v1:0`) via the ECS task role — IAM auth, no API key, no GPU instance. The `FinneModelStack` (GPU EC2 vLLM) is **off by default** (`MODEL_DEPLOY` unset / `false`). To bring it back, set `MODEL_DEPLOY=true` and switch the backend env to `MODEL_PROVIDER=openai-compatible` with `MODEL_BASE_URL=http://model.finne.local:8000/v1`.
+- **Swap the Bedrock model**: change `MODEL_NAME` in the CDK task env (`infra/cdk/lib/finne-stack.ts`) and redeploy. Foundation models (Nova, Titan) need no console access request; Anthropic/Meta families need model access enabled in the Bedrock console first.
+- **Run models-unplugged** (cheapest, agent degrades to templates): set `MODEL_PROVIDER=openai-compatible` + `MODEL_BASE_URL=disabled` in the task env and redeploy.
 - **Tear down**: `npm run cdk:destroy` (both stacks; S3 buckets use `autoDeleteObjects`, EBS volumes destroy).
 
 ## 7. What the pipeline does NOT do

@@ -36,6 +36,25 @@ async function setupSwagger(app: express.Application): Promise<void> {
 export function createApp(): express.Application {
   const app = express();
   app.use(cors());
+
+  // Strip the /api prefix used by the frontend. The SPA always calls /api/<x>
+  // (web/src/api.ts → API_BASE = "/api"), but the routers below mount at /<x>
+  // (e.g. /auth/wallet, /wallet/balance) with no /api prefix. In dev the Vite
+  // proxy strips /api (vite.config.ts), and in docker-compose nginx strips it
+  // (nginx.conf.template). In the production single-container deploy the
+  // backend serves the SPA itself (server.ts) with no proxy in front, so we
+  // strip /api here — otherwise /api/auth/wallet hits Express verbatim and 404s.
+  // This is a no-op when the prefix is already absent (dev/compose). /api-docs
+  // and /api-docs.json are left untouched (they don't match /api/ or /api).
+  app.use((req: Request, _res: Response, next: NextFunction) => {
+    if (req.url.startsWith("/api/")) {
+      req.url = req.url.slice(4); // drop "/api", keep the leading "/"
+    } else if (req.url === "/api") {
+      req.url = "/";
+    }
+    next();
+  });
+
   app.use(express.json({ limit: "4mb" })); // PRD §11 — 4 MB body limit
   app.use(resolveSession);
 

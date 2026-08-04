@@ -25,11 +25,12 @@ const ECR_URI = `${account}.dkr.ecr.${region}.amazonaws.com/finne`;
 const backendImage = ecs.ContainerImage.fromRegistry(`${ECR_URI}:backend`);
 const webImage = ecs.ContainerImage.fromRegistry(`${ECR_URI}:web`);
 
-// The self-hosted model endpoint (private DNS from the model stack). Passed to
-// the app stack so the backend's MODEL_BASE_URL points at it. If MODEL_DEPLOY
-// is "false", the app runs models-unplugged (FIN-105, P8).
+// The self-hosted model endpoint (private DNS from the model stack). The
+// hackathon deployment uses Amazon Bedrock instead (MODEL_PROVIDER=bedrock in
+// the backend task env), so the GPU model stack is OFF by default — no EC2 GPU
+// instance, no vLLM, no HF download. Set MODEL_DEPLOY=true to bring it back.
 const MODEL_DNS = "model.finne.local";
-const deployModel = (process.env.MODEL_DEPLOY ?? "true") !== "false";
+const deployModel = process.env.MODEL_DEPLOY === "true";
 const modelBaseUrl = deployModel ? `http://${MODEL_DNS}:8000/v1` : "disabled";
 
 // 1. App stack (backend + web). Depends on ECR images existing.

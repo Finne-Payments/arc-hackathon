@@ -4,3 +4,6 @@ dist/
 .env.*
 !.env.example
 *.log
+
+# Local dev-only agent smoke test (not part of the app)
+agent-frame-smoke.ts

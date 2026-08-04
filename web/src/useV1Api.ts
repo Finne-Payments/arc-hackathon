@@ -39,6 +39,8 @@ export interface V1Actions {
   completeEvidence: (uploadId: string, caseId: string, title: string) => Promise<boolean>;
   /** Generate the verdict-free decision frame (Addendum A4). Degrade-safe. */
   runFrame: (caseId: string) => Promise<boolean>;
+  /** Re-fetch on-chain + off-chain data and re-run the agents (refresh action). */
+  refreshCase: (caseId: string) => Promise<boolean>;
 }
 
 const INITIAL: V1Data = {
@@ -135,6 +137,16 @@ export function useV1Api(): { data: V1Data; actions: V1Actions } {
     } catch { return false; }
   }, [loadCase]);
 
+  // Refresh: re-fetch on-chain + off-chain data and re-run the agents. Same
+  // degrade-safe contract as runFrame; the "agents running" card shows progress.
+  const refreshCase = useCallback(async (caseId: string) => {
+    try {
+      await v1api.refreshCase(caseId, idemKey("refresh"));
+      await loadCase(caseId);
+      return true;
+    } catch { return false; }
+  }, [loadCase]);
+
   const createCorrection = useCallback(async (caseId: string) => {
     try {
       const result = await v1api.createCorrectionInstruction(caseId, idemKey("cor"));
@@ -208,7 +220,7 @@ export function useV1Api(): { data: V1Data; actions: V1Actions } {
       createCorrection, declineCorrection, verifyCorrection,
       importPayment, demoPayout, anchorReceipt,
       allocateEvidence, completeEvidence,
-      runFrame,
+      runFrame, refreshCase,
     },
   };
 }

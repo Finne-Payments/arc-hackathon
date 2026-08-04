@@ -53,6 +53,44 @@ export function assertNoExternalModelKeys(env: NodeJS.ProcessEnv = process.env):
   }
 }
 
+/* ============================================================================
+   HACKATHON EXCEPTION — AWS Bedrock (model provider).
+
+   P9/D7 (and FIN-102 above) hold that inference runs on self-hosted open
+   weights and NO case content is sent to any external model API. Bedrock is a
+   hosted (external) model service, so routing dispute content to it is a
+   deliberate, temporary deviation from that posture — added for the hackathon
+   only, because self-hosted GPUs are inaccessible during the build.
+
+   The deviation must be impossible to trigger by accident. `MODEL_PROVIDER=bedrock`
+   is refused at boot unless the operator ALSO sets the explicit opt-in flag
+   `MODEL_BEDROCK_HACKATHON_OPT_IN=true`, and an AWS region is configured
+   (Bedrock authenticates via IAM, not an API key — see model-client.ts). When
+   the opt-in is absent, the default self-hosted posture is unchanged and every
+   guardrail (FIN-102, FIN-103, FIN-130, FIN-133) still applies.
+   ========================================================================== */
+
+export type ModelProvider = "openai-compatible" | "bedrock";
+
+/** Throws if the Bedrock provider is selected without the explicit hackathon opt-in. */
+export function assertBedrockHackathonOptIn(env: NodeJS.ProcessEnv = process.env): void {
+  if ((env.MODEL_PROVIDER ?? "openai-compatible") !== "bedrock") return; // default posture unchanged
+  if (env.MODEL_BEDROCK_HACKATHON_OPT_IN !== "true") {
+    throw new Error(
+      `boot-fail: MODEL_PROVIDER=bedrock selects a HOSTED external model (AWS Bedrock), ` +
+        `which deviates from P9/D7 (no case content sent to an external model API). ` +
+        `This is permitted only as an explicit hackathon exception. ` +
+        `Set MODEL_BEDROCK_HACKATHON_OPT_IN=true to confirm you accept the deviation.`,
+    );
+  }
+  if (!env.AWS_REGION) {
+    throw new Error(
+      `boot-fail: MODEL_PROVIDER=bedrock requires AWS_REGION (Bedrock authenticates via IAM, ` +
+        `not an API key). Set AWS_REGION (and ensure the IAM principal has bedrock:InvokeModel).`,
+    );
+  }
+}
+
 export interface Env {
   mongoUrl: string;
   backendPort: number;
@@ -85,10 +123,13 @@ export interface Env {
    * degrades silently to templates + computation.
    */
   model: {
+    provider: ModelProvider; // "openai-compatible" (default) | "bedrock" (hackathon exception)
     baseUrl: string;
     name: string; // served model name (config only — never a model name in call sites, FIN-101)
     digest: string | null; // pinned digest, recorded in docs/models.md (FIN-100)
     timeoutMs: number; // hard timeout per call (P8); default 5000
+    /** AWS region for the Bedrock client when provider=bedrock. */
+    awsRegion: string | null;
   };
 }
 
@@ -114,6 +155,8 @@ export function loadEnv(env: NodeJS.ProcessEnv = process.env): Env {
   // FIN-102: boot-fail on external model vendor keys (P9/D7). Runs before any
   // model config is read. Trivially passes when the self-hosted runtime is used.
   assertNoExternalModelKeys(env);
+  // HACKATHON: refuse Bedrock unless the operator explicitly opted in (P9/D7).
+  assertBedrockHackathonOptIn(env);
 
   const demoMode = env.DEMO_MODE !== "false"; // only literal 'false' disables (PRD §18.2)
 
@@ -133,7 +176,11 @@ export function loadEnv(env: NodeJS.ProcessEnv = process.env): Env {
       // contracts without any .env setup.
       refundProtocolAddress: env.REFUND_PROTOCOL_ADDRESS || DEFAULT_REFUND_PROTOCOL_ADDRESS,
       caseRegistryAddress: env.CASE_REGISTRY_ADDRESS || DEFAULT_CASE_REGISTRY_ADDRESS,
-      usdcAddress: env.USDC_ADDRESS || null,
+      // USDC address: ARC_USDC_ADDRESS is the documented convention (root .env,
+      // CDK finne-stack, verifier.ts, router.ts). USDC_ADDRESS is accepted as a
+      // back-compat alias (backend/.env). Without one, /config returns null and
+      // the New Payout button stays disabled — no money can move.
+      usdcAddress: env.ARC_USDC_ADDRESS || env.USDC_ADDRESS || '0x3600000000000000000000000000000000000000',
     },
     registryOperatorKey: env.REGISTRY_OPERATOR_PRIVATE_KEY || null,
     responseWindowHours: parseIntOr(env.RESPONSE_WINDOW_HOURS, 72),
@@ -143,6 +190,10 @@ export function loadEnv(env: NodeJS.ProcessEnv = process.env): Env {
     // even if a tick is missed. Replays are deduped by the unique index.
     indexerLookbackBlocks: BigInt(parseIntOr(env.INDEXER_LOOKBACK_BLOCKS, 5000)),
     model: {
+      // Provider selects the inference backend. Default "openai-compatible" is
+      // the self-hosted vLLM/Ollama posture (P9/D7). "bedrock" is the hackathon
+      // exception — gated by assertBedrockHackathonOptIn above.
+      provider: (env.MODEL_PROVIDER as ModelProvider) || "openai-compatible",
       // Self-hosted OpenAI-compatible endpoint. Default points at the compose
       // `model` service on the Docker network; dev (Ollama on Mac) overrides to
       // http://host.docker.internal:11434/v1. No vendor key is ever read.
@@ -150,6 +201,7 @@ export function loadEnv(env: NodeJS.ProcessEnv = process.env): Env {
       name: env.MODEL_NAME || "Qwen/Qwen2.5-3B-Instruct",
       digest: env.MODEL_DIGEST || null,
       timeoutMs: parseIntOr(env.MODEL_TIMEOUT_MS, 5000), // P8 hard timeout
+      awsRegion: env.AWS_REGION || null, // Bedrock client region (provider=bedrock)
     },
   };
   return loaded;

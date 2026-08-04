@@ -131,6 +131,17 @@ export class FinneStack extends cdk.Stack {
     kmsKey.grantEncryptDecrypt(taskRole);
     appSecrets.grantRead(taskRole);
 
+    // Bedrock invoke grant — the agent layer calls Amazon Bedrock via the task
+    // role (no static API key; IAM auth). Scoped to foundation models. This is
+    // the hackathon exception to P9/D7 (self-hosted open weights) — see
+    // backend/src/env.ts assertBedrockHackathonOptIn + docs/models.md.
+    taskRole.addToPolicy(
+      new iam.PolicyStatement({
+        actions: ["bedrock:InvokeModel"],
+        resources: ["arn:aws:bedrock:*::foundation-model/*"],
+      }),
+    );
+
     /* ======================================================================
        AWS-03: ALB (public, routes to backend + web)
        ====================================================================== */
@@ -196,11 +207,16 @@ export class FinneStack extends cdk.Stack {
         SQS_QUEUE_URL: jobQueue.queueUrl,
         SQS_DLQ_URL: dlq.queueUrl,
         KMS_KEY_ID: kmsKey.keyId,
-        // Self-hosted model service (P9/D7). Set by the model stack's CloudMap DNS.
-        // When absent, the agent degrades to models-unplugged (FIN-105, P8).
-        MODEL_BASE_URL: props.modelBaseUrl ?? "disabled",
-        MODEL_NAME: "Qwen/Qwen2.5-3B-Instruct",
+        // Agent model runtime — Amazon Bedrock (hackathon exception to P9/D7).
+        // The backend calls Bedrock via the task role (IAM auth, no API key).
+        // MODEL_PROVIDER=bedrock + the opt-in flag satisfy the boot-gate in
+        // backend/src/env.ts (assertBedrockHackathonOptIn). The SDK reads
+        // AWS_REGION to pick the Bedrock endpoint.
+        MODEL_PROVIDER: "bedrock",
+        MODEL_NAME: "amazon.nova-lite-v1:0",
+        MODEL_BEDROCK_HACKATHON_OPT_IN: "true",
         MODEL_TIMEOUT_MS: "5000",
+        AWS_REGION: this.region,
       },
       // Secrets pulled from Secrets Manager at task start (AWS-03). The
       // finne/app-secrets secret holds a JSON object with these keys; CI writes
