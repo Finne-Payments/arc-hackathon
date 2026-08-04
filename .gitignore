@@ -4,13 +4,24 @@ project/uploads/*.pdf
 .DS_Store
 
 # --- Secrets: NEVER commit real environment files. ---
+# Real .env / .env.deploy stay local; only the *.example templates ship.
 .env
 .env.*
 .env.local
 !.env.example
+!.env.deploy.example
+
+# --- Build outputs & caches (regenerated locally, never committed) ---
+node_modules/
+*.tsbuildinfo
+# AWS CDK synthesis output + resolved context (embeds account/region lookups)
+infra/cdk/cdk.out/
+infra/cdk/cdk.context.json
 
 # --- Editor / tooling state ---
 .zcode/
+.claude/
+.agents/
 .vscode/
 .idea/
 *.swp
