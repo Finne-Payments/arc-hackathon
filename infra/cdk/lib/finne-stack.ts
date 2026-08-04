@@ -42,15 +42,7 @@ export class FinneStack extends cdk.Stack {
        The repo is part of the stack — no manual `aws ecr create-repository`.
        CI pushes :backend and :web tags here on every merge to main.
        ====================================================================== */
-    const ecrRepo = new ecr.Repository(this, "FinneRepo", {
-      repositoryName: "finne",
-      imageScanOnPush: true,
-      imageTagMutability: ecr.TagMutability.IMMUTABLE,
-      removalPolicy: cdk.RemovalPolicy.DESTROY,
-      lifecycleRules: [
-        { maxImageCount: 10, description: "Keep the 10 most recent images per tag" },
-      ],
-    });
+    const ecrRepo = ecr.Repository.fromRepositoryName(this, "FinneRepo", "finne");
 
     /* ======================================================================
        AWS-02: KMS key (encrypts S3 + SQS + secrets)

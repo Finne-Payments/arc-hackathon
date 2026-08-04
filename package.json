@@ -19,7 +19,11 @@
     "lint": "npm run lint --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
     "test:e2e": "echo 'e2e: see QA-03 (Playwright) — not yet wired'",
-    "build": "npm run build --workspaces --if-present"
+    "build": "npm run build --workspaces --if-present",
+    "cdk:synth": "cd infra/cdk && npx cdk synth",
+    "cdk:diff": "cd infra/cdk && npx cdk diff",
+    "cdk:deploy": "cd infra/cdk && npx cdk deploy --require-approval never --all",
+    "cdk:destroy": "cd infra/cdk && npx cdk destroy --force --all"
   },
   "dependencies": {
     "@circle-fin/developer-controlled-wallets": "^10.6.0"
