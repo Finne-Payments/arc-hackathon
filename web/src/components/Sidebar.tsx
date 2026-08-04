@@ -31,14 +31,14 @@ function roleBadge(role: Role): { label: string; session: string; dot: string } 
   switch (role) {
     case "arbiter":
       return {
-        label: "Arbiter · Dana Whitfield · Northbeam Studios",
-        session: "Northbeam Studios",
+        label: "Arbiter · Dana Whitfield · Northstar Creators",
+        session: "Northstar Creators",
         dot: "var(--brand-500)",
       };
     case "merchant":
       return {
-        label: "Merchant · Northbeam Studios",
-        session: "Northbeam Studios",
+        label: "Merchant · Northstar Creators",
+        session: "Northstar Creators",
         dot: "var(--warn-500)",
       };
     case "platform":
@@ -48,7 +48,7 @@ function roleBadge(role: Role): { label: string; session: string; dot: string } 
         dot: "var(--brand-400)",
       };
     default:
-      return { label: "Customer · Maya Reyes", session: "Maya Reyes", dot: "var(--ok-500)" };
+      return { label: "Customer · Maya Santos", session: "Maya Santos", dot: "var(--ok-500)" };
   }
 }
 

@@ -67,7 +67,7 @@ function IdlePhase({ v, refundTo, caseNumber, actions }: { v: ViewModel; refundT
       )}
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, margin: "18px 0", opacity: v.optionsOpacity, pointerEvents: v.optionsPointer as React.CSSProperties["pointerEvents"] }}>
-        <OptionCard onClick={v.selectApprove} border={v.approveBorder} bg={v.approveBg} title="Approve refund" desc="33 USDC returns to Northbeam's refund address, fixed when the payment was made." />
+        <OptionCard onClick={v.selectApprove} border={v.approveBorder} bg={v.approveBg} title="Approve refund" desc="The contested 100 USDC returns to Northstar's refund address, fixed when the payment was made." />
         <OptionCard onClick={v.selectReject} border={v.rejectBorder} bg={v.rejectBg} title="Reject refund and release" desc="The payout stands; Maya can withdraw when the protection window ends." />
         <OptionCard onClick={v.selectClose} border={v.closeBorder} bg={v.closeBg} title="Close with no action" desc="The dispute ends; the payout continues on its original schedule." />
       </div>
@@ -155,7 +155,7 @@ function AwaitingPhase({ onCancel }: { onCancel: () => void }) {
       </div>
       <div style={{ fontFamily: "var(--font-sans)", fontWeight: 700, fontSize: 17, marginBottom: 6 }}>Waiting for your wallet signature</div>
       <div style={{ fontSize: 13, color: "var(--color-fg-muted)", maxWidth: 400, margin: "0 auto 20px", lineHeight: 1.6 }}>
-        Your wallet is asking you to sign the refund of 33 USDC to <span style={{ fontFamily: "var(--font-mono)", fontSize: 12 }}>0x4B21…9d3E</span>. Nothing moves until you sign.
+        Your wallet is asking you to sign the refund of 100 USDC to <span style={{ fontFamily: "var(--font-mono)", fontSize: 12 }}>0x4B21…9d3E</span>. Nothing moves until you sign.
       </div>
       <SecondaryButton onClick={onCancel} style={{ fontSize: 13, padding: "9px 16px" }}>Cancel</SecondaryButton>
     </Card>
