@@ -46,14 +46,15 @@ export async function scopeFor(req: Request): Promise<ScopeFilter | null> {
   if (!caller) return null;
 
   if (caller.role === "recipient") {
-    // Recipient sees payouts to their own wallet. If they haven't linked a wallet
-    // yet, they see nothing (safer than seeing everyone's payouts). The seeded
-    // demo recipient has recipientWallet set on each Payout, so this works once
-    // their User.walletAddress matches.
+    // Recipient sees payouts to their own wallet. Case-insensitive match — the
+    // chain stores checksummed addresses (e.g. 0x18a0...Cb80f500) but the user's
+    // wallet from MetaMask is all-lowercase. An exact match misses both.
     if (!caller.wallet) {
       return { payout: { _id: null }, case: { _id: null } };
     }
-    const payout: FilterQuery<PayoutDoc> = { recipientWallet: caller.wallet };
+    const payout: FilterQuery<PayoutDoc> = {
+      recipientWallet: { $regex: new RegExp(`^${caller.wallet.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i") },
+    };
     const payoutIds = (await Payout.find(payout).select("paymentId").lean()).map((p) => p.paymentId);
     const caseFilter = payoutIds.length ? { payoutRef: { $in: payoutIds } } : { _id: null };
     return { payout, case: caseFilter };

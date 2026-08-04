@@ -23,10 +23,12 @@ notificationRoutes.get("/notifications", requireAuthenticated, async (req, res, 
     const userId = req.session.userId!;
     const user = await User.findById(userId).lean();
 
-    // Build the query based on the caller's role
+    // Build the query based on the caller's role. Case-insensitive wallet match
+    // — the chain stores checksummed addresses, the user's wallet is lowercase.
     const query: Record<string, unknown> = { audienceRole: role };
     if (role === "recipient") {
-      query.recipientWallet = user?.walletAddress;
+      const w = user?.walletAddress ?? "";
+      query.recipientWallet = { $regex: new RegExp(`^${w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i") };
     } else {
       query.platformKey = user?.platformKey ?? "northbeam";
     }

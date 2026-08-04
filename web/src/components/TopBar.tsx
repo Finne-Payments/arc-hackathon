@@ -51,8 +51,7 @@ export function TopBar({
   }, [showNotif, showProfile, showSearch]);
 
   const unreadCount = apiData?.unreadCount ?? 0;
-  const allNotifications = apiData?.notifications ?? [];
-  const notifications = allNotifications.filter((n) => !n.readAt);
+  const notifications = apiData?.notifications ?? [];
   const walletAddr = user?.walletAddress ?? null;
   const wb = apiData?.walletBalance ?? null;
   const initial = (user?.displayName ?? user?.email ?? "U").slice(0, 1).toUpperCase();
@@ -285,6 +284,8 @@ export function TopBar({
                       onClick={() => {
                         if (n.caseNumber) {
                           actions.viewCase(n.caseNumber);
+                        } else if (n.paymentId) {
+                          actions.viewReceipt(n.paymentId);
                         } else {
                           actions.go("receipt");
                         }
@@ -296,6 +297,7 @@ export function TopBar({
                         borderBottom: "1px solid var(--color-border)",
                         cursor: "pointer",
                         background: n.readAt ? "transparent" : "var(--brand-50)",
+                        opacity: n.readAt ? 0.6 : 1,
                       }}
                     >
                       <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 2 }}>
@@ -429,14 +431,33 @@ export function TopBar({
 
               <div style={{ borderTop: "1px solid var(--color-border)", margin: "2px 8px", paddingTop: 8, display: "flex", flexDirection: "column", gap: 6 }}>
                 <ProfileRow label="Role" value={roleLabel} />
-                <ProfileRow label="Balance" value={wb?.usdc != null ? `${wb.usdc} USDC` : "—"} mono />
+                <ProfileRow label="Balance" value={wb?.usdc != null ? `${wb.usdc} USDC` : "Loading…"} mono />
                 {wb?.protected != null && Number(wb.protected) > 0 && (
                   <ProfileRow label="Protected" value={`${wb.protected} USDC`} mono />
                 )}
                 {wb?.debt != null && Number(wb.debt) > 0 && (
                   <ProfileRow label="Debt" value={`${wb.debt} USDC`} mono />
                 )}
-                <ProfileRow label="Wallet" value={walletAddr ? `${walletAddr.slice(0, 6)}…${walletAddr.slice(-4)}` : "Not connected"} mono={!!walletAddr} ok={!!walletAddr} />
+                {/* Full wallet address with copy button */}
+                {walletAddr ? (
+                  <div style={{ padding: "5px 12px" }}>
+                    <div style={{ fontSize: 11, color: "var(--color-fg-subtle)", textTransform: "uppercase", letterSpacing: ".04em", marginBottom: 4 }}>Wallet</div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                      <span style={{ fontSize: 11, fontFamily: "var(--font-mono)", color: "var(--color-fg-muted)", wordBreak: "break-all", flex: 1 }}>
+                        {walletAddr}
+                      </span>
+                      <button
+                        onClick={() => { navigator.clipboard.writeText(walletAddr); }}
+                        title="Copy address"
+                        style={{ border: "1px solid var(--color-border)", background: "var(--color-surface)", cursor: "pointer", borderRadius: "var(--radius-sm)", padding: "3px 6px", fontSize: 13, color: "var(--color-fg-muted)", flexShrink: 0 }}
+                      >
+                        ⧉
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <ProfileRow label="Wallet" value="Not connected" />
+                )}
               </div>
 
               {onLogout && (

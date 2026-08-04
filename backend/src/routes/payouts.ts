@@ -60,7 +60,16 @@ payoutRoutes.get("/payouts", requirePermission("payout:read"), async (req, res, 
     void currentRole(req); // role available; list scoping is per-seat (GAP-B1)
     const scope = await scopeFor(req);
     const payouts = await Payout.find(scope?.payout ?? {}).sort({ paidAt: -1 }).lean();
-    res.json({ payouts });
+    // Join the work order description into each payout so the ledger's "For"
+    // column shows what the merchant entered — without a separate fetch.
+    const paymentIds = payouts.map((p) => p.paymentId);
+    const workOrders = await WorkOrder.find({ paymentId: { $in: paymentIds } }).lean();
+    const woByPaymentId = new Map(workOrders.map((w) => [w.paymentId, w]));
+    const enriched = payouts.map((p) => ({
+      ...p,
+      description: woByPaymentId.get(p.paymentId)?.description ?? null,
+    }));
+    res.json({ payouts: enriched });
   } catch (e) {
     next(e);
   }

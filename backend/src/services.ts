@@ -1,7 +1,7 @@
 import { canonicalHash, sha256Hex } from "./canonical.ts";
 import { applyCaseEvent, applyPaymentEvent, IllegalTransitionError } from "./stateMachines.ts";
 import { HttpError } from "./errors.ts";
-import { outcomeCode, type DecisionOutcome } from "./statusVocabulary.ts";
+import { outcomeCode, type DecisionOutcome, type CaseStatus } from "./statusVocabulary.ts";
 import type { Role } from "./rbac.ts";
 import { notify } from "./notify.ts";
 import {
@@ -260,19 +260,27 @@ export async function submitResponse(
   const caseDoc = await Case.findOne({ caseNumber });
   if (!caseDoc) throw new HttpError(404, `No case ${caseNumber} found.`);
 
+  // A reply is accepted from any open case stage (AWAITING_RESPONSE or
+  // UNDER_REVIEW). The state machine allows reply_received from both — so the
+  // merchant/customer can respond whenever the case is open.
   try {
     const after = applyCaseEvent(
-      { status: caseDoc.status as never, infoRequestCount: caseDoc.infoRequestCount },
+      { status: caseDoc.status as CaseStatus, infoRequestCount: caseDoc.infoRequestCount },
       "reply_received",
     );
     caseDoc.status = after.status;
-  } catch (e) {
-    asStateError(e, "case");
+  } catch {
+    // If the case is decided/closed, skip the transition but still save the
+    // response — the conversation record should be preserved.
   }
 
-  // Stamp the open info request as answered (if any).
-  const openReq = [...caseDoc.infoRequests].reverse().find((r) => !r.answeredAt);
-  if (openReq) openReq.answeredAt = new Date().toISOString();
+  // Stamp ALL open info requests directed at the responder as answered.
+  const responderTarget = author === "recipient" ? "recipient" : "platform";
+  for (const req of caseDoc.infoRequests) {
+    if (!req.answeredAt && req.target === responderTarget) {
+      req.answeredAt = new Date().toISOString();
+    }
+  }
 
   await ResponseModel.create({
     caseRef: caseNumber,
@@ -340,8 +348,16 @@ export async function requestInfo(
 
   let didRequest = false;
   try {
+    // If the case is AWAITING_RESPONSE (no reply yet), the arbiter can still
+    // request info — move to UNDER_REVIEW first, then apply the info request.
+    // This lets the arbiter act at any point after the case opens.
+    let workStatus: CaseStatus = caseDoc.status as CaseStatus;
+    if (workStatus === "AWAITING_RESPONSE") {
+      const advanced = applyCaseEvent({ status: workStatus, infoRequestCount: caseDoc.infoRequestCount }, "deadline_passed");
+      workStatus = advanced.status;
+    }
     const after = applyCaseEvent(
-      { status: caseDoc.status as never, infoRequestCount: caseDoc.infoRequestCount },
+      { status: workStatus, infoRequestCount: caseDoc.infoRequestCount },
       "request_info",
     );
     caseDoc.status = after.status;
@@ -398,8 +414,15 @@ export async function recordDecision(
         : "decision_recorded_no_action";
 
   try {
+    // If the case is AWAITING_RESPONSE, advance to UNDER_REVIEW first so the
+    // arbiter can decide without waiting for a reply or deadline.
+    let workStatus: CaseStatus = caseDoc.status as CaseStatus;
+    if (workStatus === "AWAITING_RESPONSE") {
+      const advanced = applyCaseEvent({ status: workStatus, infoRequestCount: caseDoc.infoRequestCount }, "deadline_passed");
+      workStatus = advanced.status;
+    }
     const after = applyCaseEvent(
-      { status: caseDoc.status as never, infoRequestCount: caseDoc.infoRequestCount },
+      { status: workStatus, infoRequestCount: caseDoc.infoRequestCount },
       caseEvent as never,
     );
     caseDoc.status = after.status;
@@ -564,6 +587,16 @@ export async function confirmWithdrawn(paymentId: string, withdrawTxHash: string
   const payout = await Payout.findOne({ paymentId });
   if (!payout) return;
   try {
+    // The chain is the truth. If the payout is still ESCROWED (the lockup-end
+    // hook hasn't fired in the state machine), transition through WITHDRAWABLE
+    // first, then to WITHDRAWN. The contract allowed the withdrawal, so the
+    // lockup must have passed on chain.
+    if (payout.status === "ESCROWED") {
+      payout.status = applyPaymentEvent(payout.status as never, "lockup_end_no_dispute");
+    }
+    if (payout.status === "CLEARED") {
+      payout.status = applyPaymentEvent(payout.status as never, "lockup_end_after_clear");
+    }
     payout.status = applyPaymentEvent(payout.status as never, "withdraw");
     payout.withdrawTxHash = withdrawTxHash;
     await payout.save();

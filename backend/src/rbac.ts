@@ -42,6 +42,7 @@ export const MATRIX: Record<Role, Permission[]> = {
     "payout:read",
     "case:open",
     "case:read",
+    "case:respond",
     "case:add_evidence",
     "case:request_info",
     "case:decide",

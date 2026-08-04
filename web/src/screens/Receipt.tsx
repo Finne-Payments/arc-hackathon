@@ -1,7 +1,7 @@
 import { useState } from "react";
 import type { FinneActions, ViewModel } from "../useFinne";
 import type { ApiData } from "../useApi";
-import { BackLink, Card, Eyebrow, SecondaryButton, SharedViewBadge, SpinnerLabel, StatusPill, TechChip } from "../components/primitives";
+import { BackLink, Card, Eyebrow, PrimaryButton, SecondaryButton, SharedViewBadge, SpinnerLabel, StatusPill, TechChip } from "../components/primitives";
 import { OpenDisputeModal } from "../components/OpenDisputeModal";
 import { explorerAddr, explorerTx, receiptStatusView, shortHex } from "../mappers";
 
@@ -45,6 +45,34 @@ export function Receipt({ v, actions, apiData }: { v: ViewModel; actions: FinneA
   const [disputeOpen, setDisputeOpen] = useState(false);
   const disputedPaymentId = payout?.paymentId ?? v.selectedPaymentId ?? "";
   const disputedAmount = payout?.amount ?? "0";
+
+  // Withdraw state — the recipient can withdraw from inside the receipt too.
+  const [withdrawing, setWithdrawing] = useState(false);
+  const [withdrawMsg, setWithdrawMsg] = useState<string | null>(null);
+  const canWithdraw = v.isRecipient && payout && (payout.status === "WITHDRAWABLE" || payout.status === "ESCROWED") && !payout.withdrawTxHash;
+
+  const doWithdraw = async () => {
+    if (!payout) return;
+    setWithdrawing(true);
+    setWithdrawMsg("Opening your wallet…");
+    try {
+      const { connectWallet, signWithdraw } = await import("../wallet.ts");
+      const { api } = await import("../api.ts");
+      const cfg = await api.config();
+      const rpAddr = cfg.refundProtocolAddress ?? "";
+      if (!rpAddr) throw new Error("RefundProtocol address not configured.");
+      setWithdrawMsg("Confirm the withdrawal in your wallet…");
+      await connectWallet();
+      setWithdrawMsg("Waiting for confirmation on Arc…");
+      await signWithdraw(rpAddr, payout.paymentId);
+      setWithdrawMsg("Withdrawal submitted — the indexer will confirm shortly.");
+    } catch (e) {
+      const { isUserRejection } = await import("../wallet.ts");
+      setWithdrawMsg(isUserRejection(e) ? "Withdrawal rejected in your wallet." : e instanceof Error ? e.message : "Withdrawal failed.");
+    } finally {
+      setWithdrawing(false);
+    }
+  };
 
   return (
     <div className="rise-in print-area" style={{ maxWidth: 820, margin: 0 }}>
@@ -116,6 +144,16 @@ export function Receipt({ v, actions, apiData }: { v: ViewModel; actions: FinneA
               <ChainRow label="Protection ends">
                 <span style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--ink-700)" }}>{payout.lockupEnd ? new Date(payout.lockupEnd).toUTCString() : "—"}</span>
               </ChainRow>
+              {payout.withdrawTxHash && (
+                <ChainRow label="Withdrawal transaction">
+                  <TechChip short={shortHex(payout.withdrawTxHash)} full={payout.withdrawTxHash} onCopy={actions.copyTech} explorer={explorerTx(explorerBase, payout.withdrawTxHash)} />
+                </ChainRow>
+              )}
+              {payout.refundTxHash && (
+                <ChainRow label="Refund transaction">
+                  <TechChip short={shortHex(payout.refundTxHash)} full={payout.refundTxHash} onCopy={actions.copyTech} explorer={explorerTx(explorerBase, payout.refundTxHash)} />
+                </ChainRow>
+              )}
               {payout.registryAnchorTx && (
                 <ChainRow label="Receipt anchored on Arc">
                   <TechChip short={shortHex(payout.registryAnchorTx)} full={payout.registryAnchorTx} onCopy={actions.copyTech} explorer={explorerTx(explorerBase, payout.registryAnchorTx)} />
@@ -166,7 +204,27 @@ export function Receipt({ v, actions, apiData }: { v: ViewModel; actions: FinneA
               ))}
             </div>
 
-            {v.screen === "receipt" && payout && payout.status !== "DISPUTED" && payout.status !== "REFUNDED" && (
+            {/* Withdraw — recipient can claim funds from inside the receipt */}
+            {canWithdraw && (
+              <div style={{ marginTop: 18 }}>
+                {withdrawing ? (
+                  <SpinnerLabel label={withdrawMsg ?? "Working…"} />
+                ) : withdrawMsg ? (
+                  <div style={{ fontSize: 12, color: "var(--color-fg-muted)" }}>{withdrawMsg}</div>
+                ) : (
+                  <PrimaryButton onClick={doWithdraw} style={{ fontSize: 13, padding: "9px 15px" }}>
+                    Withdraw {payout?.amount} USDC
+                  </PrimaryButton>
+                )}
+              </div>
+            )}
+            {payout?.withdrawTxHash && (
+              <div style={{ marginTop: 14, padding: "10px 14px", background: "var(--ok-soft)", border: "1px solid var(--ok-border)", borderRadius: "var(--radius-md)", fontSize: 13, color: "var(--ok-600)" }}>
+                ✓ Withdrawn — {payout.amount} USDC claimed by the recipient.
+              </div>
+            )}
+
+            {v.screen === "receipt" && payout && payout.status !== "DISPUTED" && payout.status !== "REFUNDED" && !payout.withdrawTxHash && (
               <SecondaryButton
                 onClick={() => setDisputeOpen(true)}
                 style={{ marginTop: 18, fontSize: 13, padding: "9px 15px" }}

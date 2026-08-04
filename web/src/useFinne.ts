@@ -26,8 +26,8 @@ const SIX_HOURS_ELEVEN_MIN = (6 * 3600 + 11 * 60) * 1000;
 // @finne/domain package exists yet, so this is a local mirror of the constant
 // (GAP-W1's shared-package half stays out of scope).
 const MIN_DECISION_REASON = 20;
-// Backend caps info requests at 2 per case (PRD §10.2, MAX_INFO_REQUESTS).
-const MAX_INFO_REQUESTS = 2;
+// The backend allows generous info requests per case (state machine
+// MAX_INFO_REQUESTS) so the arbiter can have a real conversation with both sides.
 
 export interface FinneState {
   /* props (demo-controllable) */
@@ -44,6 +44,9 @@ export interface FinneState {
   selectedPaymentId: string | null;
   /** The case the user clicked (e.g. from search) — drives which case is loaded. */
   selectedCaseId: string | null;
+  /** Bumps whenever evidence/reply/info-request is submitted, so App.tsx can
+   *  reload the active case and all seats see the new data. */
+  caseVersion: number;
   stripDismissed: boolean;
   copied: boolean;
   exportToast: boolean;
@@ -79,6 +82,7 @@ export function useFinne(initialRole: Role = "arbiter") {
     roleOverride: null,
     selectedPaymentId: null,
     selectedCaseId: null,
+    caseVersion: 0,
     stripDismissed: false,
     copied: false,
     exportToast: false,
@@ -310,16 +314,17 @@ export function useFinne(initialRole: Role = "arbiter") {
       reqCusBg: state.reqTarget === "customer" ? "var(--brand-50)" : "var(--color-surface)",
       reqText: state.reqText,
       onReqText: (val: string) => patch({ reqText: val }),
-      // Backend caps at MAX_INFO_REQUESTS per case (PRD §10.2). Disable the
-      // button once the limit is reached so the UI matches the rule.
-      reqCapReached: state.reqLog.length >= MAX_INFO_REQUESTS,
-      reqSendDisabled: state.reqLog.length >= MAX_INFO_REQUESTS || !state.reqText.trim(),
-      reqSendCursor: state.reqLog.length >= MAX_INFO_REQUESTS || !state.reqText.trim() ? "not-allowed" : "pointer",
-      reqSendBg: state.reqLog.length >= MAX_INFO_REQUESTS || !state.reqText.trim() ? "var(--ink-100)" : "var(--brand-600)",
-      reqSendFg: state.reqLog.length >= MAX_INFO_REQUESTS || !state.reqText.trim() ? "var(--color-fg-subtle)" : "#fff",
+      // The backend enforces the 2-request cap with a 409. We only disable the
+      // button when the text is empty — the server is the source of truth for
+      // the count, not local state (which doesn't sync from the server).
+      reqCapReached: false,
+      reqSendDisabled: !state.reqText.trim(),
+      reqSendCursor: !state.reqText.trim() ? "not-allowed" : "pointer",
+      reqSendBg: !state.reqText.trim() ? "var(--ink-100)" : "var(--brand-600)",
+      reqSendFg: !state.reqText.trim() ? "var(--color-fg-subtle)" : "#fff",
       sendReq: async () => {
         const t = state.reqText.trim();
-        if (!t || state.reqLog.length >= MAX_INFO_REQUESTS) return;
+        if (!t) return;
         // Map frontend target to backend target
         const backendTarget = state.reqTarget === "merchant" ? "platform" : "recipient";
         const caseNumber = state.selectedCaseId ?? "";
@@ -332,11 +337,11 @@ export function useFinne(initialRole: Role = "arbiter") {
             reqLog: [...s.reqLog, { target: s.reqTarget, text: t }],
             reqText: "",
             reqOpen: false,
-            caseStage: "awaiting_response",
+            caseVersion: s.caseVersion + 1,
           }));
-        } catch (e) {
-          // Keep the text so the user can retry
-          patch({ reqOpen: false });
+        } catch {
+          // Keep the composer open with the text so the user can retry.
+          // The error is surfaced by the ApiError in the catch.
         }
       },
       showReqCard: !!myLastReq && !stageDecided,
@@ -356,15 +361,22 @@ export function useFinne(initialRole: Role = "arbiter") {
       evSendCursor: state.evText.trim() ? "pointer" : "not-allowed",
       evSendBg: state.evText.trim() ? "var(--brand-600)" : "var(--ink-100)",
       evSendFg: state.evText.trim() ? "#fff" : "var(--color-fg-subtle)",
-      addEv: () => {
+      addEv: async () => {
         const t = state.evText.trim();
-        if (t)
-          setState((s) => ({
-            ...s,
-            evItems: [...s.evItems, { text: t, side: isClaimant ? "Merchant" : "Customer" }],
-            evText: "",
-            evOpen: false,
-          }));
+        if (!t) return;
+        const caseNumber = state.selectedCaseId ?? "";
+        if (!caseNumber) return;
+        try {
+          const { api } = await import("./api.ts");
+          await api.addEvidence(caseNumber, {
+            type: "message",
+            title: t.slice(0, 80),
+            fileOrText: t,
+          });
+          setState((s) => ({ ...s, evText: "", evOpen: false, caseVersion: s.caseVersion + 1 }));
+        } catch {
+          // keep the text so the user can retry
+        }
       },
 
       /* recipient reply / response */
@@ -380,7 +392,7 @@ export function useFinne(initialRole: Role = "arbiter") {
         try {
           const { api } = await import("./api.ts");
           await api.respond(caseNumber, { text: t });
-          setState((s) => ({ ...s, replyText: "", replySending: false, caseStage: "under_review" }));
+          setState((s) => ({ ...s, replyText: "", replySending: false, caseStage: "under_review", caseVersion: s.caseVersion + 1 }));
         } catch {
           patch({ replySending: false });
         }
@@ -407,11 +419,12 @@ export function useFinne(initialRole: Role = "arbiter") {
           ? "More information requested"
           : "Under review",
       showReply: !stageAwaiting,
-      canDecide: (stageReview || stageMoreInfo) && isReviewer,
+      canDecide: (stageReview || stageMoreInfo || stageAwaiting) && isReviewer,
       showComposer: isRecipient && (stageAwaiting || stageMoreInfo) && screen === "case",
       disputeDeadlineCell: stageAwaiting ? "in " + countdown : stageDecided ? "Closed 29 Jul" : "—",
       selectedPaymentId: state.selectedPaymentId,
       selectedCaseId: state.selectedCaseId,
+      caseVersion: state.caseVersion,
     };
   }, [state, patch, startSim]);
 

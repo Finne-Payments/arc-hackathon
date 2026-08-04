@@ -113,7 +113,7 @@ export function Sidebar({
               color: "var(--color-fg-subtle)",
             }}
           >
-            on Arc
+            on Arc Testnet
           </span>
         </div>
 
@@ -150,20 +150,6 @@ export function Sidebar({
         </nav>
 
         <span style={{ flex: 1 }} />
-
-        <div
-          style={{
-            border: "1px solid var(--warn-border)",
-            background: "var(--warn-soft)",
-            borderRadius: "var(--radius-md)",
-            padding: "9px 11px",
-            fontSize: 11,
-            lineHeight: 1.5,
-            color: "var(--color-fg-muted)",
-          }}
-        >
-          <strong style={{ color: "var(--color-fg)" }}>Arc testnet</strong>
-        </div>
 
       </aside>
 

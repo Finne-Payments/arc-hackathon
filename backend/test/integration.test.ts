@@ -161,11 +161,10 @@ describe("dispute flow", () => {
     expect(decide.status).toBe(400);
   });
 
-  it("caps information requests at 2 per case", async () => {
+  it("allows multiple information requests per case", async () => {
     const c = await seedDisputedPayout();
-    // The first info request is allowed (case is UNDER_REVIEW) and moves the
-    // case to AWAITING_RESPONSE (PRD §10.2). A second request without a reply
-    // in between is correctly rejected — the case is no longer UNDER_REVIEW.
+    // The arbiter can request info at any stage — even while AWAITING_RESPONSE.
+    // The cap is generous (20) to allow a real back-and-forth conversation.
     const r1 = await request(app)
       .post(`/cases/${c.caseNumber}/requests`)
       .set("Authorization", `Bearer ${reviewerToken()}`)
@@ -176,8 +175,17 @@ describe("dispute flow", () => {
     const r2 = await request(app)
       .post(`/cases/${c.caseNumber}/requests`)
       .set("Authorization", `Bearer ${reviewerToken()}`)
-      .send({ target: "recipient", text: "And the invoice." });
-    expect(r2.status).toBe(409); // AWAITING_RESPONSE now, not UNDER_REVIEW
+      .send({ target: "platform", text: "And the invoice from the merchant." });
+    expect(r2.status).toBe(201); // arbiter can act at any stage
+    expect(r2.body.infoRequestCount).toBe(2);
+
+    // A third request also succeeds — no artificial 2-request cap.
+    const r3 = await request(app)
+      .post(`/cases/${c.caseNumber}/requests`)
+      .set("Authorization", `Bearer ${reviewerToken()}`)
+      .send({ target: "recipient", text: "One more thing." });
+    expect(r3.status).toBe(201);
+    expect(r3.body.infoRequestCount).toBe(3);
   });
 
   it("refund decision requires a linked wallet and returns an unsignedTx", async () => {

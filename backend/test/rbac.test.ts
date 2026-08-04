@@ -17,8 +17,8 @@ describe("RBAC matrix", () => {
     expect(can("reviewer", "workorder:create")).toBe(true);
   });
 
-  it("reviewer CANNOT respond (recipient-only asymmetry)", () => {
-    expect(can("reviewer", "case:respond")).toBe(false);
+  it("reviewer CAN respond (merchant seat needs to reply to info requests)", () => {
+    expect(can("reviewer", "case:respond")).toBe(true);
   });
 
   it("recipient can open + respond + add evidence but cannot decide", () => {

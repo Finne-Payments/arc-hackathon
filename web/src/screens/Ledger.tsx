@@ -33,14 +33,12 @@ function StatCard({
 /** Live ledger rows from the API. Empty when the DB is empty — no seed fallback. */
 function useRows(apiData?: ApiData): { rows: (LedgerRow & { paymentId?: string })[]; live: boolean } {
   if (!apiData) return { rows: [], live: false };
-  const workOrderDesc = (p: { workOrderRef: string | null }) =>
-    p.workOrderRef ? p.workOrderRef.split(":").slice(1).join(":") : null;
   // Resolve display names from config so we show real names, not raw addresses.
   const cfgRecipientWallet = apiData.config?.recipient?.walletAddress?.toLowerCase();
   const cfgRecipientName = apiData.config?.recipient?.displayName;
   const rows = apiData.payouts
     .map((p) => {
-      const view = payoutToLedgerView(p as never, workOrderDesc(p));
+      const view = payoutToLedgerView(p as never, p.description ?? null);
       // If this payout's recipient matches the configured recipient, show their
       // real display name instead of a truncated wallet address.
       let recipient = view.recipient;

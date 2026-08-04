@@ -52,24 +52,21 @@ function StatCard({ label, value, sub, labelColor }: { label: string; value: str
 }
 
 export function RecipientHome({ v, actions, apiData }: { v: ViewModel; actions: FinneActions; apiData?: ApiData }) {
-  const workOrderDesc = (p: { workOrderRef: string | null }) =>
-    p.workOrderRef ? p.workOrderRef.split(":").slice(1).join(":") : null;
   // Resolve the platform name from config so "from" shows a real name, not blank.
   const cfgPlatformName = apiData?.config?.platform?.name;
 
   // Live recipient payouts, mapped to the same view the merchant ledger uses.
   const rows = (apiData?.payouts ?? []).map((p) => {
-    const view = payoutToRecipientView(p, workOrderDesc(p));
-    // The Withdraw action shows when the REAL on-chain lockup has passed
-    // (view.withdrawable), regardless of whether the state machine has moved the
-    // payout to WITHDRAWABLE yet — the contract is the truth, and for an
-    // instant-settlement recipient (lockup=0) that's immediately.
+    const view = payoutToRecipientView(p, p.description ?? null);
     const settled = p.status === "WITHDRAWN" || p.status === "CLEARED" || p.status === "DEBT_SETTLED";
     return {
       ...view,
       from: cfgPlatformName ?? view.from,
-      action: settled ? ("receipt" as const) : view.withdrawable ? ("withdraw" as const) : ("receipt" as const),
-      meta: view.withdrawable ? "ready to withdraw" : undefined,
+      purpose: view.purpose,
+      deadlineLabel: view.deadline,
+      withdrawable: view.withdrawable && !settled,
+      settled,
+      paymentId: p.paymentId,
     };
   });
   const stats = apiData ? recipientStats(apiData.payouts as never) : null;
@@ -195,17 +192,16 @@ function Row({
     purpose: string;
     paid: string;
     status: { label: string; dot: "warn" | "brand" | "ok" | "risk" | "ink" };
-    deadline: string;
+    deadlineLabel: string;
     highlight: boolean;
     paymentId: string;
-    action?: "withdraw" | "receipt";
-    meta?: string;
+    withdrawable: boolean;
+    settled: boolean;
   };
   countdown: string;
   actions: FinneActions;
   isLast: boolean;
 }) {
-  const showWithdrawNote = row.action === "withdraw";
   const [withdrawing, setWithdrawing] = useState(false);
   const [withdrawMsg, setWithdrawMsg] = useState<string | null>(null);
 
@@ -240,7 +236,7 @@ function Row({
           gridTemplateColumns: COLS,
           gap: 12,
           padding: "11px 20px",
-          borderBottom: showWithdrawNote || !isLast ? "1px solid var(--color-border)" : "none",
+          borderBottom: !isLast ? "1px solid var(--color-border)" : "none",
           fontSize: 13.5,
           alignItems: "center",
           background: row.highlight ? "var(--warn-soft)" : "transparent",
@@ -251,25 +247,26 @@ function Row({
         <span>{row.purpose}</span>
         <span style={{ color: "var(--color-fg-muted)", fontSize: 13 }}>{row.paid}</span>
         <StatusPill label={row.status.label} dot={row.status.dot} />
-        <span style={{ fontSize: 13, color: "var(--color-fg-muted)" }}>{row.highlight ? `Reply due in ${countdown}` : row.deadline}</span>
-        <span style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 12 }}>
-          {row.meta && <span style={{ fontSize: 12, color: "var(--color-fg-subtle)" }}>{row.meta}</span>}
-          {row.action === "withdraw" ? (
+        <span style={{ fontSize: 13, color: "var(--color-fg-muted)" }}>
+          {row.highlight ? `Reply due in ${countdown}` : row.deadlineLabel}
+        </span>
+        <span style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 10 }}>
+          {/* Receipt is always available */}
+          <a onClick={() => actions.viewReceipt(row.paymentId)} style={{ cursor: "pointer", fontSize: 13, fontWeight: 600, whiteSpace: "nowrap" }}>Receipt</a>
+          {/* Withdraw only when the lockup has passed and not yet withdrawn */}
+          {row.withdrawable && !row.settled && (
             withdrawing ? (
               <SpinnerLabel label={withdrawMsg ?? "Working…"} size={15} />
             ) : withdrawMsg ? (
-              <span style={{ fontSize: 12, color: "var(--color-fg-muted)", maxWidth: 200 }}>{withdrawMsg}</span>
+              <span style={{ fontSize: 11, color: "var(--color-fg-muted)", maxWidth: 160 }}>{withdrawMsg}</span>
             ) : (
               <PrimaryButton onClick={doWithdraw} style={{ fontSize: 13, padding: "7px 14px" }}>
                 Withdraw
               </PrimaryButton>
             )
-          ) : (
-            <a onClick={() => actions.viewReceipt(row.paymentId)} style={{ cursor: "pointer", fontSize: 13, fontWeight: 600 }}>Receipt</a>
           )}
         </span>
       </div>
-      {showWithdrawNote}
     </>
   );
 }

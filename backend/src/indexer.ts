@@ -1,4 +1,5 @@
 import type { Log } from "viem";
+import { decodeAbiParameters, parseAbiParameter } from "viem";
 import { fetchChainLogs, decodeLog, readDebt } from "./chain/reads.ts";
 import { ChainEvent, Meta, Payout } from "./models/index.ts";
 import { confirmRefundExecuted, confirmWithdrawn, recordDetectedPayment } from "./services.ts";
@@ -170,11 +171,51 @@ export async function dispatch(
       break;
     }
     case "Withdrawal": {
-      const to = String(args.to ?? args[0] ?? "");
-      // resolve which payments were withdrawn — find the recipient's escrowed payouts
-      const payouts = await Payout.find({ recipientWallet: to, status: "WITHDRAWABLE" }).lean();
-      for (const p of payouts) {
-        await confirmWithdrawn(p.paymentId, txHash).catch(() => {});
+      // The Withdrawal event only carries (to, amount) — not WHICH payments
+      // were withdrawn. The contract's withdraw(uint256[]) takes an array of
+      // payment IDs; those IDs are in the transaction calldata. Decode them
+      // so we mark ONLY the actually-withdrawn payments, not every open
+      // payout for the recipient (which was marking all of them at once).
+      let withdrawnIds: string[] = [];
+      try {
+        const client = (await import("./chain/client.ts")).getPublicClient();
+        const tx = await client.getTransaction({ hash: txHash as `0x${string}` });
+        // withdraw(uint256[]) selector = first 4 bytes. The rest is the
+        // ABI-encoded uint256[] array.
+        if (tx.input && tx.input.length > 10) {
+          const calldata = tx.input.slice(10); // strip the 4-byte selector
+          const decoded = decodeAbiParameters(
+            [parseAbiParameter("uint256[]")],
+            `0x${calldata}` as `0x${string}`,
+          );
+          const ids = decoded[0] as bigint[];
+          withdrawnIds = ids.map((id) => String(id));
+        }
+      } catch {
+        // Calldata decode failed — fall back to the old behavior below.
+      }
+
+      if (withdrawnIds.length > 0) {
+        // We know the exact payment IDs from the calldata — mark only those.
+        for (const id of withdrawnIds) {
+          await confirmWithdrawn(id, txHash).catch(() => {});
+        }
+      } else {
+        // Fallback: couldn't decode calldata. Use the recipient address +
+        // the withdrawn amount to find the best match (avoid marking all).
+        const to = String(args.to ?? args[0] ?? "");
+        const amountBase = BigInt((args.amount ?? args[1] ?? 0) as bigint | number | string);
+        const payouts = await Payout.find({
+          recipientWallet: to,
+          status: { $nin: ["WITHDRAWN", "REFUNDED", "DEBT_SETTLED"] },
+        }).lean();
+        // Mark payouts whose individual amount matches, preferring exact match.
+        for (const p of payouts) {
+          const pAmountBase = BigInt(Math.round(Number(p.amount) * 1_000_000));
+          if (pAmountBase === amountBase) {
+            await confirmWithdrawn(p.paymentId, txHash).catch(() => {});
+          }
+        }
       }
       break;
     }

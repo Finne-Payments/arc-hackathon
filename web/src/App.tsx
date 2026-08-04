@@ -207,9 +207,13 @@ function AuthenticatedApp({ user, frontendRole, onLogout }: { user: PublicUser; 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [v.screen, v.selectedCaseId, v.selectedPaymentId, location.pathname]);
 
-  // When the role changes, redirect to the new role's home screen and reset the
-  // in-memory screen state so no stale screen from the previous role lingers.
+  // When the role changes (view-as dropdown or role switch), redirect to the
+  // new role's home screen. Uses a ref to skip the initial mount — the init
+  // effect above already handles the first load (deep link or home).
+  const prevRole = useRef(frontendRole);
   useEffect(() => {
+    if (prevRole.current === frontendRole) return; // skip initial mount
+    prevRole.current = frontendRole;
     const home = homeScreenForRole(frontendRole);
     const homePath = SCREEN_PATH[home];
     actions.go(home);
@@ -233,6 +237,17 @@ function AuthenticatedApp({ user, frontendRole, onLogout }: { user: PublicUser; 
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [v.screen]);
+
+  // Reload the active case when caseVersion bumps (after evidence/reply/request
+  // is submitted) so all seats — including the arbiter — see the new data.
+  useEffect(() => {
+    if (v.screen === "case" && v.caseVersion > 0) {
+      const caseNumber = v.selectedCaseId ?? activeCaseNumber(apiData.cases);
+      apiActions.loadCase(caseNumber);
+      void apiActions.refresh();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [v.caseVersion]);
 
   // Sync caseStage + reqLog from the live case data so the UI reflects the
   // real server state (e.g. case moved to AWAITING_RESPONSE after info request).

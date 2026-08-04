@@ -99,6 +99,8 @@ export interface PayoutRow {
   registryAnchorTx: string | null;
   refundTxHash: string | null;
   withdrawTxHash: string | null;
+  /** Work order description (joined from the work order by paymentId). */
+  description: string | null;
 }
 
 export interface WorkOrderRow {

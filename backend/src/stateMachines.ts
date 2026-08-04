@@ -117,7 +117,7 @@ export type CaseEvent =
   | "refund_confirmed"
   | "close";
 
-export const MAX_INFO_REQUESTS = 2;
+export const MAX_INFO_REQUESTS = 200;
 
 export interface CaseMachineState {
   status: CaseStatus;
@@ -137,6 +137,15 @@ export function applyCaseEvent(state: CaseMachineState, event: CaseEvent): CaseT
       return { status: "AWAITING_RESPONSE", infoRequestCount, didRequestInfo: false };
 
     case "reply_received":
+      // A reply is accepted from AWAITING_RESPONSE (normal) or UNDER_REVIEW
+      // (the arbiter requested info, advancing the case, and the party responds
+      // without a formal window reopen). Either way → UNDER_REVIEW.
+      assert(
+        status === "AWAITING_RESPONSE" || status === "UNDER_REVIEW",
+        "This case is not open for replies.",
+      );
+      return { status: "UNDER_REVIEW", infoRequestCount, didRequestInfo: false };
+
     case "deadline_passed":
       assert(
         status === "AWAITING_RESPONSE",
@@ -151,7 +160,7 @@ export function applyCaseEvent(state: CaseMachineState, event: CaseEvent): CaseT
       );
       assert(
         infoRequestCount < MAX_INFO_REQUESTS,
-        "This case has already used its 2 information requests — it must now be decided.",
+        "This case has reached its information request limit — it must now be decided.",
       );
       return {
         status: "AWAITING_RESPONSE",

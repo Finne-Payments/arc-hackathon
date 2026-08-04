@@ -51,20 +51,25 @@ walletRoutes.get("/wallet/balance", requireAuthenticated, async (req, res, next)
 
     if (client && wallet) {
       try {
-        const tasks: Promise<unknown>[] = [];
+        // Use allSettled so a single RPC rate-limit on one read doesn't null
+        // out all three values — each degrades independently.
+        const tasks: Promise<bigint>[] = [];
         tasks.push(
           usdcAddr
-            ? client.readContract({ address: usdcAddr, abi: ERC20_BALANCE_ABI, functionName: "balanceOf", args: [wallet] })
+            ? client.readContract({ address: usdcAddr, abi: ERC20_BALANCE_ABI, functionName: "balanceOf", args: [wallet] }) as Promise<bigint>
             : Promise.resolve(0n),
         );
         if (rp) {
-          tasks.push(client.readContract({ address: rp, abi: REFUND_PROTOCOL_ABI, functionName: "balances", args: [wallet] }));
-          tasks.push(client.readContract({ address: rp, abi: REFUND_PROTOCOL_ABI, functionName: "debts", args: [wallet] }));
+          tasks.push(client.readContract({ address: rp, abi: REFUND_PROTOCOL_ABI, functionName: "balances", args: [wallet] }) as Promise<bigint>);
+          tasks.push(client.readContract({ address: rp, abi: REFUND_PROTOCOL_ABI, functionName: "debts", args: [wallet] }) as Promise<bigint>);
         } else {
           tasks.push(Promise.resolve(0n));
           tasks.push(Promise.resolve(0n));
         }
-        const [u, p, d] = (await Promise.all(tasks)) as [bigint, bigint, bigint];
+        const [uSettled, pSettled, dSettled] = await Promise.allSettled(tasks);
+        const u = uSettled.status === "fulfilled" ? uSettled.value : 0n;
+        const p = pSettled.status === "fulfilled" ? pSettled.value : 0n;
+        const d = dSettled.status === "fulfilled" ? dSettled.value : 0n;
         usdc = fromBaseUnitsDisplay(u);
         protectedBalance = fromBaseUnitsDisplay(p);
         debt = fromBaseUnitsDisplay(d);
