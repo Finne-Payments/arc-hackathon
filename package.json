@@ -1,0 +1,27 @@
+{
+  "name": "finne",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Finné — registrar and evidence infrastructure for stablecoin payouts on Arc.",
+  "type": "module",
+  "workspaces": [
+    "packages/*",
+    "backend",
+    "web"
+  ],
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "packageManager": "npm@10.9.2",
+  "scripts": {
+    "install:all": "npm install",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "test:e2e": "echo 'e2e: see QA-03 (Playwright) — not yet wired'",
+    "build": "npm run build --workspaces --if-present"
+  },
+  "dependencies": {
+    "@circle-fin/developer-controlled-wallets": "^10.6.0"
+  }
+}

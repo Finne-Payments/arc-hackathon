@@ -1,0 +1,26 @@
+{
+  "name": "@finne/config",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Typed configuration and deployment manifests for Finné.",
+  "main": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./env": "./src/env.ts",
+    "./manifest": "./src/manifest.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "build": "echo '@finne/config is consumed as source (no build step)'"
+  },
+  "dependencies": {
+    "zod": "^3.24.1",
+    "@finne/domain": "*"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2",
+    "vitest": "^3.0.5"
+  }
+}

@@ -1,0 +1,857 @@
+openapi: 3.1.0
+info:
+  title: Finné Registrar API
+  version: 1.0.0
+  description: |
+    Finné — registrar and evidence infrastructure for stablecoin payouts on Arc.
+    The original payment is never reversed. Finné never holds funds, forces
+    repayment, or lets AI make the decision. All money movement is either the
+    original Arc USDC transfer or a separate recipient-authorized voluntary
+    correction.
+
+    **API-wide rules:**
+    - Every authenticated read is tenant and resource scoped.
+    - Every retryable write requires `Idempotency-Key`.
+    - Every asynchronous response returns `jobId` and a status URL.
+    - Client-supplied provider IDs, userOpHash, and transaction hashes are hints
+      until Arc reconciliation.
+    - No generic PATCH/DELETE exists for immutable receipt, claim, response,
+      analysis, decision, instruction, or audit records.
+    - Invitation/session secrets never appear in URLs.
+
+    This spec freezes exactly 36 canonical operations (FND-03).
+  contact:
+    name: Finné
+    url: https://github.com/Finne-Payments/arc-hackathon
+
+servers:
+  - url: /
+    description: Same-origin (web app proxy)
+
+security:
+  - bearerAuth: []
+
+paths:
+  # ── Health & meta (1–4) ──────────────────────────────────────────────────
+  /health/live:
+    get:
+      tags: [Health]
+      summary: Liveness probe (1)
+      security: []
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+
+  /health/ready:
+    get:
+      tags: [Health]
+      summary: Readiness probe — checks Mongo, queue, Arc RPC, config (2)
+      security: []
+      responses:
+        "200": { $ref: "#/components/responses/Ready" }
+        "503": { $ref: "#/components/responses/NotReady" }
+
+  /v1/meta:
+    get:
+      tags: [Meta]
+      summary: Deployment manifest — chain ID, registry address, versions (3)
+      security: []
+      responses:
+        "200":
+          description: Safe deployment metadata (no secrets).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Meta" }
+
+  /v1/me:
+    get:
+      tags: [Auth]
+      summary: Current authenticated actor (4)
+      responses:
+        "200":
+          description: Current session.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Session" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  # ── Recipient auth (5–7) ─────────────────────────────────────────────────
+  /v1/auth/recipient/challenges:
+    post:
+      tags: [Auth]
+      summary: Create a wallet-ownership challenge from an invitation (5)
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ChallengeRequest" }
+      responses:
+        "201":
+          description: Challenge issued.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Challenge" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/auth/recipient/sessions:
+    post:
+      tags: [Auth]
+      summary: Verify signature and issue a recipient session (6)
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SessionRequest" }
+      responses:
+        "201":
+          description: Recipient session issued.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuthToken" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /v1/auth/session:
+    delete:
+      tags: [Auth]
+      summary: End the current session (7)
+      responses:
+        "204": { description: Session ended. }
+
+  # ── Jobs (8) ─────────────────────────────────────────────────────────────
+  /v1/jobs/{jobId}:
+    get:
+      tags: [Jobs]
+      summary: Poll an async job (8)
+      parameters:
+        - $ref: "#/components/parameters/JobId"
+      responses:
+        "200":
+          description: Job status.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Job" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  # ── Dashboard (9) ────────────────────────────────────────────────────────
+  /v1/dashboard:
+    get:
+      tags: [Dashboard]
+      summary: Operations/reviewer dashboard summary (9)
+      responses:
+        "200":
+          description: Dashboard aggregates.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Dashboard" }
+
+  # ── Payments (10–16) ─────────────────────────────────────────────────────
+  /v1/demo/payouts:
+    post:
+      tags: [Payments]
+      summary: Create the 300 USDC demo payout via platform Circle EOA (10)
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DemoPayoutRequest" }
+      responses:
+        "202": { $ref: "#/components/responses/Accepted" }
+
+  /v1/payments/import:
+    post:
+      tags: [Payments]
+      summary: Import an existing finalized Arc USDC transfer (11)
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ImportRequest" }
+      responses:
+        "202": { $ref: "#/components/responses/Accepted" }
+
+  /v1/payments:
+    get:
+      tags: [Payments]
+      summary: List payments (12)
+      responses:
+        "200":
+          description: Payment list (tenant-scoped).
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/PaymentSummary" }
+
+  /v1/payments/{paymentId}:
+    get:
+      tags: [Payments]
+      summary: Payment detail with receipt + evidence citations (13)
+      parameters:
+        - $ref: "#/components/parameters/PaymentId"
+      responses:
+        "200":
+          description: Full payment detail.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PaymentDetail" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/payments/{paymentId}/proof-runs:
+    post:
+      tags: [Payments]
+      summary: Run deterministic proof checks (14)
+      parameters:
+        - $ref: "#/components/parameters/PaymentId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "202": { $ref: "#/components/responses/Accepted" }
+
+  /v1/payments/{paymentId}/anchors:
+    post:
+      tags: [Payments]
+      summary: Anchor the receipt hash (human approval required) (15)
+      parameters:
+        - $ref: "#/components/parameters/PaymentId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "202": { $ref: "#/components/responses/Accepted" }
+
+  /v1/payments/{paymentId}/cases:
+    post:
+      tags: [Cases]
+      summary: Open a bounded case (16)
+      parameters:
+        - $ref: "#/components/parameters/PaymentId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/OpenCaseRequest" }
+      responses:
+        "202": { $ref: "#/components/responses/Accepted" }
+
+  # ── Cases (17–19) ────────────────────────────────────────────────────────
+  /v1/cases:
+    get:
+      tags: [Cases]
+      summary: List cases (17)
+      responses:
+        "200":
+          description: Case list (tenant-scoped).
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/CaseSummary" }
+
+  /v1/cases/{caseId}:
+    get:
+      tags: [Cases]
+      summary: Case detail — shared record, allowedActions, timeline (18)
+      parameters:
+        - $ref: "#/components/parameters/CaseId"
+      responses:
+        "200":
+          description: Full case detail.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CaseDetail" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/cases/{caseId}/recipient-invitations:
+    post:
+      tags: [Cases]
+      summary: Issue a one-use recipient invitation (19)
+      parameters:
+        - $ref: "#/components/parameters/CaseId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "201":
+          description: Invitation created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Invitation" }
+
+  # ── Evidence (20–22) ─────────────────────────────────────────────────────
+  /v1/evidence/uploads:
+    post:
+      tags: [Evidence]
+      summary: Allocate an evidence upload + presigned URL (20)
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UploadRequest" }
+      responses:
+        "201":
+          description: Upload allocated.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UploadAllocation" }
+
+  /v1/evidence/uploads/{uploadId}/complete:
+    post:
+      tags: [Evidence]
+      summary: Finalize upload — HEAD/scan/hash/verify (21)
+      parameters:
+        - $ref: "#/components/parameters/UploadId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "201":
+          description: Evidence finalized.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Evidence" }
+
+  /v1/evidence/{evidenceId}/download:
+    get:
+      tags: [Evidence]
+      summary: Authorized short-lived download URL (22)
+      parameters:
+        - $ref: "#/components/parameters/EvidenceId"
+      responses:
+        "200":
+          description: Fresh presigned download URL.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DownloadUrl" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  # ── Response (23–24) ─────────────────────────────────────────────────────
+  /v1/cases/{caseId}/responses:
+    post:
+      tags: [Cases]
+      summary: Recipient submits one response (23)
+      parameters:
+        - $ref: "#/components/parameters/CaseId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ResponseRequest" }
+      responses:
+        "201":
+          description: Response recorded.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Response" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /v1/responses/{responseId}/transactions:
+    post:
+      tags: [Cases]
+      summary: Attach a relay transaction hint for the response (24)
+      parameters:
+        - $ref: "#/components/parameters/ResponseId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TransactionHint" }
+      responses:
+        "202": { $ref: "#/components/responses/Accepted" }
+
+  # ── Analysis / decision (25–27) ──────────────────────────────────────────
+  /v1/cases/{caseId}/analysis-runs:
+    post:
+      tags: [Analysis]
+      summary: Run the Proof Agent (25)
+      parameters:
+        - $ref: "#/components/parameters/CaseId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "202": { $ref: "#/components/responses/Accepted" }
+
+  /v1/cases/{caseId}/analysis-approvals:
+    post:
+      tags: [Analysis]
+      summary: Reviewer approves one analysis version for anchoring (26)
+      parameters:
+        - $ref: "#/components/parameters/CaseId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "202": { $ref: "#/components/responses/Accepted" }
+
+  /v1/cases/{caseId}/decisions:
+    post:
+      tags: [Decisions]
+      summary: Reviewer records one immutable human decision (27)
+      parameters:
+        - $ref: "#/components/parameters/CaseId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DecisionRequest" }
+      responses:
+        "202": { $ref: "#/components/responses/Accepted" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  # ── Corrections (28–33) ──────────────────────────────────────────────────
+  /v1/cases/{caseId}/correction-instructions:
+    post:
+      tags: [Corrections]
+      summary: Operations creates the voluntary correction instruction (28)
+      parameters:
+        - $ref: "#/components/parameters/CaseId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "202": { $ref: "#/components/responses/Accepted" }
+
+  /v1/corrections/{correctionId}:
+    get:
+      tags: [Corrections]
+      summary: Correction detail (29)
+      parameters:
+        - $ref: "#/components/parameters/CorrectionId"
+      responses:
+        "200":
+          description: Correction detail.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Correction" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/corrections/{correctionId}/wallet-intents:
+    post:
+      tags: [Corrections]
+      summary: Recipient generates the exact USDC calldata (30)
+      parameters:
+        - $ref: "#/components/parameters/CorrectionId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "201":
+          description: Wallet intent created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WalletIntent" }
+
+  /v1/corrections/{correctionId}/transactions:
+    post:
+      tags: [Corrections]
+      summary: Recipient attaches the userOpHash/tx hint (31)
+      parameters:
+        - $ref: "#/components/parameters/CorrectionId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TransactionHint" }
+      responses:
+        "202": { $ref: "#/components/responses/Accepted" }
+
+  /v1/corrections/{correctionId}/decline:
+    post:
+      tags: [Corrections]
+      summary: Recipient explicitly declines the correction (32)
+      parameters:
+        - $ref: "#/components/parameters/CorrectionId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "200":
+          description: Decline recorded; case stays outstanding.
+
+  /v1/corrections/{correctionId}/verify:
+    post:
+      tags: [Corrections]
+      summary: Operations verifies the correction against Arc (33)
+      parameters:
+        - $ref: "#/components/parameters/CorrectionId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "202": { $ref: "#/components/responses/Accepted" }
+
+  # ── Webhooks / chain / public (34–36) ────────────────────────────────────
+  /v1/webhooks/circle:
+    post:
+      tags: [Webhooks]
+      summary: Circle webhook — signature-verified (34)
+      security: []
+      responses:
+        "202": { description: Webhook accepted and enqueued. }
+
+  /v1/chain/transactions/{hash}:
+    get:
+      tags: [Chain]
+      summary: Decoded Arc transaction facts (35)
+      parameters:
+        - $ref: "#/components/parameters/TxHash"
+      responses:
+        "200":
+          description: Verified chain facts.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ChainTransaction" }
+
+  /v1/public/proofs/{proofId}:
+    get:
+      tags: [Public]
+      summary: Privacy-minimized public proof (36)
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/ProofId"
+      responses:
+        "200":
+          description: Safe public proof — no allegations, documents, or PII.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PublicProof" }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema: { type: string, minLength: 8, maxLength: 256 }
+      description: Required on every retryable write.
+    PaymentId: { $ref: "#/components/parameters/__PaymentId" }
+    CaseId: { $ref: "#/components/parameters/__CaseId" }
+    CorrectionId: { $ref: "#/components/parameters/__CorrectionId" }
+    JobId: { $ref: "#/components/parameters/__JobId" }
+    UploadId: { $ref: "#/components/parameters/__UploadId" }
+    EvidenceId: { $ref: "#/components/parameters/__EvidenceId" }
+    ResponseId: { $ref: "#/components/parameters/__ResponseId" }
+    TxHash: { $ref: "#/components/parameters/__TxHash" }
+    ProofId: { $ref: "#/components/parameters/__ProofId" }
+
+    __PaymentId:
+      name: paymentId
+      in: path
+      required: true
+      schema: { type: string }
+    __CaseId:
+      name: caseId
+      in: path
+      required: true
+      schema: { type: string }
+    __CorrectionId:
+      name: correctionId
+      in: path
+      required: true
+      schema: { type: string }
+    __JobId:
+      name: jobId
+      in: path
+      required: true
+      schema: { type: string }
+    __UploadId:
+      name: uploadId
+      in: path
+      required: true
+      schema: { type: string }
+    __EvidenceId:
+      name: evidenceId
+      in: path
+      required: true
+      schema: { type: string }
+    __ResponseId:
+      name: responseId
+      in: path
+      required: true
+      schema: { type: string }
+    __TxHash:
+      name: hash
+      in: path
+      required: true
+      schema: { type: string, pattern: "^0x[a-fA-F0-9]{64}$" }
+    __ProofId:
+      name: proofId
+      in: path
+      required: true
+      schema: { type: string }
+
+  responses:
+    Ok:
+      description: Service is live.
+      content:
+        application/json:
+          schema: { type: object, properties: { ok: { type: boolean } } }
+    Ready:
+      description: Service is ready (all dependencies healthy).
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Readiness" }
+    NotReady:
+      description: A required dependency is unavailable.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Accepted:
+      description: Accepted — async job started.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/JobRef" }
+    Unauthorized:
+      description: Authentication required or invalid.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Forbidden:
+      description: The actor lacks permission for this resource.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    NotFound:
+      description: Resource not found (or not in the caller's tenant).
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Conflict:
+      description: Illegal state transition or idempotency conflict.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+
+  schemas:
+    Error:
+      type: object
+      required: [code, message, requestId]
+      properties:
+        code: { type: string, description: "Machine-readable error code, e.g. ILLEGAL_TRANSITION" }
+        message: { type: string, description: "Plain-language sentence." }
+        requestId: { type: string }
+        retryable: { type: boolean, default: false }
+        details: { type: object, additionalProperties: true, description: "Safe optional details (no secrets)." }
+
+    Readiness:
+      type: object
+      properties:
+        ready: { type: boolean }
+        checks:
+          type: object
+          properties:
+            mongo: { type: boolean }
+            arcRpc: { type: boolean }
+            config: { type: boolean }
+
+    Meta:
+      type: object
+      properties:
+        chainId: { type: integer }
+        chainName: { type: string }
+        registryAddress: { type: string, pattern: "^0x[a-fA-F0-9]{40}$" }
+        apiVersion: { type: string }
+        gitCommit: { type: string }
+        deploymentTx: { type: string }
+
+    Session:
+      type: object
+      properties:
+        role: { type: string, enum: [operations, reviewer, recipient, agent, system] }
+        tenantId: { type: string }
+        displayName: { type: string }
+        walletAddress: { type: string, nullable: true }
+        permissions: { type: array, items: { type: string } }
+
+    Job:
+      type: object
+      properties:
+        jobId: { type: string }
+        status: { type: string, enum: [queued, in_flight, done, failed] }
+        result: { type: object, additionalProperties: true, nullable: true }
+        error: { type: string, nullable: true }
+
+    JobRef:
+      type: object
+      properties:
+        jobId: { type: string }
+        statusUrl: { type: string }
+
+    Dashboard:
+      type: object
+      properties:
+        paymentCount: { type: integer }
+        openCases: { type: integer }
+        pendingDecisions: { type: integer }
+        recentActivity: { type: array, items: { type: object } }
+
+    DemoPayoutRequest:
+      type: object
+      required: [recipient, amountMicroUsdc]
+      properties:
+        recipient: { type: string, pattern: "^0x[a-fA-F0-9]{40}$" }
+        amountMicroUsdc: { type: string, pattern: "^\\d+$" }
+        memo: { type: string }
+
+    ImportRequest:
+      type: object
+      required: [txHash]
+      properties:
+        txHash: { type: string, pattern: "^0x[a-fA-F0-9]{64}$" }
+
+    PaymentSummary:
+      type: object
+      properties:
+        paymentId: { type: string }
+        state: { type: string, enum: [OBSERVED, VERIFIED, REJECTED, PROOF_DRAFT, ANCHORED, DISPUTED, UNDISPUTED] }
+        amountMicroUsdc: { type: string }
+        recipient: { type: string }
+        paidAt: { type: string, format: date-time }
+
+    PaymentDetail:
+      type: object
+      description: Full payment + receipt + evidence citations + verification status.
+
+    OpenCaseRequest:
+      type: object
+      required: [claimType, allegation, challengedAmountMicroUsdc, citedEvidenceIds]
+      properties:
+        claimType: { type: string }
+        allegation: { type: string, minLength: 10 }
+        challengedAmountMicroUsdc: { type: string, pattern: "^\\d+$" }
+        citedEvidenceIds: { type: array, items: { type: string } }
+
+    CaseSummary:
+      type: object
+      properties:
+        caseId: { type: string }
+        state: { type: string }
+        challengedAmountMicroUsdc: { type: string }
+        responseDueAt: { type: string, format: date-time }
+
+    CaseDetail:
+      type: object
+      description: Shared case record — claim, response, evidence, analysis, decision, timeline, allowedActions.
+
+    Invitation:
+      type: object
+      properties:
+        invitationId: { type: string }
+        caseId: { type: string }
+        expiresAt: { type: string, format: date-time }
+
+    ChallengeRequest:
+      type: object
+      required: [invitationToken]
+      properties:
+        invitationToken: { type: string }
+
+    Challenge:
+      type: object
+      properties:
+        challengeId: { type: string }
+        domain: { type: string }
+        uri: { type: string }
+        chainId: { type: integer }
+        nonce: { type: string }
+        issuedAt: { type: string, format: date-time }
+        expiresAt: { type: string, format: date-time }
+
+    SessionRequest:
+      type: object
+      required: [challengeId, signature]
+      properties:
+        challengeId: { type: string }
+        signature: { type: string }
+
+    AuthToken:
+      type: object
+      properties:
+        token: { type: string }
+        session: { $ref: "#/components/schemas/Session" }
+
+    UploadRequest:
+      type: object
+      required: [caseId, filename, mimeType, declaredSizeBytes]
+      properties:
+        caseId: { type: string }
+        filename: { type: string }
+        mimeType: { type: string }
+        declaredSizeBytes: { type: integer, minimum: 1 }
+        visibility: { type: string, enum: [SHARED, PLATFORM_INTERNAL, RECIPIENT_PRIVATE, SYSTEM] }
+
+    UploadAllocation:
+      type: object
+      properties:
+        uploadId: { type: string }
+        uploadUrl: { type: string, description: "Short-lived presigned URL." }
+        method: { type: string }
+        headers: { type: object }
+
+    Evidence:
+      type: object
+      properties:
+        evidenceId: { type: string }
+        sha256: { type: string }
+        mimeType: { type: string }
+        sizeBytes: { type: integer }
+        version: { type: integer }
+
+    DownloadUrl:
+      type: object
+      properties:
+        url: { type: string }
+        expiresAt: { type: string, format: date-time }
+
+    ResponseRequest:
+      type: object
+      required: [text]
+      properties:
+        text: { type: string, minLength: 1 }
+        evidenceIds: { type: array, items: { type: string } }
+
+    Response:
+      type: object
+      properties:
+        responseId: { type: string }
+        caseId: { type: string }
+        submittedAt: { type: string, format: date-time }
+
+    TransactionHint:
+      type: object
+      required: [userOpHash]
+      properties:
+        userOpHash: { type: string, description: "Hint until Arc reconciliation." }
+        providerId: { type: string }
+
+    DecisionRequest:
+      type: object
+      required: [outcome, rationale]
+      properties:
+        outcome: { type: string, enum: [RECIPIENT_UPHELD, PLATFORM_UPHELD, PARTIAL_PLATFORM_UPHELD, DISMISSED_INSUFFICIENT_EVIDENCE] }
+        rationale: { type: string, minLength: 20 }
+        correctionAmountMicroUsdc: { type: string, pattern: "^\\d+$", description: "Required for correction outcomes." }
+
+    WalletIntent:
+      type: object
+      description: Exact USDC transfer calldata for the recipient to authorize.
+
+    Correction:
+      type: object
+      properties:
+        correctionId: { type: string }
+        state: { type: string, enum: [DRAFT, AWAITING_SIGNATURE, SUBMITTED, VERIFIED, MISMATCH, FAILED, DECLINED] }
+        amountMicroUsdc: { type: string }
+        destination: { type: string }
+
+    ChainTransaction:
+      type: object
+      description: Decoded, verified Arc transfer facts (sender, recipient, token, amount, block, finality).
+
+    PublicProof:
+      type: object
+      description: Privacy-minimized proof — payment/anchor fields only, no allegations/documents/PII.
+      properties:
+        paymentId: { type: string }
+        receiptHash: { type: string }
+        anchoredAt: { type: string, format: date-time }
+        registryTxHash: { type: string }
