@@ -244,10 +244,10 @@ export class FinneStack extends cdk.Stack {
           targets: [backendService],
           healthCheck: {
             path: "/health/live",
-            interval: cdk.Duration.seconds(15),
-            timeout: cdk.Duration.seconds(5),
+            interval: cdk.Duration.seconds(30),
+            timeout: cdk.Duration.seconds(10),
             healthyThresholdCount: 2,
-            unhealthyThresholdCount: 3,
+            unhealthyThresholdCount: 5,
           },
         }),
       ],
