@@ -170,6 +170,13 @@ export class FinneStack extends cdk.Stack {
     });
     this.backendSg.addIngressRule(albSecurityGroup, ec2.Port.tcp(4000), "From ALB");
 
+    // Explicit log group (not the implicit one from LogDrivers.awsLogs) so we
+    // can attach a CloudWatch metric filter for worker-error detection below.
+    const backendLogGroup = new logs.LogGroup(this, "BackendLogGroup", {
+      retention: logs.RetentionDays.TWO_WEEKS,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+    });
+
     const backendTaskDef = new ecs.FargateTaskDefinition(this, "BackendTaskDef", {
       memoryLimitMiB: 1024,
       cpu: 512,
@@ -182,7 +189,7 @@ export class FinneStack extends cdk.Stack {
       portMappings: [{ containerPort: 4000 }],
       logging: ecs.LogDrivers.awsLogs({
         streamPrefix: "finne-backend",
-        logRetention: logs.RetentionDays.TWO_WEEKS,
+        logGroup: backendLogGroup,
       }),
       environment: {
         NODE_ENV: "production",
@@ -245,24 +252,23 @@ export class FinneStack extends cdk.Stack {
     // 404 verdict marks the task unhealthy, killing it in a loop and hanging
     // CloudFormation for up to 3 hours. One TG with the correct health check is
     // both necessary and sufficient.
+    const backendTargetGroup = new elbv2.ApplicationTargetGroup(this, "BackendTargetGroup", {
+      vpc: this.vpc,
+      port: 4000,
+      protocol: elbv2.ApplicationProtocol.HTTP,
+      targets: [backendService],
+      healthCheck: {
+        path: "/health/live",
+        interval: cdk.Duration.seconds(30),
+        timeout: cdk.Duration.seconds(10),
+        healthyThresholdCount: 2,
+        unhealthyThresholdCount: 5,
+      },
+    });
     alb.addListener("BackendListener", {
       port: 80,
       protocol: elbv2.ApplicationProtocol.HTTP,
-      defaultTargetGroups: [
-        new elbv2.ApplicationTargetGroup(this, "BackendTargetGroup", {
-          vpc: this.vpc,
-          port: 4000,
-          protocol: elbv2.ApplicationProtocol.HTTP,
-          targets: [backendService],
-          healthCheck: {
-            path: "/health/live",
-            interval: cdk.Duration.seconds(30),
-            timeout: cdk.Duration.seconds(10),
-            healthyThresholdCount: 2,
-            unhealthyThresholdCount: 5,
-          },
-        }),
-      ],
+      defaultTargetGroups: [backendTargetGroup],
     });
 
     /* ======================================================================
@@ -304,29 +310,56 @@ export class FinneStack extends cdk.Stack {
 
     /* ======================================================================
        AWS-03: CloudWatch alarms
+
+       Three signals, each catching a different failure mode:
+       1. BackendUnhealthyAlarm — the HTTP server is unreachable (ALB view).
+       2. WorkerErrorAlarm — a background worker logged an error/crash. Uses a
+          metric filter on the backend log group counting the [anchor-worker]
+          ERROR and [scheduler] error log lines. Catches loud failures.
+       3. HealthReady5xxAlarm — /health/ready returned 503, which happens when
+          Mongo is down OR a worker's heartbeat went stale (silent hang). This
+          is the backstop: a worker that logs nothing still stops heartbeating,
+          which /health/ready turns into a 503, which this alarm catches.
+       The prior QueueDepthAlarm + DlqAlarm are removed: they watched the SQS
+       queue, which no backend code consumes, so they could never fire.
        ====================================================================== */
     new cloudwatch.Alarm(this, "BackendUnhealthyAlarm", {
       metric: backendService.metric("HealthyHostCount", { dimensions: { TargetGroup: "backend" } }),
       threshold: 1,
       evaluationPeriods: 2,
       comparisonOperator: cloudwatch.ComparisonOperator.LESS_THAN_THRESHOLD,
-      alarmDescription: "Backend has no healthy hosts",
+      alarmDescription: "Backend has no healthy hosts (ALB health check failing)",
     });
 
-    new cloudwatch.Alarm(this, "QueueDepthAlarm", {
-      metric: jobQueue.metric("ApproximateNumberOfMessagesVisible"),
-      threshold: 100,
+    // Metric filter: count worker error log lines. Matches both the
+    // [anchor-worker] ERROR (drain error, DEAD-LETTER) and [scheduler] error
+    // (deadline tick error) prefixes the workers emit on failure.
+    const workerErrorMetric = new logs.MetricFilter(this, "WorkerErrorFilter", {
+      logGroup: backendLogGroup,
+      metricNamespace: "Finne",
+      metricName: "WorkerErrors",
+      filterPattern: logs.FilterPattern.literal('"[anchor-worker] ERROR" "[scheduler] deadline tick error"'),
+      metricValue: "1",
+    });
+    new cloudwatch.Alarm(this, "WorkerErrorAlarm", {
+      metric: workerErrorMetric.metric(),
+      threshold: 1,
       evaluationPeriods: 2,
       comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_THRESHOLD,
-      alarmDescription: "Job queue depth > 100 messages",
+      alarmDescription: "A background worker (anchor-worker/scheduler) logged an error",
     });
 
-    new cloudwatch.Alarm(this, "DlqAlarm", {
-      metric: dlq.metric("ApproximateNumberOfMessagesVisible"),
+    // Backstop: /health/ready returns 503 when Mongo is down or a worker is
+    // stale. The ALB exposes target 5XX counts as a built-in metric per TG.
+    // eslint-disable-next-line @typescript-eslint/no-deprecated
+    new cloudwatch.Alarm(this, "HealthReady5xxAlarm", {
+      metric: backendTargetGroup.metricHttpCodeTarget(elbv2.HttpCodeTarget.TARGET_5XX_COUNT, {
+        period: cdk.Duration.minutes(1),
+      }),
       threshold: 1,
-      evaluationPeriods: 1,
+      evaluationPeriods: 2,
       comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_THRESHOLD,
-      alarmDescription: "Messages in dead-letter queue",
+      alarmDescription: "/health/ready is returning 503 (Mongo down or a worker is stale)",
     });
 
     /* ======================================================================

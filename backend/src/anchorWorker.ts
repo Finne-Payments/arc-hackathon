@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { Address, Hash, LocalAccount } from "viem";
 import { getWalletClient, caseRegistryAddress, refundProtocolAddress, getPublicClient } from "./chain/client.ts";
 import { CASE_REGISTRY_ABI } from "./chain/abis.ts";
-import { AnchorJob, Payout, Case, Decision } from "./models/index.ts";
+import { AnchorJob, Payout, Case, Decision, Meta } from "./models/index.ts";
 
 /* ============================================================================
    Anchor worker (PRD §9.4, NEW-1 → real). Drains the AnchorJob queue and
@@ -18,17 +18,29 @@ import { AnchorJob, Payout, Case, Decision } from "./models/index.ts";
      now + BACKOFF_BASE * 2^(attempts-1); it is only eligible again after that.
    - Dead letter: after MAX_ATTEMPTS the job is status:"failed" and logged at
      ERROR (no longer silent) — the prior build terminal-failed silently.
+
+   Observability: writes a heartbeat to Meta (anchor-worker:heartbeat) on every
+   drain so /status can report liveness, processed, and failed counts. A drain
+   that errors still pings (so a repeatedly-failing worker is distinguishable
+   from a dead one). isAnchorWorkerStale() exposes the staleness check.
    ========================================================================== */
 
 const POLL_MS = 3000;
 const MAX_ATTEMPTS = 8;
 const LEASE_MS = 30_000; // a job held longer than this is considered abandoned
 const BACKOFF_BASE_MS = 2000; // 2s, 4s, 8s … capped at 5 min
+const STALE_THRESHOLD_MS = 30_000; // 10× the poll — a stalled worker misses 10 ticks
+
+const HEARTBEAT_KEY = "anchor-worker:heartbeat";
 
 const WORKER_ID = `worker-${randomUUID().slice(0, 8)}`;
 
 let running = false;
 let timer: ReturnType<typeof setInterval> | null = null;
+
+// Cumulative counters (since boot) — read by /status to show throughput.
+let processedTotal = 0;
+let failedTotal = 0;
 
 export function startAnchorWorker(): void {
   if (running) return;
@@ -86,7 +98,32 @@ async function drain(): Promise<void> {
     }
   } catch (e) {
     console.error("[anchor-worker] drain error:", e instanceof Error ? e.message : e);
+  } finally {
+    // Always ping — a drain that errors is still a live (if unhealthy) worker.
+    // Without this, a worker stuck in a throw-loop looks identical to a dead one.
+    await writeHeartbeat().catch(() => {});
   }
+}
+
+/** Heartbeat written every drain so /status can report liveness + throughput. */
+async function writeHeartbeat(): Promise<void> {
+  await Meta.findOneAndUpdate(
+    { key: HEARTBEAT_KEY },
+    {
+      value: { at: new Date().toISOString(), processed: processedTotal, failed: failedTotal },
+      updatedAt: new Date().toISOString(),
+    },
+    { upsert: true },
+  );
+}
+
+/** Whether the anchor-worker heartbeat is older than STALE_THRESHOLD_MS (used by /status + /health/ready). */
+export async function isAnchorWorkerStale(): Promise<boolean> {
+  const meta = await Meta.findOne({ key: HEARTBEAT_KEY });
+  if (!meta) return true;
+  const at = (meta.value as { at?: string }).at;
+  if (!at) return true;
+  return Date.now() - new Date(at).getTime() > STALE_THRESHOLD_MS;
 }
 
 async function processJob(job: typeof AnchorJob.prototype, registry: Address, operator: LocalAccount): Promise<void> {
@@ -151,6 +188,7 @@ async function processJob(job: typeof AnchorJob.prototype, registry: Address, op
     await job.save();
 
     await backfillAnchor(job, txHash);
+    processedTotal++;
     console.log(`[anchor-worker] ${job.kind} anchored: ${job.entityId} → ${txHash}`);
   } catch (e) {
     // Failure → exponential backoff. Re-queue with nextAttemptAt in the future so
@@ -161,6 +199,7 @@ async function processJob(job: typeof AnchorJob.prototype, registry: Address, op
     job.lastError = e instanceof Error ? e.message : String(e);
     job.leaseOwner = null;
     job.leasedUntil = null;
+    failedTotal++;
     if (attempts >= MAX_ATTEMPTS) {
       job.status = "failed";
       console.error(

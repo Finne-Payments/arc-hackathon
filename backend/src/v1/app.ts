@@ -43,18 +43,55 @@ export function createV1App(config: Config): express.Application {
   });
 
   /* --- Health endpoints (BE-01 step 2) --- */
-  // Liveness: always 200, no dependency checks
+  // Liveness: always 200, no dependency checks. This is what the ALB target
+  // group probes — it must NEVER 503, or ECS kills the task. A blipping Mongo
+  // or a stalled worker should NOT take down the container.
   app.get("/health/live", (_req: Request, res: Response) => {
     res.json({ ok: true });
   });
 
-  // Readiness: checks Mongo, Arc RPC, config — 503 if any fail
+  // Readiness: real dependency + worker checks. Returns 503 if Mongo is down or
+  // any background worker (indexer/anchor-worker/scheduler) is stale. Surfaced
+  // via /status and a CloudWatch 5XX alarm — NOT probed by the ALB, so a 503
+  // here alerts without restarting the task. Checks are lazy + defensive: in
+  // tests (no Mongo, no workers running) each degrades to false rather than
+  // throwing, so the route never crashes the process.
   app.get("/health/ready", async (_req: Request, res: Response) => {
     const checks: Record<string, boolean> = {
       config: true, // config already loaded if we got here
     };
-    // TODO: wire mongo + arc rpc checks when server boots
-    // For now, readiness mirrors liveness (the server module wires real checks)
+
+    // Mongo — mongoose.connection.readyState === 1 means connected.
+    try {
+      const mongoose = (await import("mongoose")).default;
+      checks.mongo = mongoose.connection.readyState === 1;
+    } catch {
+      checks.mongo = false;
+    }
+
+    // Background workers — each exports an isXStale() that reads its heartbeat.
+    // Lazy import so createV1App() in tests (where workers aren't started) does
+    // not pull in the chain/anchor deps at module load. If a worker has never
+    // written a heartbeat (not started), isXStale() returns true → not ready.
+    try {
+      const { isIndexerStale } = await import("../indexer.ts");
+      checks.indexer = !(await isIndexerStale());
+    } catch {
+      checks.indexer = false;
+    }
+    try {
+      const { isAnchorWorkerStale } = await import("../anchorWorker.ts");
+      checks.anchorWorker = !(await isAnchorWorkerStale());
+    } catch {
+      checks.anchorWorker = false;
+    }
+    try {
+      const { isSchedulerStale } = await import("../scheduler.ts");
+      checks.scheduler = !(await isSchedulerStale());
+    } catch {
+      checks.scheduler = false;
+    }
+
     const ready = Object.values(checks).every(Boolean);
     res.status(ready ? 200 : 503).json({ ready, checks });
   });

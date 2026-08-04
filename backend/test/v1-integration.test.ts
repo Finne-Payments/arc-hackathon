@@ -67,6 +67,18 @@ describe("v1 API shell (BE-01)", () => {
     expect(res.body.ok).toBe(true);
   });
 
+  it("GET /health/ready reports mongo but not the (unstarted) workers", async () => {
+    // Mongo is connected (in-memory server in beforeAll), but the background
+    // workers are NOT started in this test harness — so their checks degrade
+    // to false and the endpoint returns 503. This proves the route runs the
+    // real checks without crashing and never throws on a missing heartbeat.
+    const res = await request(app).get("/health/ready");
+    expect(res.status).toBe(503);
+    expect(res.body.ready).toBe(false);
+    expect(res.body.checks.mongo).toBe(true);
+    expect(res.body.checks.indexer).toBe(false); // no worker started → stale
+  });
+
   it("GET /v1/meta returns safe metadata (no secrets)", async () => {
     const res = await request(app).get("/v1/meta");
     expect(res.status).toBe(200);

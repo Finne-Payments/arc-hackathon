@@ -80,22 +80,31 @@ publicRoutes.get("/config", async (_req, res, next) => {
  * /status:
  *   get:
  *     tags: [Public]
- *     summary: Indexer heartbeat + live chain figures (arbiter reserve, recipient debt)
+ *     summary: Worker heartbeats (indexer, anchor-worker, scheduler) + live chain figures
  *     security: []
- *     responses: { 200: { description: "Indexer liveness + chain state (degrades to null on RPC failure)" } }
+ *     responses: { 200: { description: "Worker liveness + chain state (degrades to null on RPC failure)" } }
  */
 publicRoutes.get("/status", async (_req, res, next) => {
   try {
     const env = loadEnv();
-    // Live indexer heartbeat (written by the indexer poller every tick).
-    let lastSeenAt: string | null = null;
-    let lastBlock = 0;
-    const hb = await Meta.findOne({ key: "indexer:heartbeat" });
-    if (hb) {
-      lastSeenAt = (hb.value as { at?: string }).at ?? null;
-      lastBlock = (hb.value as { block?: number }).block ?? 0;
-    }
-    const stale = lastSeenAt ? Date.now() - new Date(lastSeenAt).getTime() > 15_000 : true;
+
+    // Worker heartbeats — each background loop writes a Meta doc on every tick.
+    // staleness thresholds match each worker's own STALE_THRESHOLD_MS (the
+    // 15s indexer window here is its /status-specific bound; the worker's own
+    // isIndexerStale() uses a looser 90s for internal use).
+    const [indexerHb, anchorHb, schedulerHb] = await Promise.all([
+      Meta.findOne({ key: "indexer:heartbeat" }),
+      Meta.findOne({ key: "anchor-worker:heartbeat" }),
+      Meta.findOne({ key: "scheduler:heartbeat" }),
+    ]);
+
+    const indexerLastSeenAt = (indexerHb?.value as { at?: string } | null)?.at ?? null;
+    const indexerLastBlock = (indexerHb?.value as { block?: number } | null)?.block ?? 0;
+    const anchorVal = anchorHb?.value as { at?: string; processed?: number; failed?: number } | null;
+    const schedulerVal = schedulerHb?.value as { at?: string; advanced?: number } | null;
+
+    const isStale = (at: string | null, thresholdMs: number) =>
+      at ? Date.now() - new Date(at).getTime() > thresholdMs : true;
 
     // Real chain view reads — arbiter reserve + recipient debt from the RefundProtocol.
     // Degrade to null on RPC failure (PRD §11.2, §13.4 — never error the route).
@@ -113,7 +122,22 @@ publicRoutes.get("/status", async (_req, res, next) => {
     }
 
     res.json({
-      indexer: { lastSeenAt, lastBlock, stale },
+      indexer: {
+        lastSeenAt: indexerLastSeenAt,
+        lastBlock: indexerLastBlock,
+        stale: isStale(indexerLastSeenAt, 15_000),
+      },
+      anchorWorker: {
+        lastSeenAt: anchorVal?.at ?? null,
+        processed: anchorVal?.processed ?? 0,
+        failed: anchorVal?.failed ?? 0,
+        stale: isStale(anchorVal?.at ?? null, 30_000),
+      },
+      scheduler: {
+        lastSeenAt: schedulerVal?.at ?? null,
+        advanced: schedulerVal?.advanced ?? 0,
+        stale: isStale(schedulerVal?.at ?? null, 300_000),
+      },
       chain,
       chainReady: {
         refundProtocolDeployed: !!env.arc.refundProtocolAddress,
