@@ -12,6 +12,8 @@ import type {
   WalletSim,
 } from "./types";
 import { ROLE_ALLOWED, ROLE_HOME } from "./domain/access";
+import { api } from "./api";
+import { signRefund, isUserRejection } from "./wallet";
 
 /**
  * useFinne is the single source of truth for the prototype.
@@ -330,7 +332,6 @@ export function useFinne(initialRole: Role = "arbiter") {
         const caseNumber = state.selectedCaseId ?? "";
         if (!caseNumber) return;
         try {
-          const { api } = await import("./api.ts");
           await api.requestInfo(caseNumber, { target: backendTarget as "platform" | "recipient", text: t });
           setState((s) => ({
             ...s,
@@ -367,7 +368,6 @@ export function useFinne(initialRole: Role = "arbiter") {
         const caseNumber = state.selectedCaseId ?? "";
         if (!caseNumber) return;
         try {
-          const { api } = await import("./api.ts");
           await api.addEvidence(caseNumber, {
             type: "message",
             title: t.slice(0, 80),
@@ -390,7 +390,6 @@ export function useFinne(initialRole: Role = "arbiter") {
         if (!caseNumber) return;
         patch({ replySending: true });
         try {
-          const { api } = await import("./api.ts");
           await api.respond(caseNumber, { text: t });
           setState((s) => ({ ...s, replyText: "", replySending: false, caseStage: "under_review", caseVersion: s.caseVersion + 1 }));
         } catch {
@@ -456,7 +455,6 @@ export function useFinne(initialRole: Role = "arbiter") {
        * calls this after receiving the unsigned tx from the API.
        */
       signRefundWithWallet: async (unsignedTx: { to: string; abi: unknown[]; functionName: string; args: (string | number)[] }) => {
-        const { signRefund, isUserRejection } = await import("./wallet.ts");
         try {
           patch({ decPhase: "awaiting" });
           const txHash = await signRefund(unsignedTx as never);

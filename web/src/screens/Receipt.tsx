@@ -4,6 +4,8 @@ import type { ApiData } from "../useApi";
 import { BackLink, Card, Eyebrow, PrimaryButton, SecondaryButton, SharedViewBadge, SpinnerLabel, StatusPill, TechChip } from "../components/primitives";
 import { OpenDisputeModal } from "../components/OpenDisputeModal";
 import { explorerAddr, explorerTx, receiptStatusView, shortHex } from "../mappers";
+import { api } from "../api";
+import { connectWallet, signWithdraw, isUserRejection } from "../wallet";
 
 function ChainRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -56,8 +58,6 @@ export function Receipt({ v, actions, apiData }: { v: ViewModel; actions: FinneA
     setWithdrawing(true);
     setWithdrawMsg("Opening your wallet…");
     try {
-      const { connectWallet, signWithdraw } = await import("../wallet.ts");
-      const { api } = await import("../api.ts");
       const cfg = await api.config();
       const rpAddr = cfg.refundProtocolAddress ?? "";
       if (!rpAddr) throw new Error("RefundProtocol address not configured.");
@@ -67,7 +67,6 @@ export function Receipt({ v, actions, apiData }: { v: ViewModel; actions: FinneA
       await signWithdraw(rpAddr, payout.paymentId);
       setWithdrawMsg("Withdrawal submitted — the indexer will confirm shortly.");
     } catch (e) {
-      const { isUserRejection } = await import("../wallet.ts");
       setWithdrawMsg(isUserRejection(e) ? "Withdrawal rejected in your wallet." : e instanceof Error ? e.message : "Withdrawal failed.");
     } finally {
       setWithdrawing(false);

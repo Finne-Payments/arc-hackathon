@@ -3,6 +3,8 @@ import type { ApiData } from "../useApi";
 import type { DecPhase } from "../types";
 import { BackLink, Card, PrimaryButton, SecondaryButton, TechChip, Spinner } from "../components/primitives";
 import { explorerAddr, shortHex } from "../mappers";
+import { api } from "../api";
+import { detectWallet, connectWallet, isUserRejection } from "../wallet";
 
 export function Decision({ v, actions, apiData }: { v: ViewModel; actions: FinneActions; apiData?: ApiData }) {
   const c = apiData?.activeCase ?? null;
@@ -92,11 +94,9 @@ function IdlePhase({ v, refundTo, caseNumber, actions }: { v: ViewModel; refundT
               // Refund requires a wallet signature. Try the real wallet path first;
               // fall back to the labeled simulation if no wallet is detected.
               try {
-                const { detectWallet, connectWallet } = await import("../wallet.ts");
                 const ws = detectWallet();
                 if (ws.available) {
                   // First, record the decision via the API to get the unsigned tx.
-                  const { api } = await import("../api.ts");
                   const result = await api.decide(caseNumber, { outcome: "refund", reason: v.decReason });
                   if (result.unsignedTx) {
                     // Connect the wallet and sign the real transaction.
@@ -106,7 +106,6 @@ function IdlePhase({ v, refundTo, caseNumber, actions }: { v: ViewModel; refundT
                   }
                 }
               } catch (e) {
-                const { isUserRejection } = await import("../wallet.ts");
                 if (isUserRejection(e)) return; // user declined — stay on the decision
                 // other wallet error → fall through to simulation
               }

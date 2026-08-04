@@ -83,7 +83,6 @@ export function CaseRoom({ v, actions, apiData }: { v: ViewModel; actions: Finne
     if (!t || !caseNumber) return;
     setResponseSending(true);
     try {
-      const { api } = await import("../api.ts");
       await api.respond(caseNumber, { text: t });
       setResponseText("");
       // Reload the case so the response appears in the conversation.
@@ -107,7 +106,6 @@ export function CaseRoom({ v, actions, apiData }: { v: ViewModel; actions: Finne
     if (!t || !caseNumber) return;
     setMessageSending(true);
     try {
-      const { api } = await import("../api.ts");
       await api.respond(caseNumber, { text: t });
       setMessageText("");
       actions.viewCase(caseNumber);
