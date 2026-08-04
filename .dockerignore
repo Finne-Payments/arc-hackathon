@@ -43,6 +43,9 @@ infra/
 cdk.out/
 **/cdk.out/
 
+# Model runtime (has its own Dockerfile + build context; not needed in Node images)
+model/
+
 # Agent skills (not needed in images, causes path-length issues)
 .agents/
 .zcode/

@@ -60,5 +60,64 @@ services:
     ports:
       - "5173:80"
 
+  # ── Model runtime (PRD Addendum A / FIN-100) ─────────────────────────────
+  # Self-hosted open weights on Finné-controlled machines (P9/D7). No vendor
+  # key — the endpoint is an internal HTTP URL. Two profiles:
+  #
+  #   docker compose --profile dev up   → Ollama (CPU/Metal; Mac dev laptop)
+  #   docker compose --profile gpu up   → vLLM (NVIDIA GPU; AWS EC2 g5/g6 prod)
+  #
+  # The gpu profile BUILDS model/Dockerfile — a vLLM image with the weights
+  # baked in at build time, so a fresh box doesn't re-download the model on
+  # first request (the slow cold-start). Build once: ./scripts/model-bake.sh
+  #
+  # Backend reaches it at http://model:8000/v1 (or 11434 for Ollama). Set
+  # MODEL_BASE_URL + MODEL_NAME in .env to match the running profile.
+  # When neither profile is active, the backend runs models-unplugged (FIN-105):
+  # every agent station degrades to templates + computation (P8).
+  model-vllm:
+    build:
+      context: .
+      dockerfile: model/Dockerfile
+      args:
+        # Served model is baked into the image at build time. Default is the
+        # production default (see docs/models.md). Swap via the FIN-100 rule:
+        # rebuild + MODEL_NAME in .env + docs/models.md note.
+        MODEL_NAME: "${MODEL_NAME:-Qwen/Qwen2.5-3B-Instruct}"
+        HF_HUB_TOKEN: "${HF_HUB_TOKEN:-}"
+    image: finne-model:latest
+    container_name: finne-model-vllm
+    profiles: ["gpu"]
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    # Health: vLLM is ready when /v1/models returns 200. The backend waits on
+    # this (depends_on:service_healthy) instead of hitting a cold endpoint and
+    # degrading the first call. start_period covers the VRAM load (~1–3 min).
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/v1/models"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 180s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  model-ollama:
+    image: ollama/ollama:latest
+    container_name: finne-model-ollama
+    profiles: ["dev"]
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-models:/root/.ollama
+
 volumes:
   mongo-data:
+  ollama-models:

@@ -23,11 +23,34 @@ export interface FinneStackProps extends cdk.StackProps {
   /** Docker images — built and pushed to ECR before deploy. */
   backendImage: ecs.ContainerImage;
   webImage: ecs.ContainerImage;
+  /** The self-hosted model endpoint URL (private DNS from the model stack).
+   *  Omit/leave "disabled" to run models-unplugged (FIN-105). */
+  modelBaseUrl?: string;
 }
 
 export class FinneStack extends cdk.Stack {
+  /** Exposed for cross-stack access (the model stack reuses the VPC + backend SG). */
+  public vpc!: ec2.Vpc;
+  public backendSg!: ec2.SecurityGroup;
+  public cluster!: ecs.Cluster;
+
   constructor(scope: Construct, id: string, props: FinneStackProps) {
     super(scope, id, props);
+
+    /* ======================================================================
+       AWS-01: ECR repository (container images built + pushed by CI)
+       The repo is part of the stack — no manual `aws ecr create-repository`.
+       CI pushes :backend and :web tags here on every merge to main.
+       ====================================================================== */
+    const ecrRepo = new ecr.Repository(this, "FinneRepo", {
+      repositoryName: "finne",
+      imageScanOnPush: true,
+      imageTagMutability: ecr.TagMutability.IMMUTABLE,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+      lifecycleRules: [
+        { maxImageCount: 10, description: "Keep the 10 most recent images per tag" },
+      ],
+    });
 
     /* ======================================================================
        AWS-02: KMS key (encrypts S3 + SQS + secrets)
@@ -80,7 +103,7 @@ export class FinneStack extends cdk.Stack {
     /* ======================================================================
        AWS-01: VPC (public + private subnets for ECS)
        ====================================================================== */
-    const vpc = new ec2.Vpc(this, "FinneVpc", {
+    this.vpc = new ec2.Vpc(this, "FinneVpc", {
       maxAzs: 2,
       natGateways: 1,
       subnetConfiguration: [
@@ -92,9 +115,9 @@ export class FinneStack extends cdk.Stack {
     /* ======================================================================
        AWS-01: ECS cluster
        ====================================================================== */
-    const cluster = new ecs.Cluster(this, "FinneCluster", {
+    this.cluster = new ecs.Cluster(this, "FinneCluster", {
       clusterName: "finne",
-      vpc,
+      vpc: this.vpc,
       containerInsights: true,
     });
 
@@ -120,7 +143,7 @@ export class FinneStack extends cdk.Stack {
        AWS-03: ALB (public, routes to backend + web)
        ====================================================================== */
     const albSecurityGroup = new ec2.SecurityGroup(this, "AlbSg", {
-      vpc,
+      vpc: this.vpc,
       allowAllOutbound: true,
       description: "ALB security group",
     });
@@ -128,25 +151,38 @@ export class FinneStack extends cdk.Stack {
     albSecurityGroup.addIngressRule(ec2.Peer.anyIpv4(), ec2.Port.tcp(443), "HTTPS");
 
     const alb = new elbv2.ApplicationLoadBalancer(this, "FinneAlb", {
-      vpc,
+      vpc: this.vpc,
       internetFacing: true,
       securityGroup: albSecurityGroup,
     });
 
+    // Execution role for pulling ECR images + writing CloudWatch logs
+    const execRole = new iam.Role(this, "FinneExecRole", {
+      assumedBy: new iam.ServicePrincipal("ecs-tasks.amazonaws.com"),
+      managedPolicies: [
+        iam.ManagedPolicy.fromAwsManagedPolicyName("service-role/AmazonECSTaskExecutionRolePolicy"),
+      ],
+    });
+    ecrRepo.grantPull(execRole);
+    // The execution role fetches secrets at task start (AWS-03). ECS uses it to
+    // resolve the `secrets:` block on the container definition.
+    appSecrets.grantRead(execRole);
+
     /* ======================================================================
        AWS-03: Backend Fargate service
        ====================================================================== */
-    const backendSg = new ec2.SecurityGroup(this, "BackendSg", {
-      vpc,
+    this.backendSg = new ec2.SecurityGroup(this, "BackendSg", {
+      vpc: this.vpc,
       allowAllOutbound: true,
       description: "Backend service security group",
     });
-    backendSg.addIngressRule(albSecurityGroup, ec2.Port.tcp(4000), "From ALB");
+    this.backendSg.addIngressRule(albSecurityGroup, ec2.Port.tcp(4000), "From ALB");
 
     const backendTaskDef = new ecs.FargateTaskDefinition(this, "BackendTaskDef", {
       memoryLimitMiB: 1024,
       cpu: 512,
       taskRole,
+      executionRole: execRole,
     });
 
     backendTaskDef.addContainer("Backend", {
@@ -157,7 +193,7 @@ export class FinneStack extends cdk.Stack {
         logRetention: logs.RetentionDays.TWO_WEEKS,
       }),
       environment: {
-        NODE_ENV: "staging",
+        NODE_ENV: "production",
         BACKEND_PORT: "4000",
         DEMO_MODE: "true",
         ARC_RPC_URL: "https://rpc.testnet.arc.io",
@@ -168,15 +204,23 @@ export class FinneStack extends cdk.Stack {
         SQS_QUEUE_URL: jobQueue.queueUrl,
         SQS_DLQ_URL: dlq.queueUrl,
         KMS_KEY_ID: kmsKey.keyId,
+        // Self-hosted model service (P9/D7). Set by the model stack's CloudMap DNS.
+        // When absent, the agent degrades to models-unplugged (FIN-105, P8).
+        MODEL_BASE_URL: props.modelBaseUrl ?? "disabled",
+        MODEL_NAME: "Qwen/Qwen2.5-3B-Instruct",
+        MODEL_TIMEOUT_MS: "5000",
       },
+      // Secrets pulled from Secrets Manager at task start (AWS-03). The
+      // finne/app-secrets secret holds a JSON object with these keys; CI writes
+      // them at deploy time. Secrets never appear in the CloudFormation template.
       secrets: {
         MONGO_URL: ecs.Secret.fromSecretsManager(appSecrets, "MONGO_URL"),
         SESSION_SECRET: ecs.Secret.fromSecretsManager(appSecrets, "SESSION_SECRET"),
         INTERNAL_TOKEN: ecs.Secret.fromSecretsManager(appSecrets, "INTERNAL_TOKEN"),
         CIRCLE_API_KEY: ecs.Secret.fromSecretsManager(appSecrets, "CIRCLE_API_KEY"),
         CIRCLE_ENTITY_SECRET: ecs.Secret.fromSecretsManager(appSecrets, "CIRCLE_ENTITY_SECRET"),
+        CIRCLE_WALLET_SET_ID: ecs.Secret.fromSecretsManager(appSecrets, "CIRCLE_WALLET_SET_ID"),
         REGISTRY_OPERATOR_PRIVATE_KEY: ecs.Secret.fromSecretsManager(appSecrets, "REGISTRY_OPERATOR_PRIVATE_KEY"),
-        MAYA_WALLET_ID: ecs.Secret.fromSecretsManager(appSecrets, "MAYA_WALLET_ID"),
       },
       healthCheck: {
         command: ["CMD-SHELL", "curl -f http://localhost:4000/health/live || exit 1"],
@@ -188,9 +232,9 @@ export class FinneStack extends cdk.Stack {
     });
 
     const backendService = new ecs.FargateService(this, "BackendService", {
-      cluster,
+      cluster: this.cluster,
       taskDefinition: backendTaskDef,
-      securityGroup: backendSg,
+      securityGroup: this.backendSg,
       desiredCount: 1,
       assignPublicIp: false,
       healthCheckGracePeriod: cdk.Duration.seconds(30),
@@ -202,7 +246,7 @@ export class FinneStack extends cdk.Stack {
       protocol: elbv2.ApplicationProtocol.HTTP,
       defaultTargetGroups: [
         new elbv2.ApplicationTargetGroup(this, "BackendTargetGroup", {
-          vpc,
+          vpc: this.vpc,
           port: 4000,
           protocol: elbv2.ApplicationProtocol.HTTP,
           targets: [backendService],
@@ -230,7 +274,7 @@ export class FinneStack extends cdk.Stack {
        AWS-03: Web Fargate service (nginx serving SPA + proxying /api)
        ====================================================================== */
     const webSg = new ec2.SecurityGroup(this, "WebSg", {
-      vpc,
+      vpc: this.vpc,
       allowAllOutbound: true,
       description: "Web service security group",
     });
@@ -239,6 +283,7 @@ export class FinneStack extends cdk.Stack {
     const webTaskDef = new ecs.FargateTaskDefinition(this, "WebTaskDef", {
       memoryLimitMiB: 512,
       cpu: 256,
+      executionRole: execRole,
     });
 
     webTaskDef.addContainer("Web", {
@@ -254,7 +299,7 @@ export class FinneStack extends cdk.Stack {
     });
 
     const webService = new ecs.FargateService(this, "WebService", {
-      cluster,
+      cluster: this.cluster,
       taskDefinition: webTaskDef,
       securityGroup: webSg,
       desiredCount: 1,
@@ -294,6 +339,11 @@ export class FinneStack extends cdk.Stack {
     new cdk.CfnOutput(this, "AlbUrl", {
       value: `http://${alb.loadBalancerDnsName}`,
       description: "Public URL for the Finné app",
+    });
+
+    new cdk.CfnOutput(this, "EcrRepoUri", {
+      value: `${ecrRepo.repositoryUri}`,
+      description: "ECR repository URI (push :backend and :web tags here)",
     });
 
     new cdk.CfnOutput(this, "EvidenceBucketName", {

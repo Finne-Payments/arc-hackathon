@@ -1,43 +1,53 @@
 #!/usr/bin/env node
 /* ============================================================================
    Finné CDK app entry point.
-   Bootstraps and deploys the FinneStack to us-east-1.
+   Deploys two stacks to us-east-1:
+     1. FinneStack      — VPC, ECS Fargate (backend+web), S3, SQS, KMS, ALB, ECR
+     2. FinneModelStack — GPU EC2 running vLLM (the self-hosted model service)
+   Uses pre-built ECR images (built + pushed by the deploy workflow / local).
    ========================================================================== */
 
 import * as cdk from "aws-cdk-lib";
 import * as ecs from "aws-cdk-lib/aws-ecs";
 import { FinneStack } from "../lib/finne-stack";
-
-// Target account/region are read from the environment (AWS_ACCOUNT_ID /
-// AWS_REGION / CDK_DEFAULT_* set by the local AWS profile or CI), never
-// hardcoded in the repo. See the .env / .env.example at the repo root.
-const account = process.env.AWS_ACCOUNT_ID ?? process.env.CDK_DEFAULT_ACCOUNT;
-const region = process.env.AWS_REGION ?? process.env.CDK_DEFAULT_REGION ?? "us-east-1";
-if (!account) {
-  throw new Error(
-    "AWS_ACCOUNT_ID is not set. Export it (or run with an AWS profile) before synth/deploy."
-  );
-}
+import { FinneModelStack } from "../lib/model-stack";
 
 const app = new cdk.App();
 
-// For the hackathon, use locally-built Docker images (CDK builds them via
-// `docker build` against the Dockerfiles in the repo). For production, these
-// would be ECR image refs after a CI push.
-const backendImage = ecs.ContainerImage.fromAsset("../..", {
-  file: "backend/Dockerfile",
-});
+// Account + region: env vars (CI) with the synthed values as defaults (local).
+const account = process.env.AWS_ACCOUNT_ID ?? "042122908120";
+const region = process.env.AWS_REGION ?? "us-east-1";
+const env = { account, region };
 
-const webImage = ecs.ContainerImage.fromAsset("../..", {
-  file: "web/Dockerfile",
-});
+const ECR_URI = `${account}.dkr.ecr.${region}.amazonaws.com/finne`;
 
-new FinneStack(app, "FinneStack", {
-  env: { account, region },
+// Pre-built ECR images (CI pushes :backend and :web tags before deploy).
+const backendImage = ecs.ContainerImage.fromRegistry(`${ECR_URI}:backend`);
+const webImage = ecs.ContainerImage.fromRegistry(`${ECR_URI}:web`);
+
+// The self-hosted model endpoint (private DNS from the model stack). Passed to
+// the app stack so the backend's MODEL_BASE_URL points at it. If MODEL_DEPLOY
+// is "false", the app runs models-unplugged (FIN-105, P8).
+const MODEL_DNS = "model.finne.local";
+const deployModel = (process.env.MODEL_DEPLOY ?? "true") !== "false";
+const modelBaseUrl = deployModel ? `http://${MODEL_DNS}:8000/v1` : "disabled";
+
+// 1. App stack (backend + web). Depends on ECR images existing.
+const appStack = new FinneStack(app, "FinneStack", {
+  env,
   backendImage,
   webImage,
-  tags: {
-    Project: "Finne",
-    Stage: "staging",
-  },
+  modelBaseUrl,
+  tags: { Project: "Finne", Stage: "staging" },
 });
+
+// 2. Model stack (GPU EC2 vLLM). Reuses the app stack's VPC + backend SG.
+if (deployModel) {
+  new FinneModelStack(app, "FinneModelStack", {
+    env,
+    vpc: appStack.vpc,
+    backendSg: appStack.backendSg,
+    modelName: process.env.MODEL_NAME ?? "Qwen/Qwen2.5-3B-Instruct",
+    tags: { Project: "Finne", Stage: "staging", Component: "model" },
+  });
+}
