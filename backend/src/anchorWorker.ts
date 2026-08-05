@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { Address, Hash, LocalAccount } from "viem";
-import { getWalletClient, caseRegistryAddress, refundProtocolAddress, getPublicClient } from "./chain/client.ts";
+import { getWalletClient, caseRegistryAddress, getPublicClient } from "./chain/client.ts";
 import { CASE_REGISTRY_ABI } from "./chain/abis.ts";
 import { AnchorJob, Payout, Case, Decision } from "./models/index.ts";
 
@@ -92,7 +92,8 @@ async function drain(): Promise<void> {
 async function processJob(job: typeof AnchorJob.prototype, registry: Address, operator: LocalAccount): Promise<void> {
   const client = getPublicClient();
   const wallet = getWalletClient()!;
-  const hash = job.hash as `0x${string}`;
+  const hash = (job.hash ?? "0x0") as `0x${string}`;
+  const args = job.args ?? {};
 
   // Pass the LocalAccount object (not a bare address) so viem signs the
   // transaction locally and broadcasts it via eth_sendRawTransaction. Arc's
@@ -101,33 +102,142 @@ async function processJob(job: typeof AnchorJob.prototype, registry: Address, op
   // parameters" on every anchor attempt.
   try {
     let txHash: Hash | null = null;
-    if (job.kind === "receipt") {
-      txHash = await wallet.writeContract({
-        address: registry,
-        abi: CASE_REGISTRY_ABI,
-        functionName: "anchorReceipt",
-        args: [getRefundProtocolAddress(), BigInt(job.paymentId), hash, BigInt(job.disputeDeadline || 0)],
-        account: operator,
-        chain: wallet.chain,
-      });
-    } else if (job.kind === "case") {
-      txHash = await wallet.writeContract({
-        address: registry,
-        abi: CASE_REGISTRY_ABI,
-        functionName: "anchorCase",
-        args: [BigInt(job.paymentId), hash],
-        account: operator,
-        chain: wallet.chain,
-      });
-    } else if (job.kind === "decision") {
-      txHash = await wallet.writeContract({
-        address: registry,
-        abi: CASE_REGISTRY_ABI,
-        functionName: "anchorDecision",
-        args: [BigInt(job.paymentId), hash, job.outcome],
-        account: operator,
-        chain: wallet.chain,
-      });
+
+    // Each kind maps 1:1 to a FinneCaseRegistry lifecycle function (CON-01→04).
+    // The operator wallet holds PLATFORM_ROLE + REVIEWER_ROLE + AGENT_ROLE, so
+    // it can sign every function the lifecycle needs.
+    switch (job.kind) {
+      case "receipt": {
+        // registerReceipt(uint256 paymentId, bytes32 receiptHash, address payer,
+        //                  address recipient, uint128 amountMicroUsdc, uint64 paidAt)
+        txHash = await wallet.writeContract({
+          address: registry,
+          abi: CASE_REGISTRY_ABI,
+          functionName: "registerReceipt",
+          args: [
+            BigInt(job.paymentId),
+            hash,
+            args.payer as Address,
+            args.recipient as Address,
+            BigInt(args.amountMicroUsdc ?? 0),
+            BigInt(args.paidAt ?? 0),
+          ],
+          account: operator,
+          chain: wallet.chain,
+        });
+        break;
+      }
+      case "case": {
+        // openCase(uint256 caseId, uint256 paymentId, bytes32 claimHash,
+        //          uint128 challengedAmountMicroUsdc, uint64 responseDueAt)
+        txHash = await wallet.writeContract({
+          address: registry,
+          abi: CASE_REGISTRY_ABI,
+          functionName: "openCase",
+          args: [
+            BigInt(job.entityId),
+            BigInt(args.paymentId ?? job.paymentId),
+            hash,
+            BigInt(args.challengedAmountMicroUsdc ?? 0),
+            BigInt(args.responseDueAt ?? 0),
+          ],
+          account: operator,
+          chain: wallet.chain,
+        });
+        break;
+      }
+      case "response": {
+        // submitResponse(uint256 caseId, bytes32 responseHash, address submittedBy)
+        txHash = await wallet.writeContract({
+          address: registry,
+          abi: CASE_REGISTRY_ABI,
+          functionName: "submitResponse",
+          args: [BigInt(job.entityId), hash, (args.submittedBy ?? operator.address) as Address],
+          account: operator,
+          chain: wallet.chain,
+        });
+        break;
+      }
+      case "analysis": {
+        // anchorAnalysis(uint256 caseId, bytes32 analysisHash, uint32 version)
+        txHash = await wallet.writeContract({
+          address: registry,
+          abi: CASE_REGISTRY_ABI,
+          functionName: "anchorAnalysis",
+          args: [BigInt(job.entityId), hash, args.version ?? 1],
+          account: operator,
+          chain: wallet.chain,
+        });
+        break;
+      }
+      case "decision": {
+        // recordDecision(uint256 caseId, bytes32 decisionHash, uint8 outcome,
+        //                 uint128 correctionAmountMicroUsdc)
+        txHash = await wallet.writeContract({
+          address: registry,
+          abi: CASE_REGISTRY_ABI,
+          functionName: "recordDecision",
+          args: [
+            BigInt(job.entityId),
+            hash,
+            args.outcome ?? job.outcome ?? 0,
+            BigInt(args.correctionAmountMicroUsdc ?? 0),
+          ],
+          account: operator,
+          chain: wallet.chain,
+        });
+        break;
+      }
+      case "correction_outstanding": {
+        // markCorrectionOutstanding(uint256 caseId, bytes32 correctionHash) — requires
+        // the case to be DECIDED with a non-zero correction amount first.
+        txHash = await wallet.writeContract({
+          address: registry,
+          abi: CASE_REGISTRY_ABI,
+          functionName: "markCorrectionOutstanding",
+          args: [BigInt(job.entityId), hash],
+          account: operator,
+          chain: wallet.chain,
+        });
+        break;
+      }
+      case "correction": {
+        // recordCorrection(uint256 caseId, bytes32 correctionTxHash, bytes32 correctionHash)
+        txHash = await wallet.writeContract({
+          address: registry,
+          abi: CASE_REGISTRY_ABI,
+          functionName: "recordCorrection",
+          args: [
+            BigInt(job.entityId),
+            (args.correctionTxHash ?? hash) as `0x${string}`,
+            hash,
+          ],
+          account: operator,
+          chain: wallet.chain,
+        });
+        break;
+      }
+      case "close_no_correction": {
+        // closeNoCorrection(uint256 caseId)
+        txHash = await wallet.writeContract({
+          address: registry,
+          abi: CASE_REGISTRY_ABI,
+          functionName: "closeNoCorrection",
+          args: [BigInt(job.entityId)],
+          account: operator,
+          chain: wallet.chain,
+        });
+        break;
+      }
+      default: {
+        // Unknown kind — release without retry so it doesn't wedge the queue.
+        job.status = "queued";
+        job.leaseOwner = null;
+        job.leasedUntil = null;
+        await job.save();
+        console.warn(`[anchor-worker] unknown job kind "${job.kind}" for ${job.entityId} — released`);
+        return;
+      }
     }
 
     if (!txHash) {
@@ -185,8 +295,4 @@ async function backfillAnchor(job: typeof AnchorJob.prototype, txHash: string): 
   } else if (job.kind === "decision") {
     await Decision.updateOne({ _id: job.entityId }, { $set: { registryAnchorTx: txHash } });
   }
-}
-
-function getRefundProtocolAddress(): Address {
-  return refundProtocolAddress() ?? ("0x0000000000000000000000000000000000000000" as Address);
 }

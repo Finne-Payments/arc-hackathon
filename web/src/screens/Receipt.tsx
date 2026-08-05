@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { FinneActions, ViewModel } from "../useFinne";
 import type { ApiData } from "../useApi";
 import { BackLink, Card, Eyebrow, PrimaryButton, SecondaryButton, SharedViewBadge, SpinnerLabel, StatusPill, TechChip } from "../components/primitives";
+import { DocumentPreview } from "../components/DocumentPreview";
 import { OpenDisputeModal } from "../components/OpenDisputeModal";
 import { explorerAddr, explorerTx, receiptStatusView, shortHex } from "../mappers";
 import { api } from "../api";
@@ -50,6 +51,8 @@ export function Receipt({ v, actions, apiData }: { v: ViewModel; actions: FinneA
 
   // Withdraw state — the recipient can withdraw from inside the receipt too.
   const [withdrawing, setWithdrawing] = useState(false);
+  // Document preview modal (case-party private).
+  const [previewingDocId, setPreviewingDocId] = useState<string | null>(null);
   const [withdrawMsg, setWithdrawMsg] = useState<string | null>(null);
   const canWithdraw = v.isRecipient && payout && (payout.status === "WITHDRAWABLE" || payout.status === "ESCROWED") && !payout.withdrawTxHash;
 
@@ -187,8 +190,9 @@ export function Receipt({ v, actions, apiData }: { v: ViewModel; actions: FinneA
               </div>
             )}
 
-            {/* Payment-time contracts/documents (arbiter-only downloads).
-                The agents read these and surface summaries in any dispute. */}
+            {/* Payment-time contracts/documents — case-party private (arbiter,
+                merchant, customer can preview). Agents read these and surface
+                summaries in any dispute. */}
             {workOrder?.documents && workOrder.documents.length > 0 && (
               <div style={{ marginTop: 16, marginBottom: 16 }}>
                 <Eyebrow color="var(--color-fg-subtle)" style={{ margin: "4px 0 10px" }}>
@@ -199,23 +203,24 @@ export function Receipt({ v, actions, apiData }: { v: ViewModel; actions: FinneA
                     <div key={doc.documentId} style={{ display: "flex", alignItems: "center", gap: 10, border: "1px solid var(--color-border)", borderRadius: "var(--radius-md)", padding: "9px 12px", fontSize: 13 }}>
                       <span style={{ flex: 1, fontWeight: 500 }}>{doc.filename}</span>
                       <span style={{ color: "var(--color-fg-subtle)", fontSize: 11 }}>{doc.mimeType} · {(doc.sizeBytes / 1024).toFixed(1)} KB</span>
+                      <button
+                        onClick={() => setPreviewingDocId(doc.documentId)}
+                        style={{ fontSize: 11, fontWeight: 600, padding: "4px 10px", border: "1px solid var(--brand-200)", borderRadius: "var(--radius-sm)", background: "var(--brand-50)", color: "var(--brand-800)", cursor: "pointer" }}
+                      >
+                        Preview
+                      </button>
                       {v.isReviewer && (
                         <button
                           onClick={() =>
                             api.downloadWorkOrderDocument(payout?.paymentId ?? "", doc.documentId).then((res) => window.open(res.url, "_blank")).catch(() => {})
                           }
-                          style={{ fontSize: 11, fontWeight: 600, padding: "4px 10px", border: "1px solid var(--brand-200)", borderRadius: "var(--radius-sm)", background: "var(--brand-50)", color: "var(--brand-800)", cursor: "pointer" }}
+                          style={{ fontSize: 11, fontWeight: 500, padding: "4px 10px", border: "1px solid var(--color-border)", borderRadius: "var(--radius-sm)", background: "var(--color-surface)", color: "var(--color-fg-muted)", cursor: "pointer" }}
                         >
-                          View
+                          Download
                         </button>
                       )}
                     </div>
                   ))}
-                  {!v.isReviewer && (
-                    <div style={{ fontSize: 11, color: "var(--color-fg-subtle)" }}>
-                      {workOrder.documents.length} document(s) on file · visible to the arbiter.
-                    </div>
-                  )}
                 </div>
               </div>
             )}
@@ -340,6 +345,14 @@ export function Receipt({ v, actions, apiData }: { v: ViewModel; actions: FinneA
           </svg>
           Receipt fingerprint anchored on {chainName} · <TechChip short={shortHex(payout.receiptHash)} full={payout.receiptHash} onCopy={actions.copyTech} />
         </div>
+      )}
+
+      {/* Inline document preview modal (case-party private). */}
+      {previewingDocId && payout?.paymentId && (
+        <DocumentPreview
+          load={() => api.previewWorkOrderDocument(payout.paymentId, previewingDocId)}
+          onClose={() => setPreviewingDocId(null)}
+        />
       )}
     </div>
   );

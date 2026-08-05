@@ -160,6 +160,15 @@ export interface EvidenceAnnotation {
   generatedAt: string;
 }
 
+/** Renderable content for the inline preview modal. */
+export interface PreviewResult {
+  kind: "text" | "video" | "link";
+  content: string;
+  mimeType: string;
+  filename: string;
+  sha256: string;
+}
+
 export interface CaseRow {
   caseNumber: string;
   caseCode?: string;
@@ -330,20 +339,25 @@ export const api = {
   /** Add a link (e.g. YouTube) as evidence — shared visibility. */
   addEvidenceLink: (caseNumber: string, body: { title: string; linkUrl: string }) =>
     request<{ evidenceId: string }>(`/cases/${caseNumber}/evidence/links`, { method: "POST", body: JSON.stringify(body) }),
-  /** Arbiter-only: get a short-lived presigned download URL for an evidence file. */
+  /** Case parties: get a short-lived presigned download URL for an evidence file. */
   downloadEvidence: (caseNumber: string, evidenceId: string) =>
     request<{ url: string; expiresAt: string }>(`/cases/${caseNumber}/evidence/${evidenceId}/download`),
+  /** Case parties: renderable content for the inline preview modal. */
+  previewEvidence: (caseNumber: string, evidenceId: string) =>
+    request<PreviewResult>(`/cases/${caseNumber}/evidence/${evidenceId}/preview`),
   /** Agent document summaries for a case (the arbiter sees these as cards). */
   caseAnnotations: (caseNumber: string) =>
     request<{ annotations: EvidenceAnnotation[] }>(`/cases/${caseNumber}/annotations`),
 
-  // --- Work order documents (payment-time contracts, arbiter-only) ---
+  // --- Work order documents (payment-time contracts) ---
   allocateWorkOrderDocument: (paymentId: string, body: { filename: string; mimeType: string; declaredSizeBytes: number }) =>
     request<{ uploadId: string; objectKey: string; uploadUrl: string; method: "PUT"; headers: Record<string, string>; expiresAt: string }>(`/payouts/${paymentId}/documents/uploads`, { method: "POST", body: JSON.stringify(body) }),
   completeWorkOrderDocument: (paymentId: string, uploadId: string, body: { filename: string }) =>
     request<{ documentId: string; sha256: string; mimeType: string; sizeBytes: number }>(`/payouts/${paymentId}/documents/uploads/${uploadId}/complete`, { method: "POST", body: JSON.stringify(body) }),
   downloadWorkOrderDocument: (paymentId: string, documentId: string) =>
     request<{ url: string; expiresAt: string }>(`/payouts/${paymentId}/documents/${documentId}/download`),
+  previewWorkOrderDocument: (paymentId: string, documentId: string) =>
+    request<PreviewResult>(`/payouts/${paymentId}/documents/${documentId}/preview`),
   workOrderAnnotations: (paymentId: string) =>
     request<{ annotations: EvidenceAnnotation[] }>(`/payouts/${paymentId}/documents/annotations`),
 

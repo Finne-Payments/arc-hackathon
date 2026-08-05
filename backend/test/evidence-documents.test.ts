@@ -23,6 +23,7 @@ const reviewerWallet = "0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 const recipientWallet = "0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB";
 let reviewerId = "";
 let recipientId = "";
+let viewerId = "";
 
 async function ensureUsers(): Promise<void> {
   const reviewer = await User.findOneAndUpdate(
@@ -35,8 +36,14 @@ async function ensureUsers(): Promise<void> {
     { $set: { email: "recipient@test", passwordHash: "x", role: "recipient", displayName: "Maya", platformKey: "northbeam", walletAddress: recipientWallet } },
     { upsert: true, new: true },
   );
+  const viewer = await User.findOneAndUpdate(
+    { email: "viewer@test" },
+    { $set: { email: "viewer@test", passwordHash: "x", role: "platform_viewer", displayName: "Park", platformKey: "northbeam" } },
+    { upsert: true, new: true },
+  );
   reviewerId = String(reviewer._id);
   recipientId = String(recipient._id);
+  viewerId = String(viewer._id);
 }
 
 function authAs(userId: string, role: Role, displayName: string): string {
@@ -44,6 +51,7 @@ function authAs(userId: string, role: Role, displayName: string): string {
 }
 const reviewerToken = () => authAs(reviewerId, "reviewer", "Dana");
 const recipientToken = () => authAs(recipientId, "recipient", "Maya");
+const viewerToken = () => authAs(viewerId, "platform_viewer", "Park");
 
 async function seedEscrowedPayout(paymentId: string): Promise<void> {
   await Payout.create({
@@ -171,7 +179,7 @@ describe("evidence document upload + RBAC", () => {
     expect(res.body.expiresAt).toBeTruthy();
   });
 
-  it("forbids a recipient from downloading an evidence file → 403 (evidence:download is reviewer-only)", async () => {
+  it("forbids a platform_viewer (non-case-party) from downloading an evidence file → 403", async () => {
     await seedDisputedCase("CASE-005", "PAY-5");
     const alloc = await request(app)
       .post("/cases/CASE-005/evidence/uploads")
@@ -182,9 +190,10 @@ describe("evidence document upload + RBAC", () => {
       .set("Authorization", `Bearer ${recipientToken()}`)
       .send({ title: "Doc", filename: "doc.txt" });
     const ev = await Evidence.findOne({ caseRef: "CASE-005" }).lean();
+    // A platform_viewer is NOT a case party → evidence:download is denied.
     const res = await request(app)
       .get(`/cases/CASE-005/evidence/${ev!._id}/download`)
-      .set("Authorization", `Bearer ${recipientToken()}`);
+      .set("Authorization", `Bearer ${viewerToken()}`);
     expect(res.status).toBe(403);
   });
 
@@ -389,5 +398,110 @@ describe("storage path isolation (objectKey never reaches clients)", () => {
     expect(docs.length).toBe(1);
     expect(docs[0]).not.toHaveProperty("objectKey");
     expect(docs[0]).toHaveProperty("filename");
+  });
+});
+
+describe("preview — case-party access + content", () => {
+  it("returns extracted text for a text/markdown evidence preview (case party)", async () => {
+    await seedDisputedCase("CASE-040", "PAY-40");
+    const content = "# Agreement\nDeliverable: 3 videos. Fee: 5000 USDC.";
+    const alloc = await request(app)
+      .post("/cases/CASE-040/evidence/uploads")
+      .set("Authorization", `Bearer ${recipientToken()}`)
+      .send({ filename: "notes.md", mimeType: "text/markdown", declaredSizeBytes: content.length });
+    // PUT the bytes to the local store (simulating the client upload step).
+    const { getLocalStore } = await import("../src/integrations/storage/localStore.ts");
+    getLocalStore().setUploadBytes(alloc.body.uploadId, new TextEncoder().encode(content));
+    await request(app)
+      .post(`/cases/CASE-040/evidence/uploads/${alloc.body.uploadId}/complete`)
+      .set("Authorization", `Bearer ${recipientToken()}`)
+      .send({ title: "Agreement", filename: "notes.md" });
+    const ev = await Evidence.findOne({ caseRef: "CASE-040" }).lean();
+
+    const res = await request(app)
+      .get(`/cases/CASE-040/evidence/${ev!._id}/preview`)
+      .set("Authorization", `Bearer ${reviewerToken()}`);
+    expect(res.status).toBe(200);
+    expect(res.body.kind).toBe("text");
+    expect(res.body.content).toContain("Agreement");
+    expect(res.body.filename).toBe("notes.md");
+  });
+
+  it("returns the URL for a link evidence preview", async () => {
+    await seedDisputedCase("CASE-041", "PAY-41");
+    await request(app)
+      .post("/cases/CASE-041/evidence/links")
+      .set("Authorization", `Bearer ${recipientToken()}`)
+      .send({ title: "Demo", linkUrl: "https://www.loom.com/share/abc" });
+    const ev = await Evidence.findOne({ caseRef: "CASE-041" }).lean();
+    const res = await request(app)
+      .get(`/cases/CASE-041/evidence/${ev!._id}/preview`)
+      .set("Authorization", `Bearer ${reviewerToken()}`);
+    expect(res.status).toBe(200);
+    expect(res.body.kind).toBe("link");
+    expect(res.body.content).toContain("loom.com");
+  });
+
+  it("allows the recipient (case party) to preview", async () => {
+    await seedDisputedCase("CASE-042", "PAY-42");
+    await request(app)
+      .post("/cases/CASE-042/evidence/links")
+      .set("Authorization", `Bearer ${recipientToken()}`)
+      .send({ title: "Demo", linkUrl: "https://youtu.be/abc123" });
+    const ev = await Evidence.findOne({ caseRef: "CASE-042" }).lean();
+    const res = await request(app)
+      .get(`/cases/CASE-042/evidence/${ev!._id}/preview`)
+      .set("Authorization", `Bearer ${recipientToken()}`);
+    expect(res.status).toBe(200);
+  });
+
+  it("forbids a platform_viewer (non-case-party) from previewing → 403", async () => {
+    await seedDisputedCase("CASE-043", "PAY-43");
+    await request(app)
+      .post("/cases/CASE-043/evidence/links")
+      .set("Authorization", `Bearer ${recipientToken()}`)
+      .send({ title: "Demo", linkUrl: "https://youtu.be/abc123" });
+    const ev = await Evidence.findOne({ caseRef: "CASE-043" }).lean();
+    const res = await request(app)
+      .get(`/cases/CASE-043/evidence/${ev!._id}/preview`)
+      .set("Authorization", `Bearer ${viewerToken()}`);
+    expect(res.status).toBe(403);
+  });
+
+  it("404s for an unknown evidence id", async () => {
+    await seedDisputedCase("CASE-044", "PAY-44");
+    const res = await request(app)
+      .get(`/cases/CASE-044/evidence/000000000000000000000000/preview`)
+      .set("Authorization", `Bearer ${reviewerToken()}`);
+    expect(res.status).toBe(404);
+  });
+});
+
+describe("conversation-aware frame (responses + info requests)", () => {
+  it("produces a frame after a response + info request, reflecting the conversation", async () => {
+    // Seed a disputed case with an arbiter info request already on it.
+    await seedDisputedCase("CASE-050", "PAY-50");
+    const { Case: CaseModel } = await import("../src/models/index.ts");
+    await CaseModel.updateOne(
+      { caseNumber: "CASE-050" },
+      { $push: { infoRequests: { target: "recipient", text: "When was the second video delivered?", requestedAt: new Date().toISOString(), answeredAt: null } } },
+    );
+
+    // The recipient responds (a chat message) → triggers frame re-assembly.
+    const reply = await request(app)
+      .post("/cases/CASE-050/responses")
+      .set("Authorization", `Bearer ${recipientToken()}`)
+      .send({ text: "The second video was delivered on May 3rd — see the attached file." });
+    expect(reply.status).toBe(201);
+
+    // Give the fire-and-forget frame assembly a beat to land, then fetch the
+    // shared case body which carries the assembled frame.
+    await new Promise((r) => setTimeout(r, 300));
+    const res = await request(app).get("/cases/CASE-050").set("Authorization", `Bearer ${reviewerToken()}`);
+    expect(res.status).toBe(200);
+    // A frame should exist (the conversation triggered re-assembly). At minimum
+    // the deterministic rung-1 parts (requirements/unresolved) are present even
+    // with the model unplugged in NODE_ENV=test.
+    expect(res.body.frame).toBeTruthy();
   });
 });

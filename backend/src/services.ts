@@ -151,7 +151,13 @@ export async function recordDetectedPayment(det: DetectedPayment): Promise<{ pay
     trancheIndex: null,
   });
 
-  await enqueueAnchor("receipt", payout.paymentId, payout.paymentId, receiptHash);
+  await enqueueAnchor("receipt", payout.paymentId, payout.paymentId, receiptHash, 0, {
+    payer: det.txSender,
+    recipient: det.to,
+    // det.amount is in whole USDC (6 decimals) — the registry takes micro-USDC (uint128).
+    amountMicroUsdc: BigInt(Math.round(Number(det.amount) * 1_000_000)).toString(),
+    paidAt: Math.floor(new Date(det.blockTimestamp).getTime() / 1000),
+  });
 
   await notify({
     type: "payment",
@@ -229,7 +235,11 @@ export async function openDispute(
   caseDoc.status = afterNotice.status;
   await caseDoc.save();
 
-  await enqueueAnchor("case", caseDoc.caseNumber, paymentId, caseHash);
+  await enqueueAnchor("case", caseDoc.caseNumber, paymentId, caseHash, 0, {
+    paymentId,
+    challengedAmountMicroUsdc: BigInt(Math.round(Number(body.amountContested) * 1_000_000)).toString(),
+    responseDueAt: Math.floor(new Date(responseDeadline).getTime() / 1000),
+  });
 
   await notify({
     type: "dispute",
@@ -306,6 +316,12 @@ export async function submitResponse(
     paymentId: caseDoc.payoutRef,
     audience: [{ role: "reviewer", platformKey: payoutForNotify?.platformKey ?? null }],
   });
+
+  // Re-run the agent frame so the narrative + turning questions reflect the new
+  // message. Fire-and-forget (P8 never-crash). Mirrors the evidence-add trigger.
+  void import("./v1/frameOrchestrator.ts")
+    .then(({ assembleForCaseByNumber }) => assembleForCaseByNumber(caseNumber))
+    .catch((e) => console.error(`[submitResponse] auto frame-assembly failed for ${caseNumber}:`, e instanceof Error ? e.message : e));
 
   return { caseDoc };
 }
@@ -470,7 +486,12 @@ export async function recordDecision(
     const afterClose = applyCaseEvent({ status: caseDoc.status as never, infoRequestCount: caseDoc.infoRequestCount }, "close");
     caseDoc.status = afterClose.status;
     await caseDoc.save();
-    await enqueueAnchor("decision", decision._id.toString(), caseDoc.payoutRef, decisionHash, outcomeCode(body.outcome));
+    await enqueueAnchor("decision", decision._id.toString(), caseDoc.payoutRef, decisionHash, outcomeCode(body.outcome), {
+      // Legacy outcomes {release,no_action} are no-correction → contract Outcome.DISMISSED (4)
+      // with zero correction. (refund decisions anchor after on-chain confirmation.)
+      outcome: 4,
+      correctionAmountMicroUsdc: "0",
+    });
   }
 
   await caseDoc.save();
@@ -565,7 +586,12 @@ export async function confirmRefundExecuted(
       decision.refundTxHash = refundTxHash;
       decision.executedAt = new Date().toISOString();
       await decision.save();
-      await enqueueAnchor("decision", decision._id.toString(), paymentId, decision.decisionHash, 1);
+      await enqueueAnchor("decision", decision._id.toString(), paymentId, decision.decisionHash, 1, {
+        // Refund confirmed on-chain → contract Outcome.PLATFORM_UPHELD (2), correction = refunded amount.
+        outcome: 2,
+        correctionAmountMicroUsdc: BigInt(Math.round(Number(payout.amount) * 1_000_000)).toString(),
+        correctionTxHash: refundTxHash,
+      });
     }
   }
 
@@ -616,13 +642,14 @@ export async function confirmWithdrawn(paymentId: string, withdrawTxHash: string
   });
 }
 
-/* ---- anchor job enqueue (no-op worker in this build; documented stub) ---- */
+/* ---- anchor job enqueue → drained by anchorWorker.ts against FinneCaseRegistry ---- */
 async function enqueueAnchor(
   kind: "receipt" | "case" | "decision",
   entityId: string,
   paymentId: string,
   hash: string,
   outcome = 0,
+  args: Record<string, unknown> = {},
 ): Promise<void> {
   await AnchorJob.create({
     kind,
@@ -631,12 +658,12 @@ async function enqueueAnchor(
     hash,
     disputeDeadline: 0,
     outcome,
+    args,
     status: "queued",
     attempts: 0,
     lastError: null,
     anchorTx: null,
   });
-  // No real anchor worker in this build — see docs/REMAINING_ISSUES.md (PH-4).
 }
 
 /* ---- shared case body assembly (P3 — byte-identical across seats) ---- */

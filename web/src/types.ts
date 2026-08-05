@@ -36,7 +36,7 @@ export type DecPhase =
   | "confirmed"
   | "recorded";
 
-export type DecOption = "approve" | "reject" | "close" | null;
+export type DecOption = "approve" | "reject" | null;
 
 export type InfoTarget = "merchant" | "customer";
 

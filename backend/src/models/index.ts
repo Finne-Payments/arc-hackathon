@@ -353,17 +353,58 @@ const chainEventSchema = new Schema<ChainEventDoc>(
 );
 chainEventSchema.index({ txHash: 1, logIndex: 1 }, { unique: true });
 
+/**
+ * Anchor job kinds map 1:1 to the lifecycle functions on FinneCaseRegistry
+ * (CON-01 → CON-04). Each carries the arguments the on-chain function needs;
+ * `hash` is the keccak256 of the canonical envelope (the thing that goes on
+ * chain). Only hashes + opaque IDs + micro-USDC amounts ever touch the job.
+ */
+export type AnchorJobKind =
+  | "receipt" // registerReceipt
+  | "case" // openCase
+  | "response" // submitResponse
+  | "analysis" // anchorAnalysis
+  | "decision" // recordDecision
+  | "correction_outstanding" // markCorrectionOutstanding
+  | "correction" // recordCorrection
+  | "close_no_correction"; // closeNoCorrection
+
 export interface AnchorJobDoc {
-  kind: "receipt" | "case" | "decision";
+  kind: AnchorJobKind;
+  /** On-chain numeric id for the entity (paymentId or caseId), as a uint256. */
   entityId: string;
   paymentId: string;
   hash: string;
+  /** Legacy field retained for back-compat with older queue entries. */
   disputeDeadline: number;
   outcome: number;
   status: "queued" | "in_flight" | "done" | "failed";
   attempts: number;
   lastError: string | null;
   anchorTx: string | null;
+  // ---- Lifecycle args consumed by processJob (kept as plain JSON) ----
+  // For receipt: registerReceipt(paymentId, receiptHash, payer, recipient, amountMicroUsdc, paidAt)
+  // For case: openCase(caseId, paymentId, claimHash, challengedAmountMicroUsdc, responseDueAt)
+  // For response: submitResponse(caseId, responseHash, submittedBy)
+  // For analysis: anchorAnalysis(caseId, analysisHash, version)
+  // For decision: recordDecision(caseId, decisionHash, outcome, correctionAmountMicroUsdc)
+  // For correction_outstanding: markCorrectionOutstanding(caseId, correctionHash)
+  // For correction: recordCorrection(caseId, correctionTxHash, correctionHash)
+  // For close_no_correction: closeNoCorrection(caseId)
+  args: {
+    paymentId?: string; // uint256 id of the receipt this case is about
+    payer?: string;
+    recipient?: string;
+    amountMicroUsdc?: string;
+    paidAt?: number;
+    challengedAmountMicroUsdc?: string;
+    responseDueAt?: number;
+    submittedBy?: string;
+    version?: number;
+    outcome?: number;
+    correctionAmountMicroUsdc?: string;
+    correctionTxHash?: string;
+  };
   // Reliability fields (GAP-B5): leasing prevents two replicas double-anchoring;
   // nextAttemptAt implements exponential backoff on failure.
   leaseOwner: string | null;
@@ -382,6 +423,7 @@ const anchorJobSchema = new Schema<AnchorJobDoc>(
     attempts: { type: Number, default: 0 },
     lastError: { type: String, default: null },
     anchorTx: { type: String, default: null },
+    args: { type: Schema.Types.Mixed, default: {} },
     leaseOwner: { type: String, default: null },
     leasedUntil: { type: String, default: null },
     nextAttemptAt: { type: String, default: null },

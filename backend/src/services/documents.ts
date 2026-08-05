@@ -1,14 +1,19 @@
 /* ============================================================================
    Document attachment services (PAY-DOC).
-   Thin service functions backing the upload/link/download endpoints. Each
-   resolves the owning entity (case or work order), writes the enriched Evidence
-   or WorkOrder document record, and triggers the agent summary pipeline.
+   Thin service functions backing the upload/link/download/preview endpoints.
+   Each resolves the owning entity (case or work order), writes the enriched
+   Evidence or WorkOrder document record, and triggers the agent summary pipeline.
 
-   Visibility rule (per product decision):
-     - Uploaded FILES (PDF/MD/TXT) → visibility ARBITER_ONLY (only the arbiter
-       downloads; uploaders see metadata: title, filename, sha, size).
-     - Inline TEXT → SHARED (unchanged legacy behaviour).
-     - LINKS (YouTube) → SHARED (it's just a URL).
+   Privacy model (per product decision): documents are CASE-PRIVATE — any
+   authenticated party to the case (arbiter, merchant, customer) can preview and
+   download. The access boundary is the `evidence:download` permission, granted
+   to case parties (reviewer + recipient). `platform_viewer`/`agent_service`
+   are not case parties and are excluded. The `visibility` field is retained for
+   labelling (which the UI shows) but access control is the permission check.
+     - Uploaded FILES (PDF/MD/TXT/video) → visibility ARBITER_ONLY (historical
+       label; now previewable by all case parties).
+     - Inline TEXT → SHARED.
+     - LINKS (any HTTPS video) → SHARED.
    ========================================================================== */
 
 import { generateId } from "@finne/domain";
@@ -187,4 +192,78 @@ export async function resolveEvidenceObjectKey(_caseNumber: string, evidenceId: 
   if (!doc) throw new HttpError(404, `Evidence ${evidenceId} not found.`);
   if (!doc.objectKey) throw new HttpError(404, `Evidence ${evidenceId} has no attached file.`);
   return doc.objectKey;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Preview — return renderable content for the inline preview modal.           */
+/*   text/markdown/PDF → extracted text (the agent's reader, capped).          */
+/*   video             → a short-lived presigned GET URL (frontend <video>).   */
+/*   link              → the stored URL (frontend open-link action).           */
+/* Access is gated by the evidence:download permission (case parties only).    */
+/* -------------------------------------------------------------------------- */
+
+export type PreviewKind = "text" | "video" | "link";
+
+export interface PreviewResult {
+  kind: PreviewKind;
+  content: string;
+  mimeType: string;
+  filename: string;
+  sha256: string;
+}
+
+/** Preview a case evidence item. */
+export async function previewEvidence(_caseNumber: string, evidenceId: string): Promise<PreviewResult> {
+  const doc = await Evidence.findById(evidenceId).lean();
+  if (!doc) throw new HttpError(404, `Evidence ${evidenceId} not found.`);
+
+  // Link evidence → return the URL (the frontend shows an open-link action).
+  if (doc.source === "link" && doc.linkUrl) {
+    return { kind: "link", content: doc.linkUrl, mimeType: doc.mimeType ?? "text/url", filename: doc.filename ?? doc.title, sha256: doc.sha256 ?? "" };
+  }
+  if (!doc.objectKey) throw new HttpError(404, `Evidence ${evidenceId} has no attached file.`);
+
+  // Video → issue a short-lived presigned GET URL for an inline <video> player.
+  if (doc.mimeType && doc.mimeType.startsWith("video/")) {
+    const { getEvidenceStore } = await import("../integrations/storage/localStore.ts");
+    const store = await getEvidenceStore();
+    const url = await store.getDownloadUrl(doc.objectKey);
+    return { kind: "video", content: url.url, mimeType: doc.mimeType, filename: doc.filename ?? doc.title, sha256: doc.sha256 ?? "" };
+  }
+
+  // Text/markdown/PDF → extract readable text via the agent's document reader.
+  const { readDocumentText } = await import("../agent/documentReader.ts");
+  const { text } = await readDocumentText(doc.objectKey, doc.mimeType ?? "application/octet-stream");
+  return {
+    kind: "text",
+    content: text ?? `No extractable text for "${doc.filename ?? doc.title}". Download the original to view it.`,
+    mimeType: doc.mimeType ?? "application/octet-stream",
+    filename: doc.filename ?? doc.title,
+    sha256: doc.sha256 ?? "",
+  };
+}
+
+/** Preview a work-order contract document. */
+export async function previewWorkOrderDocument(paymentId: string, documentId: string): Promise<PreviewResult> {
+  const wo = await WorkOrder.findOne({ paymentId }).lean();
+  if (!wo) throw new HttpError(404, `No work order for payment ${paymentId}.`);
+  const d = (wo.documents ?? []).find((x) => x.documentId === documentId);
+  if (!d) throw new HttpError(404, `Document ${documentId} not found.`);
+
+  if (d.mimeType.startsWith("video/")) {
+    const { getEvidenceStore } = await import("../integrations/storage/localStore.ts");
+    const store = await getEvidenceStore();
+    const url = await store.getDownloadUrl(d.objectKey);
+    return { kind: "video", content: url.url, mimeType: d.mimeType, filename: d.filename, sha256: d.sha256 };
+  }
+
+  const { readDocumentText } = await import("../agent/documentReader.ts");
+  const { text } = await readDocumentText(d.objectKey, d.mimeType);
+  return {
+    kind: "text",
+    content: text ?? `No extractable text for "${d.filename}". Download the original to view it.`,
+    mimeType: d.mimeType,
+    filename: d.filename,
+    sha256: d.sha256,
+  };
 }

@@ -3,7 +3,22 @@
     "type": "constructor",
     "inputs": [
       {
-        "name": "_operator",
+        "name": "admin",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "platform",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "reviewer",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "agent",
         "type": "address",
         "internalType": "address"
       }
@@ -12,15 +27,369 @@
   },
   {
     "type": "function",
-    "name": "anchorCase",
+    "name": "AGENT_ROLE",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "DEFAULT_ADMIN_ROLE",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "PLATFORM_ROLE",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "REVIEWER_ROLE",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "anchorAnalysis",
     "inputs": [
       {
-        "name": "paymentID",
+        "name": "caseId",
         "type": "uint256",
         "internalType": "uint256"
       },
       {
-        "name": "caseHash",
+        "name": "analysisHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "version",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "cases",
+    "inputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "claimHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "paymentId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "challengedAmountMicroUsdc",
+        "type": "uint128",
+        "internalType": "uint128"
+      },
+      {
+        "name": "responseDueAt",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "responseHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "analysisHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "outcome",
+        "type": "uint8",
+        "internalType": "enum FinneCaseRegistry.Outcome"
+      },
+      {
+        "name": "correctionAmountMicroUsdc",
+        "type": "uint128",
+        "internalType": "uint128"
+      },
+      {
+        "name": "correctionHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "status",
+        "type": "uint8",
+        "internalType": "enum FinneCaseRegistry.CaseStatus"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "closeNoCorrection",
+    "inputs": [
+      {
+        "name": "caseId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "correctionTxUsed",
+    "inputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getCase",
+    "inputs": [
+      {
+        "name": "caseId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "tuple",
+        "internalType": "struct FinneCaseRegistry.CaseAnchor",
+        "components": [
+          {
+            "name": "claimHash",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "paymentId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "challengedAmountMicroUsdc",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "responseDueAt",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "responseHash",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "analysisHash",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "outcome",
+            "type": "uint8",
+            "internalType": "enum FinneCaseRegistry.Outcome"
+          },
+          {
+            "name": "correctionAmountMicroUsdc",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "correctionHash",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "status",
+            "type": "uint8",
+            "internalType": "enum FinneCaseRegistry.CaseStatus"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getReceipt",
+    "inputs": [
+      {
+        "name": "paymentId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "tuple",
+        "internalType": "struct FinneCaseRegistry.ReceiptAnchor",
+        "components": [
+          {
+            "name": "receiptHash",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "payer",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "recipient",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "amountMicroUsdc",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "paidAt",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "registered",
+            "type": "bool",
+            "internalType": "bool"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getRoleAdmin",
+    "inputs": [
+      {
+        "name": "role",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "grantRole",
+    "inputs": [
+      {
+        "name": "role",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "account",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "hasRole",
+    "inputs": [
+      {
+        "name": "role",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "account",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "markCorrectionOutstanding",
+    "inputs": [
+      {
+        "name": "caseId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "correctionHash",
         "type": "bytes32",
         "internalType": "bytes32"
       }
@@ -30,10 +399,143 @@
   },
   {
     "type": "function",
-    "name": "anchorDecision",
+    "name": "markUnderReview",
     "inputs": [
       {
-        "name": "paymentID",
+        "name": "caseId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "openCase",
+    "inputs": [
+      {
+        "name": "caseId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "paymentId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "claimHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "challengedAmountMicroUsdc",
+        "type": "uint128",
+        "internalType": "uint128"
+      },
+      {
+        "name": "responseDueAt",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "pause",
+    "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "paused",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "receipts",
+    "inputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "receiptHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "payer",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "recipient",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "amountMicroUsdc",
+        "type": "uint128",
+        "internalType": "uint128"
+      },
+      {
+        "name": "paidAt",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "registered",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "recordCorrection",
+    "inputs": [
+      {
+        "name": "caseId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "correctionTxHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "correctionHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "recordDecision",
+    "inputs": [
+      {
+        "name": "caseId",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -45,7 +547,12 @@
       {
         "name": "outcome",
         "type": "uint8",
-        "internalType": "uint8"
+        "internalType": "enum FinneCaseRegistry.Outcome"
+      },
+      {
+        "name": "correctionAmountMicroUsdc",
+        "type": "uint128",
+        "internalType": "uint128"
       }
     ],
     "outputs": [],
@@ -53,15 +560,10 @@
   },
   {
     "type": "function",
-    "name": "anchorReceipt",
+    "name": "registerReceipt",
     "inputs": [
       {
-        "name": "refundProtocol",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "paymentID",
+        "name": "paymentId",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -71,7 +573,22 @@
         "internalType": "bytes32"
       },
       {
-        "name": "disputeDeadline",
+        "name": "payer",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "recipient",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "amountMicroUsdc",
+        "type": "uint128",
+        "internalType": "uint128"
+      },
+      {
+        "name": "paidAt",
         "type": "uint64",
         "internalType": "uint64"
       }
@@ -81,91 +598,163 @@
   },
   {
     "type": "function",
-    "name": "operator",
-    "inputs": [],
-    "outputs": [
+    "name": "renounceRole",
+    "inputs": [
       {
-        "name": "",
+        "name": "role",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "callerConfirmation",
         "type": "address",
         "internalType": "address"
       }
     ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "revokeRole",
+    "inputs": [
+      {
+        "name": "role",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "account",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "submitResponse",
+    "inputs": [
+      {
+        "name": "caseId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "responseHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "submittedBy",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "supportsInterface",
+    "inputs": [
+      {
+        "name": "interfaceId",
+        "type": "bytes4",
+        "internalType": "bytes4"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
     "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "unpause",
+    "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "event",
+    "name": "AnalysisAnchored",
+    "inputs": [
+      {
+        "name": "caseId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "analysisHash",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "version",
+        "type": "uint32",
+        "indexed": false,
+        "internalType": "uint32"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "CaseClosed",
+    "inputs": [
+      {
+        "name": "caseId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "finalStatus",
+        "type": "uint8",
+        "indexed": true,
+        "internalType": "uint8"
+      }
+    ],
+    "anonymous": false
   },
   {
     "type": "event",
     "name": "CaseOpened",
     "inputs": [
       {
-        "name": "paymentID",
+        "name": "caseId",
         "type": "uint256",
         "indexed": true,
         "internalType": "uint256"
       },
       {
-        "name": "caseHash",
-        "type": "bytes32",
-        "indexed": false,
-        "internalType": "bytes32"
-      },
-      {
-        "name": "openedBy",
-        "type": "address",
-        "indexed": false,
-        "internalType": "address"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "DecisionAnchored",
-    "inputs": [
-      {
-        "name": "paymentID",
+        "name": "paymentId",
         "type": "uint256",
         "indexed": true,
         "internalType": "uint256"
       },
       {
-        "name": "decisionHash",
+        "name": "claimHash",
         "type": "bytes32",
-        "indexed": false,
+        "indexed": true,
         "internalType": "bytes32"
       },
       {
-        "name": "outcome",
-        "type": "uint8",
+        "name": "challengedAmountMicroUsdc",
+        "type": "uint128",
         "indexed": false,
-        "internalType": "uint8"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "ReceiptAnchored",
-    "inputs": [
-      {
-        "name": "refundProtocol",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
+        "internalType": "uint128"
       },
       {
-        "name": "paymentID",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "receiptHash",
-        "type": "bytes32",
-        "indexed": false,
-        "internalType": "bytes32"
-      },
-      {
-        "name": "disputeDeadline",
+        "name": "responseDueAt",
         "type": "uint64",
         "indexed": false,
         "internalType": "uint64"
@@ -174,8 +763,331 @@
     "anonymous": false
   },
   {
+    "type": "event",
+    "name": "CaseUnderReview",
+    "inputs": [
+      {
+        "name": "caseId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "CorrectionInstructionRecorded",
+    "inputs": [
+      {
+        "name": "caseId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "correctionHash",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "correctionAmountMicroUsdc",
+        "type": "uint128",
+        "indexed": false,
+        "internalType": "uint128"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "CorrectionVerified",
+    "inputs": [
+      {
+        "name": "caseId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "correctionHash",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "HumanDecisionRecorded",
+    "inputs": [
+      {
+        "name": "caseId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "decisionHash",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "outcome",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
+      },
+      {
+        "name": "correctionAmountMicroUsdc",
+        "type": "uint128",
+        "indexed": false,
+        "internalType": "uint128"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "Paused",
+    "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "ReceiptRegistered",
+    "inputs": [
+      {
+        "name": "paymentId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "receiptHash",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "payer",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "recipient",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      },
+      {
+        "name": "amountMicroUsdc",
+        "type": "uint128",
+        "indexed": false,
+        "internalType": "uint128"
+      },
+      {
+        "name": "paidAt",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "ResponseSubmitted",
+    "inputs": [
+      {
+        "name": "caseId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "responseHash",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "submittedBy",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RoleAdminChanged",
+    "inputs": [
+      {
+        "name": "role",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "previousAdminRole",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "newAdminRole",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RoleGranted",
+    "inputs": [
+      {
+        "name": "role",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "account",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "sender",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RoleRevoked",
+    "inputs": [
+      {
+        "name": "role",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "account",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "sender",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "Unpaused",
+    "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
     "type": "error",
-    "name": "CallerNotOperator",
+    "name": "AccessControlBadConfirmation",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "AccessControlUnauthorizedAccount",
+    "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "neededRole",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "CaseAlreadyExists",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "CaseDoesNotExist",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ChallengeExceedsPayment",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "CorrectionAmountMismatch",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "CorrectionNotOutstanding",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "CorrectionTxAlreadyUsed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "DeadlineNotInFuture",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "DecisionAlreadyRecorded",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "EnforcedPause",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ExpectedPause",
     "inputs": []
   },
   {
@@ -185,7 +1097,69 @@
   },
   {
     "type": "error",
-    "name": "ZeroOperator",
+    "name": "ReceiptAlreadyRegistered",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ReceiptNotRegistered",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ResponseAlreadySubmitted",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ResponseDeadlinePassed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "UnauthorizedResponder",
+    "inputs": [
+      {
+        "name": "caller",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "expectedRecipient",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "WrongCaseStatus",
+    "inputs": [
+      {
+        "name": "expected",
+        "type": "uint8",
+        "internalType": "enum FinneCaseRegistry.CaseStatus"
+      },
+      {
+        "name": "actual",
+        "type": "uint8",
+        "internalType": "enum FinneCaseRegistry.CaseStatus"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ZeroAddress",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ZeroAmount",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ZeroHash",
     "inputs": []
   }
 ]

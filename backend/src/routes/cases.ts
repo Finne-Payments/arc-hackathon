@@ -11,6 +11,7 @@ import {
   attachEvidenceDocument,
   attachEvidenceLink,
   resolveEvidenceObjectKey,
+  previewEvidence,
 } from "../services/documents.ts";
 import { Case, EvidenceAnnotation } from "../models/index.ts";
 import { getEvidenceStore } from "../integrations/storage/localStore.ts";
@@ -172,7 +173,7 @@ caseRoutes.post("/cases/:id/evidence/uploads", requirePermission("case:add_evide
       declaredSizeBytes: Number(declaredSizeBytes),
     });
     if (!check.ok) throw new HttpError(400, check.reason);
-    const store = getEvidenceStore();
+    const store = await getEvidenceStore();
     const allocation = await store.allocateUpload({
       scope: "case",
       ownerId: req.params.id,
@@ -192,7 +193,7 @@ caseRoutes.post("/cases/:id/evidence/uploads/:uploadId/complete", requirePermiss
     const { title, filename } = req.body ?? {};
     if (!title?.trim()) throw new HttpError(400, "title is required.");
     const role = currentRole(req);
-    const store = getEvidenceStore();
+    const store = await getEvidenceStore();
     const stored = await store.finalizeUpload(req.params.uploadId);
     const result = await attachEvidenceDocument({
       caseNumber: req.params.id,
@@ -233,13 +234,25 @@ caseRoutes.post("/cases/:id/evidence/links", requirePermission("case:add_evidenc
   }
 });
 
-// Arbiter-only download: get a short-lived presigned GET URL for an evidence file.
+// Download: get a short-lived presigned GET URL for an evidence file. Case
+// parties (reviewer + recipient) pass evidence:download; non-parties 403.
 caseRoutes.get("/cases/:id/evidence/:evidenceId/download", requirePermission("evidence:download"), async (req, res, next) => {
   try {
     const objectKey = await resolveEvidenceObjectKey(req.params.id, req.params.evidenceId);
-    const store = getEvidenceStore();
+    const store = await getEvidenceStore();
     const url = await store.getDownloadUrl(objectKey);
     res.json(url);
+  } catch (e) {
+    next(e);
+  }
+});
+
+// Preview: return renderable content for the inline preview modal. Text/PDF →
+// extracted text; video → presigned URL; link → the URL. Case parties only.
+caseRoutes.get("/cases/:id/evidence/:evidenceId/preview", requirePermission("evidence:download"), async (req, res, next) => {
+  try {
+    const result = await previewEvidence(req.params.id, req.params.evidenceId);
+    res.json(result);
   } catch (e) {
     next(e);
   }

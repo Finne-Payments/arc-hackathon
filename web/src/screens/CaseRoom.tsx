@@ -15,6 +15,7 @@ import {
 } from "../components/primitives";
 import { Timeline, type TimelineEntry } from "../components/Timeline";
 import { FileUpload } from "../components/FileUpload";
+import { DocumentPreview } from "../components/DocumentPreview";
 import { shortHex } from "../mappers";
 import { claimLabel } from "../domain/statusVocabulary";
 
@@ -60,6 +61,10 @@ export function CaseRoom({ v, actions, apiData }: { v: ViewModel; actions: Finne
   // Arbiter-only: agent document summaries (fetched separately so they refresh
   // after an upload triggers a new summary without reloading the whole case).
   const [annotations, setAnnotations] = useState<EvidenceAnnotation[]>([]);
+  // The evidence id currently being previewed (null = modal closed). Preview is
+  // available to ALL case parties (the backend preview endpoint is gated by the
+  // evidence:download permission, granted to case parties).
+  const [previewingEvidenceId, setPreviewingEvidenceId] = useState<string | null>(null);
   useEffect(() => {
     if (!caseNumber) return;
     api
@@ -99,25 +104,23 @@ export function CaseRoom({ v, actions, apiData }: { v: ViewModel; actions: Finne
   const [responseText, setResponseText] = useState("");
   const [responseSending, setResponseSending] = useState(false);
   const myTarget = v.isClaimant ? "platform" : v.isRecipient ? "recipient" : null;
-  // Find the timestamp of the most recent response — requests after that are new.
-  const lastResponseTime = responses.length > 0
-    ? responses[responses.length - 1].submittedAt
-    : null;
+  // Open requests directed at the current user that haven't been answered.
+  // A request is "answered" only when the backend stamps answeredAt — NOT based
+  // on response timestamps, which caused legitimate new requests to be hidden
+  // after a prior reply (the recipient never saw the arbiter's follow-up).
   const myOpenRequests = (caseDoc?.infoRequests ?? []).filter(
-    (r) => r.target === myTarget
-      && !r.answeredAt
-      && (!lastResponseTime || new Date(r.requestedAt).getTime() > new Date(lastResponseTime).getTime()),
+    (r) => r.target === myTarget && !r.answeredAt,
   );
 
   const submitResponse = async () => {
     const t = responseText.trim();
-    if (!t || !caseNumber) return;
+    if (!t || !caseNumber || responseSending) return;
     setResponseSending(true);
     try {
       await api.respond(caseNumber, { text: t });
       setResponseText("");
-      // Reload the case so the response appears in the conversation.
-      actions.viewCase(caseNumber);
+      // Bump caseVersion so App reloads the case (viewCase alone doesn't reload).
+      actions.reloadCase();
     } catch {
       // keep the text so the user can retry
     } finally {
@@ -134,12 +137,12 @@ export function CaseRoom({ v, actions, apiData }: { v: ViewModel; actions: Finne
 
   const sendMessage = async () => {
     const t = messageText.trim();
-    if (!t || !caseNumber) return;
+    if (!t || !caseNumber || messageSending) return;
     setMessageSending(true);
     try {
       await api.respond(caseNumber, { text: t });
       setMessageText("");
-      actions.viewCase(caseNumber);
+      actions.reloadCase();
     } catch {
       // keep the text so the user can retry
     } finally {
@@ -370,17 +373,27 @@ export function CaseRoom({ v, actions, apiData }: { v: ViewModel; actions: Finne
                       {e.sha256 && <span style={{ fontFamily: "var(--font-mono)" }}>sha: {shortHex(e.sha256)}</span>}
                       {isDoc && e.sizeBytes ? <span>{(e.sizeBytes / 1024).toFixed(1)} KB</span> : null}
                     </div>
-                    {/* Arbiter-only download for uploaded documents */}
-                    {isDoc && isArbiter && (
-                      <div style={{ marginTop: 8 }}>
+                    {/* Preview — available to ALL case parties (arbiter, merchant,
+                        customer). Opens an inline modal; the backend preview endpoint
+                        enforces the case-party access boundary (evidence:download). */}
+                    {(isDoc || isLink) && (
+                      <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap" }}>
                         <button
-                          onClick={() =>
-                            api.downloadEvidence(caseNumber, evidenceId).then((r) => window.open(r.url, "_blank")).catch(() => {})
-                          }
+                          onClick={() => setPreviewingEvidenceId(evidenceId)}
                           style={{ fontSize: 12, fontWeight: 600, padding: "5px 12px", border: "1px solid var(--brand-200)", borderRadius: "var(--radius-sm)", background: "var(--brand-50)", color: "var(--brand-800)", cursor: "pointer" }}
                         >
-                          View document
+                          {isUploadedVideo ? "Preview video" : isLink ? "Preview link" : "Preview document"}
                         </button>
+                        {isDoc && isArbiter && (
+                          <button
+                            onClick={() =>
+                              api.downloadEvidence(caseNumber, evidenceId).then((r) => window.open(r.url, "_blank")).catch(() => {})
+                            }
+                            style={{ fontSize: 12, fontWeight: 500, padding: "5px 12px", border: "1px solid var(--color-border)", borderRadius: "var(--radius-sm)", background: "var(--color-surface)", color: "var(--color-fg-muted)", cursor: "pointer" }}
+                          >
+                            Download original
+                          </button>
+                        )}
                       </div>
                     )}
                     {/* Link evidence: show the provider + URL (shared, any video host) */}
@@ -475,6 +488,14 @@ export function CaseRoom({ v, actions, apiData }: { v: ViewModel; actions: Finne
         </div>
       </Card>
 
+      {/* Inline document preview modal (case-party private). */}
+      {previewingEvidenceId && (
+        <DocumentPreview
+          load={() => api.previewEvidence(caseNumber, previewingEvidenceId)}
+          onClose={() => setPreviewingEvidenceId(null)}
+        />
+      )}
+
       {/* (c) the agent's brief — the verdict-free decision frame (turning questions,
           findings, unresolved items). Auto-runs when the dispute opens; a Refresh
           button re-reads on-chain + off-chain data and re-runs the agents. Falls
@@ -563,10 +584,10 @@ export function CaseRoom({ v, actions, apiData }: { v: ViewModel; actions: Finne
               <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
                 <span style={{ fontSize: 12, fontWeight: 600, color: "var(--color-fg-muted)" }}>From</span>
                 <button onClick={v.reqToMerchant} style={{ cursor: "pointer", border: `1.5px solid ${v.reqMerBorder}`, background: v.reqMerBg, borderRadius: "var(--radius-pill)", padding: "3px 12px", fontSize: 12, fontWeight: 600, fontFamily: "var(--font-sans)" }}>
-                  Merchant · Northstar
+                  Merchant · {apiData?.config?.platform?.name ?? "Platform"}
                 </button>
                 <button onClick={v.reqToCustomer} style={{ cursor: "pointer", border: `1.5px solid ${v.reqCusBorder}`, background: v.reqCusBg, borderRadius: "var(--radius-pill)", padding: "3px 12px", fontSize: 12, fontWeight: 600, fontFamily: "var(--font-sans)" }}>
-                  Customer · Maya
+                  Customer · {apiData?.config?.recipient?.displayName ?? "Recipient"}
                 </button>
               </div>
               <textarea className="finne-textarea" value={v.reqText} onChange={(e) => v.onReqText(e.target.value)} placeholder="e.g. Attach the original transfer-link email for Video 3, including the send date." style={{ minHeight: 72 }} />

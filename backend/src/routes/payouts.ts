@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { requirePermission, requireInternal, requireChainConfigured, currentRole } from "../middleware.ts";
 import { recordDetectedPayment, getSharedReceipt, openedByForRole, openDispute } from "../services.ts";
-import { attachWorkOrderDocument } from "../services/documents.ts";
+import { attachWorkOrderDocument, previewWorkOrderDocument } from "../services/documents.ts";
 import { Payout, WorkOrder, User, EvidenceAnnotation } from "../models/index.ts";
 import { getEvidenceStore } from "../integrations/storage/localStore.ts";
 import { validateUploadDeclaration, sanitizeFilename } from "../integrations/storage/uploadPolicy.ts";
@@ -222,7 +222,7 @@ payoutRoutes.post("/payouts/:paymentId/documents/uploads", requirePermission("wo
     if (!payout) {
       throw new HttpError(404, `No payout ${req.params.paymentId} — the on-chain pay() hasn't been detected yet.`);
     }
-    const store = getEvidenceStore();
+    const store = await getEvidenceStore();
     const allocation = await store.allocateUpload({
       scope: "workorder",
       ownerId: req.params.paymentId,
@@ -240,7 +240,7 @@ payoutRoutes.post("/payouts/:paymentId/documents/uploads", requirePermission("wo
 payoutRoutes.post("/payouts/:paymentId/documents/uploads/:uploadId/complete", requirePermission("workorder:create"), async (req, res, next) => {
   try {
     const { filename } = req.body ?? {};
-    const store = getEvidenceStore();
+    const store = await getEvidenceStore();
     const stored = await store.finalizeUpload(req.params.uploadId);
     const result = await attachWorkOrderDocument({
       paymentId: req.params.paymentId,
@@ -258,16 +258,26 @@ payoutRoutes.post("/payouts/:paymentId/documents/uploads/:uploadId/complete", re
   }
 });
 
-// Arbiter-only download of a work order document.
+// Download of a work-order contract document (case parties — evidence:download).
 payoutRoutes.get("/payouts/:paymentId/documents/:documentId/download", requirePermission("evidence:download"), async (req, res, next) => {
   try {
     const workOrder = await WorkOrder.findOne({ paymentId: req.params.paymentId }).lean();
     if (!workOrder) throw new HttpError(404, `No work order for payment ${req.params.paymentId}.`);
     const doc = (workOrder.documents ?? []).find((d) => d.documentId === req.params.documentId);
     if (!doc) throw new HttpError(404, `Document ${req.params.documentId} not found.`);
-    const store = getEvidenceStore();
+    const store = await getEvidenceStore();
     const url = await store.getDownloadUrl(doc.objectKey);
     res.json(url);
+  } catch (e) {
+    next(e);
+  }
+});
+
+// Preview a work-order contract document inline (case parties — evidence:download).
+payoutRoutes.get("/payouts/:paymentId/documents/:documentId/preview", requirePermission("evidence:download"), async (req, res, next) => {
+  try {
+    const result = await previewWorkOrderDocument(req.params.paymentId, req.params.documentId);
+    res.json(result);
   } catch (e) {
     next(e);
   }

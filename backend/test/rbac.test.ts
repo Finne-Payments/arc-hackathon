@@ -21,16 +21,18 @@ describe("RBAC matrix", () => {
     expect(can("reviewer", "case:respond")).toBe(true);
   });
 
-  it("recipient can open + respond + add evidence but cannot decide", () => {
+  it("recipient can open + respond + add evidence + preview docs, but cannot decide", () => {
     expect(can("recipient", "case:open")).toBe(true);
     expect(can("recipient", "case:respond")).toBe(true);
     expect(can("recipient", "case:add_evidence")).toBe(true);
+    expect(can("recipient", "evidence:download")).toBe(true); // case party — can preview
     expect(can("recipient", "case:decide")).toBe(false);
   });
 
-  it("platform_viewer is read-only across the board", () => {
+  it("platform_viewer is read-only across the board (not a case party)", () => {
     expect(can("platform_viewer", "case:read")).toBe(true);
     expect(can("platform_viewer", "payout:read")).toBe(true);
+    expect(can("platform_viewer", "evidence:download")).toBe(false); // not a case party
     expect(can("platform_viewer", "case:decide")).toBe(false);
     expect(can("platform_viewer", "case:respond")).toBe(false);
   });

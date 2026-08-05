@@ -19,6 +19,28 @@ export function Decision({ v, actions, apiData }: { v: ViewModel; actions: Finne
   const refundTo = (c?.payout as { refundTo?: string })?.refundTo ?? "";
   const explorerBase = apiData?.config?.explorerUrl ?? null;
 
+  // Real identity + amounts from config + case data (replaces hard-coded names).
+  const platformName = apiData?.config?.platform?.name ?? "the platform";
+  const recipientName = apiData?.config?.recipient?.displayName ?? "the recipient";
+  const arbiterName = apiData?.config?.platform?.arbiterName ?? "the reviewer";
+  const arbiterWallet = apiData?.config?.platform?.arbiterAddress ?? "";
+  const remaining = (() => {
+    const t = Number(total), ch = Number(contested);
+    return Number.isFinite(t) && Number.isFinite(ch) ? String(Math.max(0, t - ch)) : "0";
+  })();
+
+  // Preview text built from REAL amounts + names (was hard-coded "100 USDC / Maya / Northstar").
+  const previewText = (() => {
+    switch (v.decOption) {
+      case "approve":
+        return `The contested ${contested} USDC is returned to ${platformName} at their refund address; the remaining ${remaining} USDC stays protected for ${recipientName}. Your written reasons are recorded and shown to both sides.`;
+      case "reject":
+        return `No refund. The full ${total} USDC is released to ${recipientName}, who can withdraw when the protection window ends. Your reasons are shown to both sides.`;
+      default:
+        return "";
+    }
+  })();
+
   return (
     <div className="rise-in" style={{ maxWidth: 820, margin: 0 }}>
       <BackLink label={caseNumber} onClick={() => actions.go("case")} />
@@ -40,22 +62,34 @@ export function Decision({ v, actions, apiData }: { v: ViewModel; actions: Finne
         </div>
       </Card>
 
-      <PhaseRouter phase={v.decPhase} v={v} actions={actions} refundTo={refundTo} caseNumber={caseNumber} explorerBase={explorerBase} />
+      <PhaseRouter
+        phase={v.decPhase} v={v} actions={actions}
+        refundTo={refundTo} caseNumber={caseNumber} explorerBase={explorerBase}
+        contested={contested} total={total} recipientName={recipientName} platformName={platformName}
+        arbiterName={arbiterName} arbiterWallet={arbiterWallet}
+        previewText={previewText}
+      />
     </div>
   );
 }
 
-function PhaseRouter({ phase, v, actions, refundTo, caseNumber, explorerBase }: { phase: DecPhase; v: ViewModel; actions: FinneActions; refundTo: string; caseNumber: string; explorerBase: string | null }) {
-  if (phase === "idle") return <IdlePhase v={v} refundTo={refundTo} caseNumber={caseNumber} actions={actions} />;
-  if (phase === "awaiting") return <AwaitingPhase onCancel={v.cancelSignature} />;
+function PhaseRouter({ phase, v, actions, refundTo, caseNumber, explorerBase, contested, total, recipientName, platformName, arbiterName, arbiterWallet, previewText }: {
+  phase: DecPhase; v: ViewModel; actions: FinneActions; refundTo: string; caseNumber: string; explorerBase: string | null;
+  contested: string; total: string; recipientName: string; platformName: string; arbiterName: string; arbiterWallet: string; previewText: string;
+}) {
+  if (phase === "idle") return <IdlePhase v={v} refundTo={refundTo} caseNumber={caseNumber} actions={actions} contested={contested} total={total} recipientName={recipientName} platformName={platformName} previewText={previewText} />;
+  if (phase === "awaiting") return <AwaitingPhase onCancel={v.cancelSignature} contested={contested} refundTo={refundTo} />;
   if (phase === "sig_rejected") return <SigRejectedPhase onRetry={v.retrySign} onCancel={v.cancelSignature} />;
   if (phase === "pending") return <PendingPhase onCopy={actions.copyTech} refundTo={refundTo} explorerBase={explorerBase} />;
-  if (phase === "failed") return <FailedPhase onRetry={v.retrySign} onCancel={v.cancelSignature} />;
-  if (phase === "confirmed") return <ConfirmedPhase />;
-  return <RecordedPhase onBack={() => actions.go("case")} />;
+  if (phase === "failed") return <FailedPhase onRetry={v.retrySign} onCancel={v.cancelSignature} contested={contested} />;
+  if (phase === "confirmed") return <ConfirmedPhase arbiterName={arbiterName} arbiterWallet={arbiterWallet} />;
+  return <RecordedPhase onBack={() => actions.go("case")} arbiterName={arbiterName} arbiterWallet={arbiterWallet} />;
 }
 
-function IdlePhase({ v, refundTo, caseNumber, actions }: { v: ViewModel; refundTo: string; caseNumber: string; actions: FinneActions }) {
+function IdlePhase({ v, refundTo, caseNumber, actions, contested, total, recipientName, platformName, previewText }: {
+  v: ViewModel; refundTo: string; caseNumber: string; actions: FinneActions;
+  contested: string; total: string; recipientName: string; platformName: string; previewText: string;
+}) {
   return (
     <Card shadow="var(--shadow-xs)" padding="24px">
       <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>Your reasons</div>
@@ -64,20 +98,24 @@ function IdlePhase({ v, refundTo, caseNumber, actions }: { v: ViewModel; refundT
 
       {v.reasonEmpty && (
         <div style={{ fontSize: 12, color: "var(--color-fg-muted)", marginTop: 8 }}>
-          The options below unlock once you've written your reasons — the decision and the reasons are recorded together.
+          Write your reasons first — the options below unlock once you've written at least {v.reasonHint ? "20 characters" : "a reason"}. The decision and the reasons are recorded together.
+        </div>
+      )}
+      {!v.reasonEmpty && !v.decOption && (
+        <div style={{ fontSize: 12, color: "var(--color-fg-muted)", marginTop: 8 }}>
+          Now pick a decision below to enable “Record decision”.
         </div>
       )}
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, margin: "18px 0", opacity: v.optionsOpacity, pointerEvents: v.optionsPointer as React.CSSProperties["pointerEvents"] }}>
-        <OptionCard onClick={v.selectApprove} border={v.approveBorder} bg={v.approveBg} title="Approve refund" desc="The contested 100 USDC returns to Northstar's refund address, fixed when the payment was made." />
-        <OptionCard onClick={v.selectReject} border={v.rejectBorder} bg={v.rejectBg} title="Reject refund and release" desc="The payout stands; Maya can withdraw when the protection window ends." />
-        <OptionCard onClick={v.selectClose} border={v.closeBorder} bg={v.closeBg} title="Close with no action" desc="The dispute ends; the payout continues on its original schedule." />
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, margin: "18px 0", opacity: v.optionsOpacity, pointerEvents: v.optionsPointer as React.CSSProperties["pointerEvents"] }}>
+        <OptionCard onClick={v.selectApprove} border={v.approveBorder} bg={v.approveBg} title="Approve refund" desc={`The contested ${contested} USDC is returned to ${platformName} at their refund address, fixed when the payment was made.`} />
+        <OptionCard onClick={v.selectReject} border={v.rejectBorder} bg={v.rejectBg} title="Reject refund and release" desc={`No refund. The full ${total} USDC is released to ${recipientName}, who can withdraw when the protection window ends.`} />
       </div>
 
       {v.showPreview && (
         <div style={{ background: "var(--color-surface-2)", border: "1px solid var(--color-border)", borderRadius: "var(--radius-md)", padding: "14px 16px", marginBottom: 18, fontSize: 13, lineHeight: 1.6 }}>
           <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: ".04em", textTransform: "uppercase", color: "var(--color-fg-subtle)", marginBottom: 6 }}>What happens if you confirm</div>
-          {v.previewText}
+          {previewText}
           {v.approveSelected && (
             <div style={{ marginTop: 8 }}>
               Destination: <TechChip short={shortHex(refundTo)} full={refundTo} /> · fixed at payment time
@@ -131,7 +169,6 @@ function IdlePhase({ v, refundTo, caseNumber, actions }: { v: ViewModel; refundT
         >
           Record decision
         </button>
-        {v.approveSelected && <span style={{ fontSize: 12, color: "var(--color-fg-subtle)" }}>Next step: sign with your wallet — the signature is what moves the money.</span>}
       </div>
     </Card>
   );
@@ -146,7 +183,7 @@ function OptionCard({ onClick, border, bg, title, desc }: { onClick: () => void;
   );
 }
 
-function AwaitingPhase({ onCancel }: { onCancel: () => void }) {
+function AwaitingPhase({ onCancel, contested, refundTo }: { onCancel: () => void; contested: string; refundTo: string }) {
   return (
     <Card shadow="var(--shadow-md)" padding="36px" style={{ textAlign: "center" }}>
       <div style={{ display: "flex", justifyContent: "center", marginBottom: 18 }}>
@@ -154,7 +191,7 @@ function AwaitingPhase({ onCancel }: { onCancel: () => void }) {
       </div>
       <div style={{ fontFamily: "var(--font-sans)", fontWeight: 700, fontSize: 17, marginBottom: 6 }}>Waiting for your wallet signature</div>
       <div style={{ fontSize: 13, color: "var(--color-fg-muted)", maxWidth: 400, margin: "0 auto 20px", lineHeight: 1.6 }}>
-        Your wallet is asking you to sign the refund of 100 USDC to <span style={{ fontFamily: "var(--font-mono)", fontSize: 12 }}>0x4B21…9d3E</span>. Nothing moves until you sign.
+        Your wallet is asking you to sign the refund of {contested} USDC to <span style={{ fontFamily: "var(--font-mono)", fontSize: 12 }}>{shortHex(refundTo)}</span>. Nothing moves until you sign.
       </div>
       <SecondaryButton onClick={onCancel} style={{ fontSize: 13, padding: "9px 16px" }}>Cancel</SecondaryButton>
     </Card>
@@ -190,12 +227,12 @@ function PendingPhase({ onCopy, refundTo, explorerBase }: { onCopy: (v: string) 
   );
 }
 
-function FailedPhase({ onRetry, onCancel }: { onRetry: () => void; onCancel: () => void }) {
+function FailedPhase({ onRetry, onCancel, contested }: { onRetry: () => void; onCancel: () => void; contested: string }) {
   return (
     <Card shadow="var(--shadow-xs)" style={{ border: "1px solid var(--risk-border)", padding: "28px", textAlign: "center" }}>
       <div style={{ fontFamily: "var(--font-sans)", fontWeight: 700, fontSize: 17, marginBottom: 6 }}>The refund transaction didn't go through</div>
       <div style={{ fontSize: 13, color: "var(--color-fg-muted)", maxWidth: 440, margin: "0 auto 20px", lineHeight: 1.6 }}>
-        The network rejected it before any money moved — the 100 USDC is still protected in the payment contract. This usually clears on a retry.
+        The network rejected it before any money moved — the {contested} USDC is still protected in the payment contract. This usually clears on a retry.
       </div>
       <div style={{ display: "flex", gap: 10, justifyContent: "center", flexWrap: "wrap" }}>
         <PrimaryButton onClick={onRetry} style={{ fontSize: 13, padding: "9px 16px" }}>Try again</PrimaryButton>
@@ -205,26 +242,26 @@ function FailedPhase({ onRetry, onCancel }: { onRetry: () => void; onCancel: () 
   );
 }
 
-function ConfirmedPhase() {
+function ConfirmedPhase({ arbiterName, arbiterWallet }: { arbiterName: string; arbiterWallet: string }) {
   return (
     <Card shadow="var(--shadow-xs)" style={{ border: "1px solid var(--ok-border)", padding: "32px", textAlign: "center" }}>
       <div style={{ width: 44, height: 44, borderRadius: "50%", background: "var(--ok-soft)", border: "1px solid var(--ok-border)", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 14px", color: "var(--ok-600)", fontSize: 20, fontWeight: 700 }}>✓</div>
       <div style={{ fontFamily: "var(--font-sans)", fontWeight: 700, fontSize: 17, marginBottom: 6 }}>Refund confirmed on Arc</div>
       <div style={{ fontSize: 13, color: "var(--color-fg-muted)", marginBottom: 4 }}>
-        Decision recorded by <strong style={{ color: "var(--color-fg)" }}>Dana Whitfield · wallet 0x4B21…9d3E</strong>
+        Decision recorded by <strong style={{ color: "var(--color-fg)" }}>{arbiterName}{arbiterWallet ? ` · wallet ${shortHex(arbiterWallet)}` : ""}</strong>
       </div>
       <div style={{ fontSize: 13, color: "var(--color-fg-subtle)" }}>Taking you to the final receipt…</div>
     </Card>
   );
 }
 
-function RecordedPhase({ onBack }: { onBack: () => void }) {
+function RecordedPhase({ onBack, arbiterName, arbiterWallet }: { onBack: () => void; arbiterName: string; arbiterWallet: string }) {
   return (
     <Card shadow="var(--shadow-xs)" style={{ border: "1px solid var(--ok-border)", padding: "32px", textAlign: "center" }}>
       <div style={{ width: 44, height: 44, borderRadius: "50%", background: "var(--ok-soft)", border: "1px solid var(--ok-border)", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 14px", color: "var(--ok-600)", fontSize: 20, fontWeight: 700 }}>✓</div>
       <div style={{ fontFamily: "var(--font-sans)", fontWeight: 700, fontSize: 17, marginBottom: 6 }}>Decision recorded</div>
       <div style={{ fontSize: 13, color: "var(--color-fg-muted)", marginBottom: 18 }}>
-        Recorded by <strong style={{ color: "var(--color-fg)" }}>Dana Whitfield · wallet 0x4B21…9d3E</strong>. Both sides can now read it, with your reasons, in the case room.
+        Recorded by <strong style={{ color: "var(--color-fg)" }}>{arbiterName}{arbiterWallet ? ` · wallet ${shortHex(arbiterWallet)}` : ""}</strong>. Both sides can now read it, with your reasons, in the case room.
       </div>
       <SecondaryButton onClick={onBack} style={{ fontSize: 13, padding: "9px 16px" }}>Back to the case</SecondaryButton>
     </Card>

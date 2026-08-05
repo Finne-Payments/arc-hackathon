@@ -187,7 +187,7 @@ export function getLocalStore(): LocalEvidenceStore {
 /** Reset the singleton + the factory cache (tests). */
 export function resetLocalStore(): void {
   _singleton = null;
-  _factoryStore = null;
+  _factoryStorePromise = null;
 }
 
 /**
@@ -195,34 +195,37 @@ export function resetLocalStore(): void {
  * Kept here so existing `import { getEvidenceStore } from ".../localStore.ts"`
  * callers resolve to the S3-vs-local decision. The S3 store is constructed only
  * when EVIDENCE_BUCKET is configured; otherwise the shared local singleton.
+ *
+ * NOTE: this is async because the S3 adapter + config are loaded via dynamic
+ * import() (the project is ESM — require() does not work here, which previously
+ * silently fell through to the local store even when EVIDENCE_BUCKET was set).
+ * Callers must await this. The first call constructs + caches the store.
  */
-let _factoryStore: EvidenceStore | null = null;
-export function getEvidenceStore(): EvidenceStore {
-  if (_factoryStore) return _factoryStore;
-  // Read the bucket name via the typed config. require() keeps @aws-sdk out of
-  // the dev/test path — the S3 module is loaded only when a bucket exists.
-  try {
-    const { loadConfig } = require("@finne/config");
-    const config = loadConfig();
-    const bucket = config.storage.evidenceBucket;
-    if (bucket && bucket.trim().length > 0) {
-      const { S3EvidenceStore } = require("./s3Store.ts");
-      const store: EvidenceStore = new S3EvidenceStore({
-        bucket,
-        region: process.env.AWS_REGION ?? "us-east-1",
-        kmsKeyId: config.storage.kmsKeyId,
-      });
-      _factoryStore = store;
-      return store;
+let _factoryStorePromise: Promise<EvidenceStore> | null = null;
+export function getEvidenceStore(): Promise<EvidenceStore> {
+  if (_factoryStorePromise) return _factoryStorePromise;
+  _factoryStorePromise = (async () => {
+    try {
+      const { loadConfig } = await import("@finne/config");
+      const config = loadConfig();
+      const bucket = config.storage.evidenceBucket;
+      if (bucket && bucket.trim().length > 0) {
+        const { S3EvidenceStore } = await import("./s3Store.ts");
+        return new S3EvidenceStore({
+          bucket,
+          region: process.env.AWS_REGION ?? "us-east-1",
+          kmsKeyId: config.storage.kmsKeyId,
+        });
+      }
+    } catch (e) {
+      console.warn("[evidence-store] S3 setup failed, falling back to local:", e instanceof Error ? e.message : e);
     }
-  } catch {
-    /* config not loadable yet (e.g. test) — fall through to local */
-  }
-  _factoryStore = getLocalStore();
-  return _factoryStore;
+    return getLocalStore();
+  })();
+  return _factoryStorePromise;
 }
 
-/** Test hook: override the factory's store (or clear with null). */
+/** Test hook: override the factory's store (or clear with null). Resets the cache. */
 export function setEvidenceStoreForTest(store: EvidenceStore | null): void {
-  _factoryStore = store;
+  _factoryStorePromise = store ? Promise.resolve(store) : null;
 }

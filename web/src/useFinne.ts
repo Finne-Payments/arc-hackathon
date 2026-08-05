@@ -215,22 +215,12 @@ export function useFinne(initialRole: Role = "arbiter") {
     const reasonTooShort = !reasonEmpty && state.decReason.trim().length < MIN_DECISION_REASON;
     const recordDisabled = reasonEmpty || reasonTooShort || !opt;
 
-    const previews: Record<string, string> = {
-      approve:
-        "The contested 100 USDC returns to Northstar’s refund address, fixed when the payment was made; the remaining 200 USDC stays protected for Maya. Your written reasons are recorded and shown to both sides.",
-      reject:
-        "The payout stands; Maya can withdraw the full 300 USDC when the protection window ends. Your reasons are shown to both sides.",
-      close:
-        "The dispute ends with no refund. The payout continues on its original schedule and the case record is locked.",
-    };
-
     const optStyle = (name: DecOption) => ({
       border: opt === name ? "var(--brand-700)" : "var(--ink-200)",
       bg: opt === name ? "var(--brand-50)" : "var(--color-surface)",
     });
     const a = optStyle("approve");
     const r = optStyle("reject");
-    const c = optStyle("close");
 
     const reqLog = state.reqLog;
     const reqSent = reqLog.length > 0;
@@ -274,16 +264,13 @@ export function useFinne(initialRole: Role = "arbiter") {
       optionsPointer: reasonEmpty ? "none" : "auto",
       selectApprove: () => patch({ decOption: "approve" }),
       selectReject: () => patch({ decOption: "reject" }),
-      selectClose: () => patch({ decOption: "close" }),
       approveBorder: a.border,
       approveBg: a.bg,
       rejectBorder: r.border,
       rejectBg: r.bg,
-      closeBorder: c.border,
-      closeBg: c.bg,
       approveSelected: opt === "approve",
       showPreview: !!opt && !reasonEmpty,
-      previewText: opt ? previews[opt] : "",
+      decOption: opt,
       recordDisabled,
       recordCursor: recordDisabled ? "not-allowed" : "pointer",
       recordBg: recordDisabled ? "var(--ink-100)" : "var(--brand-600)",
@@ -331,18 +318,20 @@ export function useFinne(initialRole: Role = "arbiter") {
         const backendTarget = state.reqTarget === "merchant" ? "platform" : "recipient";
         const caseNumber = state.selectedCaseId ?? "";
         if (!caseNumber) return;
+        // Clear the text optimistically so a fast double-click can't send twice
+        // (the empty-text guard above stops the second invocation).
+        setState((s) => ({ ...s, reqText: "" }));
         try {
           await api.requestInfo(caseNumber, { target: backendTarget as "platform" | "recipient", text: t });
           setState((s) => ({
             ...s,
             reqLog: [...s.reqLog, { target: s.reqTarget, text: t }],
-            reqText: "",
             reqOpen: false,
             caseVersion: s.caseVersion + 1,
           }));
         } catch {
-          // Keep the composer open with the text so the user can retry.
-          // The error is surfaced by the ApiError in the catch.
+          // Restore the text so the user can retry, and keep the composer open.
+          setState((s) => ({ ...s, reqText: t }));
         }
       },
       showReqCard: !!myLastReq && !stageDecided,

@@ -100,8 +100,14 @@ export async function assembleForCaseByNumber(
 async function buildFrameInputFromShared(caseNumber: string, shared: SharedCaseBody) {
   const payout = shared.payout as PayoutDoc | null;
   const workOrder = shared.workOrder as WorkOrderDoc | null;
-  const caseDoc = shared.case as { allegationFreeText?: string; allegationClaimType?: string; allegationAmountContested?: string; openedAt?: string };
-  const responses = shared.responses as { text?: string }[];
+  const caseDoc = shared.case as {
+    allegationFreeText?: string;
+    allegationClaimType?: string;
+    allegationAmountContested?: string;
+    openedAt?: string;
+    infoRequests?: { target?: string; text?: string; requestedAt?: string; answeredAt?: string | null }[];
+  };
+  const responses = shared.responses as { author?: string; authorName?: string; text?: string; submittedAt?: string }[];
   const evidence = shared.evidence as {
     _id?: string;
     caseRef?: string | null;
@@ -174,7 +180,28 @@ async function buildFrameInputFromShared(caseNumber: string, shared: SharedCaseB
 
   // Sourced caseContext: a plain-language summary of the real facts on file.
   const deliverableLines = deliverables.map((d) => `- ${d.name}${d.due ? ` (due ${d.due})` : ""}${d.acceptanceCriteria ? `; acceptance: ${d.acceptanceCriteria}` : ""}`).join("\n");
-  const responseLines = responses.map((r) => r.text).filter(Boolean).join("\n");
+
+  // --- Conversation transcript (responses + the arbiter's info requests).
+  // Merge both into a single time-ordered, author-attributed thread so the
+  // model reasons over who said what (and what the arbiter asked), instead of
+  // the old behaviour which flattened everything into an author-less
+  // "RECIPIENT REPLY" blob and dropped info requests entirely.
+  type Turn = { t: number; label: string; text: string };
+  const turns: Turn[] = [];
+  for (const r of responses) {
+    if (!r.text?.trim()) continue;
+    const who = r.author === "recipient" ? "Customer" : r.author === "platform" ? "Merchant" : (r.authorName ?? "Party");
+    turns.push({ t: Date.parse(r.submittedAt ?? "") || 0, label: who, text: r.text.trim() });
+  }
+  for (const ir of caseDoc?.infoRequests ?? []) {
+    if (!ir.text?.trim()) continue;
+    const to = ir.target === "recipient" ? "Customer" : "Merchant";
+    turns.push({ t: Date.parse(ir.requestedAt ?? "") || 0, label: `Arbiter → ${to}`, text: ir.text.trim() });
+  }
+  turns.sort((a, b) => a.t - b.t);
+  const conversationBlock = turns.length
+    ? turns.map((x) => `- [${x.label}] ${x.text}`).join("\n")
+    : "(no messages on file — the response window may still be open)";
 
   // Per-evidence summaries (or the title/type when no annotation exists yet).
   const evidenceLines = evidence.map((e) => {
@@ -204,7 +231,8 @@ async function buildFrameInputFromShared(caseNumber: string, shared: SharedCaseB
     workOrder ? `Work order: ${workOrder.description}. Amount ${workOrder.amount} USDC. (source: work order)` : "Work order: not on file.",
     "DELIVERABLES (source: " + (workOrder ? "work order" : "placeholder") + ")",
     deliverableLines,
-    responseLines ? `RECIPIENT REPLY (source: response)\n${responseLines}` : "RECIPIENT REPLY: none on file.",
+    `CONVERSATION (source: responses + arbiter info requests; ${turns.length} message(s))`,
+    conversationBlock,
     contractDocs.length > 0 ? `PAYMENT CONTRACTS / DOCUMENTS (${contractDocs.length} on file)\n${contractLines.join("\n")}` : "PAYMENT CONTRACTS: none on file.",
     evidence.length > 0 ? `EVIDENCE ON FILE (${evidence.length} item(s))\n${evidenceLines.join("\n")}` : "EVIDENCE: none on file.",
   ].join("\n");

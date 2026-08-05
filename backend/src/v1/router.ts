@@ -224,7 +224,7 @@ export function createV1Router(config: Config): Router {
     } catch (e) { next(e); }
   });
 
-  // 15: POST /v1/payments/:paymentId/anchors
+  // 15: POST /v1/payments/:paymentId/anchors — explicitly (re-)anchor a receipt
   router.post("/v1/payments/:paymentId/anchors", requirePerm("payment:anchor"), requireIdempotencyKey, async (req: Request, res: Response, next: NextFunction) => {
     try {
       const jobId = generateId("job");
@@ -237,6 +237,9 @@ export function createV1Router(config: Config): Router {
         idempotencyKey: req.headers["idempotency-key"] as string,
       });
       await job.save();
+      // Enqueue the real registry anchor. createVerifiedPayment already does this
+      // on payment creation; this route covers explicit re-anchor / backfill.
+      await svc.enqueueReceiptAnchor(req.params.paymentId);
       res.status(202).json({ jobId, statusUrl: `/v1/jobs/${jobId}` });
     } catch (e) { next(e); }
   });
@@ -342,7 +345,7 @@ export function createV1Router(config: Config): Router {
       if (!caseId || !filename || !mimeType || !declaredSizeBytes) {
         throw validationError("caseId, filename, mimeType, declaredSizeBytes are required.");
       }
-      const store = getEvidenceStore();
+      const store = await getEvidenceStore();
       const allocation = await store.allocateUpload({ scope: "case", ownerId: String(caseId), filename, mimeType, declaredSizeBytes });
       res.status(201).json({ ...allocation, visibility: visibility ?? "SHARED" });
     } catch (e) { next(e); }
@@ -351,7 +354,7 @@ export function createV1Router(config: Config): Router {
   // 21: POST /v1/evidence/uploads/:uploadId/complete
   router.post("/v1/evidence/uploads/:uploadId/complete", requirePerm("evidence:upload"), requireIdempotencyKey, async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const store = getEvidenceStore();
+      const store = await getEvidenceStore();
       const stored = await store.finalizeUpload(req.params.uploadId);
       // Record evidence metadata in the DB
       const { caseId, visibility, title } = req.body ?? {};
@@ -365,7 +368,7 @@ export function createV1Router(config: Config): Router {
         sha256: stored.sha256,
         mimeType: stored.mimeType,
         sizeBytes: stored.sizeBytes,
-        objectKey: stored.evidenceId, // the store manages the real key
+        objectKey: stored.objectKey, // the real S3 key (evidence/case/{ownerId}/...) — NOT the evidenceId
         version: stored.version,
       });
       res.status(201).json(evidence);
@@ -375,7 +378,7 @@ export function createV1Router(config: Config): Router {
   // 22: GET /v1/evidence/:evidenceId/download
   router.get("/v1/evidence/:evidenceId/download", requirePerm("evidence:download"), async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const store = getEvidenceStore();
+      const store = await getEvidenceStore();
       const url = await store.getDownloadUrl(req.params.evidenceId);
       res.json(url);
     } catch (e) { next(e); }

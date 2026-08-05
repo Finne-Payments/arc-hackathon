@@ -16,6 +16,7 @@ import {
   Payment, Case, Evidence, Response as ResponseModel, Decision, Correction,
   Analysis, Counter, PolicyClause,
 } from "./models.ts";
+import { AnchorJob, type AnchorJobKind } from "../models/index.ts";
 import { getLatestFrame } from "../agent/frame-assembly.ts";
 import { DEMO_PACK_REF } from "../seed/policy-pack.ts";
 import { getFrameStatus } from "./frameStatus.ts";
@@ -60,6 +61,70 @@ export async function nextSeq(name: string): Promise<number> {
     { $inc: { seq: 1 } },
     { upsert: true, returnDocument: "after" },
   ).then((r) => r!.seq);
+}
+
+/* -------------------------------------------------------------------------- */
+/* Registry anchor queue (CON-01→04)                                          */
+/* -------------------------------------------------------------------------- */
+/*
+ * Enqueues a hash-anchor job for the anchor worker to post to FinneCaseRegistry.
+ * The worker (backend/src/anchorWorker.ts) drains the queue and signs each tx
+ * with the registry operator key (PLATFORM_ROLE + REVIEWER_ROLE + AGENT_ROLE).
+ * Idempotent-ish: duplicate enqueues for the same {kind, entityId} are tolerated
+ * — the contract rejects the second (e.g. ReceiptAlreadyRegistered) and the job
+ * dead-letters without affecting the canonical record, which is already on chain.
+ *
+ * NOTE: payments and cases use opaque string ids internally (pay_…, case_…). The
+ * registry keys on uint256 ids. We derive a stable uint256 from the string via a
+ * lossless keccak-based fold (string → bytes32 → uint256) so the same paymentId
+ * always maps to the same on-chain id. The hash already carries the canonical
+ * content; this id is only a collision-free lookup key.
+ */
+import { keccak256, stringToBytes } from "viem";
+
+/** Map an opaque string id to a stable uint256 the registry can key on. */
+function idToUint256(id: string): string {
+  // keccak256 of the utf-8 id → uint256. Stable + collision-resistant. The
+  // contract stores it as a plain mapping key; content integrity comes from the
+  // anchored hash, not this id.
+  return BigInt(keccak256(stringToBytes(id))).toString();
+}
+
+/**
+ * Map the domain DecisionOutcome string to the on-chain Outcome enum (1–4).
+ * The order matches FinneCaseRegistry.sol exactly (CON-01):
+ *   1 RECIPIENT_UPHELD · 2 PLATFORM_UPHELD · 3 PARTIAL_PLATFORM_UPHELD · 4 DISMISSED
+ */
+const OUTCOME_CODE: Record<DecisionOutcome, number> = {
+  RECIPIENT_UPHELD: 1,
+  PLATFORM_UPHELD: 2,
+  PARTIAL_PLATFORM_UPHELD: 3,
+  DISMISSED_INSUFFICIENT_EVIDENCE: 4,
+};
+
+async function enqueueAnchor(
+  kind: AnchorJobKind,
+  entityId: string,
+  hash: string,
+  args: Record<string, unknown> = {},
+): Promise<void> {
+  await AnchorJob.create({
+    kind,
+    entityId,
+    paymentId: (args.paymentId as string) ?? entityId,
+    hash,
+    disputeDeadline: 0,
+    outcome: (args.outcome as number) ?? 0,
+    args,
+    status: "queued",
+    attempts: 0,
+    lastError: null,
+    anchorTx: null,
+  }).catch((e) => {
+    // Enqueue must never break the product flow — the hash is already in the DB
+    // and verifiable; the anchor is the durable extra. Log and move on.
+    console.error(`[v1] enqueueAnchor(${kind} ${entityId}) failed:`, e instanceof Error ? e.message : e);
+  });
 }
 
 /* -------------------------------------------------------------------------- */
@@ -122,7 +187,37 @@ export async function createVerifiedPayment(input: CreatePaymentInput) {
   payment.receiptHash = envelope.receiptHash;
   await payment.save();
 
+  // Anchor the receipt hash on FinneCaseRegistry (CON-02). Fire-and-forget: the
+  // hash is already persisted + verifiable; the on-chain anchor is the durable
+  // extra the worker posts with the registry operator key.
+  await enqueueAnchor("receipt", idToUint256(paymentId), envelope.receiptHash, {
+    paymentId: idToUint256(paymentId),
+    payer: input.payer,
+    recipient: input.recipient,
+    amountMicroUsdc: input.amountMicroUsdc,
+    paidAt: Math.floor(new Date(input.paidAt).getTime() / 1000),
+  });
+
   return { payment, created: true };
+}
+
+/**
+ * Explicitly enqueue a receipt anchor for an existing payment. Used by the
+ * POST /v1/payments/:paymentId/anchors route for backfill / re-anchor. Looks up
+ * the stored receipt hash + payment fields and enqueues a registerReceipt job.
+ * No-op if the payment has no receiptHash yet.
+ */
+export async function enqueueReceiptAnchor(paymentId: string): Promise<void> {
+  const payment = await Payment.findOne({ paymentId });
+  if (!payment) throw notFound("Payment not found.");
+  if (!payment.receiptHash) return;
+  await enqueueAnchor("receipt", idToUint256(paymentId), payment.receiptHash, {
+    paymentId: idToUint256(paymentId),
+    payer: payment.payer,
+    recipient: payment.recipient,
+    amountMicroUsdc: payment.amountMicroUsdc,
+    paidAt: Math.floor(new Date(payment.paidAt).getTime() / 1000),
+  });
 }
 
 /** Get a payment + its receipt detail. */
@@ -244,6 +339,15 @@ export async function openCase(input: OpenCaseInput) {
 
   await Promise.all([caseDoc.save(), payment.save()]);
 
+  // Anchor the claim hash on FinneCaseRegistry (CON-02). The registry needs the
+  // receipt already registered — it is, via createVerifiedPayment above (or a
+  // prior anchor). Fire-and-forget.
+  await enqueueAnchor("case", idToUint256(caseId), envelope.claimHash, {
+    paymentId: idToUint256(input.paymentId),
+    challengedAmountMicroUsdc: input.challengedAmountMicroUsdc,
+    responseDueAt: Math.floor(new Date(responseDueAt).getTime() / 1000),
+  });
+
   // Auto-run the agent pipeline (deterministic proof checks + Bedrock questions
   // + narrative). Fire-and-forget — case-open returns immediately; the reviewer
   // sees an "agents running" status (via getCaseDetail().frameStatus) until the
@@ -307,6 +411,12 @@ export async function submitResponse(params: {
   });
 
   await Promise.all([caseDoc.save(), responseDoc.save()]);
+
+  // Anchor the response hash on FinneCaseRegistry (CON-03). The operator key
+  // holds PLATFORM_ROLE so it can relay the recipient's verified response.
+  await enqueueAnchor("response", idToUint256(params.caseId), envelope.responseHash, {
+    submittedBy: params.submittedBy,
+  });
 
   // T3 trigger (Addendum §C): a new reply arrived — re-run the agent pipeline so
   // the frame reflects the recipient's response. Fire-and-forget, non-blocking.
@@ -422,11 +532,21 @@ export async function recordDecision(input: RecordDecisionInput) {
 
   await Promise.all([caseDoc.save(), decisionDoc.save()]);
 
+  // Anchor the decision hash on FinneCaseRegistry (CON-03). The contract
+  // requires the case to be UNDER_REVIEW (or EVIDENCE_REQUESTED) — the domain
+  // state machine guarantees that here. The operator key holds REVIEWER_ROLE.
+  await enqueueAnchor("decision", idToUint256(input.caseId), envelope.decisionHash, {
+    outcome: OUTCOME_CODE[input.outcome],
+    correctionAmountMicroUsdc: input.correctionAmountMicroUsdc ?? "0",
+  });
+
   // If no-correction outcome, close immediately
   if (!needsCorrection) {
     caseDoc.state = applyCaseEvent("DECIDED", "closed_no_correction");
     caseDoc.closedAt = new Date().toISOString();
     await caseDoc.save();
+    // Anchor the terminal closure too (CON-04). The operator holds REVIEWER_ROLE.
+    await enqueueAnchor("close_no_correction", idToUint256(input.caseId), envelope.decisionHash);
   }
 
   return { caseDoc, decisionDoc, decisionHash: envelope.decisionHash };
@@ -497,6 +617,12 @@ export async function createCorrectionInstruction(caseId: string, _tenantKey: st
 
   caseDoc.correctionHash = envelope.instructionHash;
   await Promise.all([caseDoc.save(), correctionDoc.save()]);
+
+  // Anchor the correction instruction on FinneCaseRegistry (CON-04). Requires the
+  // case DECIDED with a non-zero correction — both guaranteed by the guards above.
+  // The operator key holds PLATFORM_ROLE.
+  await enqueueAnchor("correction_outstanding", idToUint256(caseId), envelope.instructionHash);
+
   return { correctionDoc, instructionHash: envelope.instructionHash };
 }
 
@@ -525,6 +651,16 @@ export async function verifyCorrection(caseId: string, correctionTxHash: string)
   correction.correctionTxHash = correctionTxHash;
 
   await Promise.all([caseDoc.save(), correction.save()]);
+
+  // Anchor the verified correction on FinneCaseRegistry (CON-04). recordCorrection
+  // requires the case to be CORRECTION_OUTSTANDING (set by the
+  // correction_outstanding job above) and a fresh, unused correctionTxHash. The
+  // operator key holds PLATFORM_ROLE. Fire-and-forget — if the sequence isn't
+  // ready yet the worker retries with backoff.
+  await enqueueAnchor("correction", idToUint256(caseId), correction.instructionHash, {
+    correctionTxHash,
+  });
+
   return { caseDoc, correction };
 }
 
@@ -605,6 +741,15 @@ export async function saveAnalysis(params: {
   await Case.updateOne({ caseId: params.caseId }, {
     $set: { analysisHash: params.analysisHash, analysisVersion: version },
   });
+
+  // Anchor the agent's analysis hash on FinneCaseRegistry (CON-03). The operator
+  // key holds AGENT_ROLE. Only the approved analysis is anchored (reviewer gates
+  // approval separately via approveAnalysis); here we anchor each saved version
+  // so the on-chain trail records the agent's full evolution. Fire-and-forget.
+  await enqueueAnchor("analysis", idToUint256(params.caseId), params.analysisHash, {
+    version,
+  });
+
   return analysis;
 }
 

@@ -31,7 +31,7 @@ export async function readDocumentText(
   mimeType: string,
 ): Promise<ReadDocumentResult> {
   try {
-    const store = getEvidenceStore();
+    const store = await getEvidenceStore();
 
     // Uploaded video files are classified but NOT transcribed (per product
     // decision: no speech-to-text in this build). The arbiter views the video;
