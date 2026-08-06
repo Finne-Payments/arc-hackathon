@@ -17,6 +17,7 @@ import { markRunning, markStage, markDone, markFailed } from "./frameStatus.ts";
 import { buildCaseContext } from "./caseContext.ts";
 import { getSharedCase, type SharedCaseBody } from "../services.ts";
 import { loadClauseParameters } from "../seed/policy-pack.ts";
+import { loadNorthwindClauseParameters } from "../seed/northwind-pack.ts";
 import type { PayoutDoc, WorkOrderDoc } from "../models/index.ts";
 
 /**
@@ -119,14 +120,46 @@ async function buildFrameInputFromShared(caseNumber: string, shared: SharedCaseB
     mimeType?: string;
   }[];
 
-  const clauses = await loadClauseParameters();
+  // Load clause windows. Prefer the scenario pack's parameters when seeded
+  // (carries deemedAcceptanceDays for the order-of-performance check); fall
+  // back to the demo pack. Grace/acceptance defaults are identical across both.
+  const scenarioClauses = await loadNorthwindClauseParameters().catch(() => null);
+  const demoClauses = await loadClauseParameters();
+  const clauses = {
+    graceWindowHours: scenarioClauses?.graceWindowHours ?? demoClauses.graceWindowHours,
+    acceptancePeriodDays: scenarioClauses?.acceptanceWindowDays ?? demoClauses.acceptancePeriodDays,
+    deemedAcceptanceDays: scenarioClauses?.deemedAcceptanceDays ?? demoClauses.acceptancePeriodDays,
+  };
+
   const amountContested = caseDoc?.allegationAmountContested ?? payout?.amount ?? "0";
 
-  // Real deliverables from the work order; placeholder only if none.
-  const deliverables =
-    workOrder?.deliverables?.length
-      ? workOrder.deliverables.map((d) => ({ name: d.name, due: d.due, acceptanceCriteria: d.acceptanceCriteria }))
-      : [{ name: "Contested deliverable", due: caseDoc?.openedAt ?? new Date().toISOString(), acceptanceCriteria: "" }];
+  // Real deliverables from the work order; placeholder only if none. The
+  // deliverable name is the join key for the timestamp maps below, so keep all
+  // fields the checks need (name/due/acceptanceCriteria).
+  const woDeliverables = workOrder?.deliverables ?? [];
+  const deliverables = woDeliverables.length
+    ? woDeliverables.map((d) => ({ name: d.name, due: d.due, acceptanceCriteria: d.acceptanceCriteria }))
+    : [{ name: "Contested deliverable", due: caseDoc?.openedAt ?? new Date().toISOString(), acceptanceCriteria: "" }];
+
+  // Per-deliverable lifecycle timestamps, sourced from the work order. Legacy
+  // orders omit these (undefined) → the maps stay empty and the grace-window /
+  // acceptance-status checks degrade to "missing" exactly as before. When the
+  // fields are present they drive the grace-window, acceptance-status, and
+  // order-of-performance checks. A null acceptedAt is MEANINGFUL — it routes
+  // the ordering check through the deemed-acceptance branch.
+  const deliveryTimestamps: Record<string, string | null> = {};
+  const rejectionTimestamps: Record<string, string | null> = {};
+  const acceptanceTimestamps: Record<string, string | null> = {};
+  let hasAnyLifecycleTs = false;
+  for (const d of woDeliverables) {
+    if (d.submittedAt !== undefined) { deliveryTimestamps[d.name] = d.submittedAt ?? null; hasAnyLifecycleTs = true; }
+    if (d.rejectedAt !== undefined) { rejectionTimestamps[d.name] = d.rejectedAt ?? null; hasAnyLifecycleTs = true; }
+    if (d.acceptedAt !== undefined) { acceptanceTimestamps[d.name] = d.acceptedAt ?? null; hasAnyLifecycleTs = true; }
+  }
+  // Only populate acceptanceTimestamps when the work order actually carries
+  // acceptance data — otherwise paymentOrdering stays inert (opt-in) for legacy
+  // cases, preserving existing finding counts.
+  const acceptanceMap = hasAnyLifecycleTs ? acceptanceTimestamps : undefined;
 
   // --- Document summaries: look up agent annotations for this case's evidence +
   // the work order's contract documents. These let the model reason over the
@@ -149,20 +182,29 @@ async function buildFrameInputFromShared(caseNumber: string, shared: SharedCaseB
     /* annotations unavailable — fall through to the count-only view */
   }
 
+  // Payout amounts are stored as whole-USDC decimal strings (e.g. "500"), but
+  // CheckInput documents amountMicroUsdc / challengedAmountMicroUsdc as
+  // micro-USDC. Convert via a string → number → ×1e6 path; fall back to the raw
+  // value if it isn't a clean number (the amount-match check is tolerant).
+  const toMicro = (v: string | undefined | null): string => {
+    const n = Number(v);
+    return Number.isFinite(n) ? String(Math.round(n * 1_000_000)) : (v ?? "0");
+  };
   const checkInput = {
     payment: {
-      amountMicroUsdc: payout?.amount ?? amountContested,
+      amountMicroUsdc: toMicro(payout?.amount ?? amountContested),
       recipient: payout?.recipientWallet ?? "",
       payer: payout?.refundTo ?? "",
       paidAt: payout?.paidAt ?? caseDoc?.openedAt ?? new Date().toISOString(),
     },
-    challengedAmountMicroUsdc: amountContested,
+    challengedAmountMicroUsdc: toMicro(amountContested),
     claimType: (caseDoc?.allegationClaimType ?? "non_delivery") as "non_delivery",
     allegation: caseDoc?.allegationFreeText ?? "",
     disputeOpenedAt: caseDoc?.openedAt ?? new Date().toISOString(),
     deliverables,
-    deliveryTimestamps: {},
-    rejectionTimestamps: {},
+    deliveryTimestamps,
+    rejectionTimestamps,
+    acceptanceTimestamps: acceptanceMap,
     clauses,
   };
 
