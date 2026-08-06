@@ -447,7 +447,7 @@ export const policyClauseSchema = z.object({
   schemaVersion: z.literal(1),
   clauseId: z.string(),
   packRef: z.string(), // the hashed EvidenceItem this clause belongs to
-  clauseNumber: z.number().int().positive(), // e.g. 4, 7, 9
+  clauseNumber: z.number().int().nonnegative(), // e.g. 4, 7, 9; 0 = governing-law line
   text: z.string(), // plain-language clause, ≤ 3 sentences
   parameters: z.object({
     hours: z.number().int().positive().optional(), // clause 4 grace window

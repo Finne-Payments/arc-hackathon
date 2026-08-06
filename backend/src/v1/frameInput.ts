@@ -24,6 +24,9 @@ export interface FrameInputOverrides {
   deliverables?: Array<{ name: string; due: string; acceptanceCriteria: string }>;
   deliveryTimestamps?: Record<string, string | null>;
   rejectionTimestamps?: Record<string, string | null>;
+  /** Written-acceptance timestamps per deliverable — drives the order-of-
+   * performance check (payment must follow acceptance). Optional. */
+  acceptanceTimestamps?: Record<string, string | null>;
   deliverableAmountsMicroUsdc?: string[];
   caseContext?: string;
 }
@@ -71,6 +74,7 @@ export async function buildFrameInput(
     deliverables,
     deliveryTimestamps: overrides.deliveryTimestamps ?? {},
     rejectionTimestamps: overrides.rejectionTimestamps ?? {},
+    acceptanceTimestamps: overrides.acceptanceTimestamps,
     clauses,
   };
 

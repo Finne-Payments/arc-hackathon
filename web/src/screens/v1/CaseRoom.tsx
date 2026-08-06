@@ -193,16 +193,31 @@ export function CaseRoom({
               </div>
             );
           })}
-          {/* Law line (clauseNumber 0) — authored, attributed, with disclaimer */}
-          {activeCase.clauses.filter((c) => c.clauseNumber === 0).map((c) => (
-            <div key={c.clauseId} style={{ padding: "10px 0 4px", fontSize: 11, color: "var(--color-fg-muted)", lineHeight: 1.5, fontStyle: "italic" }}>
-              <span style={{ fontFamily: "var(--font-mono)", fontWeight: 600, fontStyle: "normal", color: "var(--color-fg-subtle)" }}>Governing law · {c.jurisdiction} · </span>
-              {c.text}
-              <div style={{ fontSize: 10, color: "var(--color-fg-subtle)", marginTop: 4, fontStyle: "normal" }}>
-                Authored by {c.author}. Curated offline; not legal advice.
+          {/* Governing-law pointers (clauseNumber 0 family) — authored,
+              attributed, with the not-legal-advice disclaimer. The agent cites
+              these and frames turning questions against them; it never decides.
+              Renders as a distinct group so multiple pointers (the top-3 for a
+              jurisdiction, e.g. the Northwind E&W pack) stay separated. */}
+          {(() => {
+            const lawLines = activeCase.clauses.filter((c) => c.clauseNumber === 0);
+            if (lawLines.length === 0) return null;
+            const jurisdiction = lawLines[0].jurisdiction;
+            return (
+              <div style={{ padding: "10px 0 4px", marginTop: 6, borderTop: "1px solid var(--color-border-subtle)" }}>
+                <div style={{ fontFamily: "var(--font-mono)", fontWeight: 600, fontStyle: "normal", color: "var(--color-fg-subtle)", fontSize: 10, marginBottom: 6 }}>
+                  Governing law{jurisdiction ? ` · ${jurisdiction}` : ""}
+                </div>
+                {lawLines.map((c, i) => (
+                  <div key={c.clauseId} style={{ fontSize: 11, color: "var(--color-fg-muted)", lineHeight: 1.5, fontStyle: "italic", marginBottom: i < lawLines.length - 1 ? 8 : 0 }}>
+                    {c.text}
+                  </div>
+                ))}
+                <div style={{ fontSize: 10, color: "var(--color-fg-subtle)", marginTop: 6, fontStyle: "normal" }}>
+                  Curated offline; not legal advice. The agent cites these as pointers; it does not recommend or decide.
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })()}
         </Card>
       )}
 

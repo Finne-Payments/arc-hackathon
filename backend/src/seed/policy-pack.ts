@@ -59,11 +59,14 @@ export async function seedDemoPolicyPack(): Promise<void> {
     if (existing > 0) return; // already seeded — idempotent
 
     const now = new Date().toISOString();
+    // schemaVersion is a domain-envelope field (it gates validation), NOT a
+    // Mongo field on v1_policy_clauses (the collection is strict:'throw', so an
+    // unknown field aborts the whole insert). Destructure it out before insert.
     const rows = DEMO_CLAUSES.map((c) => {
       // FIN-110: validate through the model-layer gate BEFORE persist. Strict
       // parse rejects unknown keys; validateNoVerdictKeys rejects verdict fields.
       // Runtime insertion of an unvalidated/verdict-shaped clause cannot land.
-      const validated = validatePolicyClause({
+      const { schemaVersion: _sv, ...validated } = validatePolicyClause({
         schemaVersion: 1 as const,
         clauseId: generateId("clause"),
         packRef: DEMO_PACK_REF,
@@ -75,12 +78,13 @@ export async function seedDemoPolicyPack(): Promise<void> {
         reviewRef: "demo-pack-v1", // human-review reference
         version: 1,
       });
+      void _sv;
       return { ...validated, createdAt: now };
     });
 
     // The law line goes in as its own clause row (clauseNumber 0) so it renders
     // in the case room with attribution + disclaimer, cited like a clause.
-    const lawValidated = validatePolicyClause({
+    const { schemaVersion: _lsv, ...lawValidated } = validatePolicyClause({
       schemaVersion: 1 as const,
       clauseId: generateId("clause"),
       packRef: DEMO_PACK_REF,
@@ -92,6 +96,7 @@ export async function seedDemoPolicyPack(): Promise<void> {
       reviewRef: "demo-pack-v1",
       version: 1,
     });
+    void _lsv;
     rows.push({ ...lawValidated, createdAt: now });
 
     await PolicyClause.insertMany(rows);
