@@ -451,11 +451,22 @@ export function useFinne(initialRole: Role = "arbiter") {
       printPage: () => window.print(),
       /** Bump caseVersion so App reloads the active case (used after the agent
           refresh action so the new frame/status flows into the case room). */
-      reloadCase: () => patch({ caseVersion: state.caseVersion + 1 }),
+      // NOTE: read the current version from the setState updater, NOT from the
+      // `state` closure. The `actions` memo is created once (its deps are all
+      // stable callbacks), so `state` here is frozen at the first render and
+      // `state.caseVersion` is always 0 — meaning every call would compute 0 + 1
+      // and only ever set caseVersion to 1 (so only the FIRST bump reloaded the
+      // case; subsequent bumps were a no-op and the case room stayed stale).
+      reloadCase: () => setState((s) => ({ ...s, caseVersion: s.caseVersion + 1 })),
       /** Bump payoutVersion so App re-fetches the payouts list — bridges the
           indexer's ~30s poll gap so a freshly-created payout appears without a
           manual refresh (NewPayout → ledger/receipt). */
-      reloadPayouts: () => patch({ payoutVersion: state.payoutVersion + 1 }),
+      // NOTE: same fix as reloadCase — read payoutVersion from the updater, not
+      // the frozen `state` closure. Without this, only the FIRST payout after a
+      // page load bumped payoutVersion (0 → 1); every later payout set it to 1
+      // again (a no-op), so the ledger/receipt retry effect never re-fired and
+      // freshly-created payouts never appeared without a manual reload.
+      reloadPayouts: () => setState((s) => ({ ...s, payoutVersion: s.payoutVersion + 1 })),
       /**
        * Sign a refund with the reviewer's browser wallet (D1). Falls back to the
        * labeled simulation (D11) when no wallet is detected. The Decision screen
@@ -483,7 +494,13 @@ export function useFinne(initialRole: Role = "arbiter") {
           // The chain has moved, but the indexer writes refundTxHash only on its
           // next ~30s tick. Bump both versions so App.tsx re-fetches on an
           // escalating schedule until the case/receipt reflect the real state.
-          patch({ caseVersion: state.caseVersion + 1, payoutVersion: state.payoutVersion + 1 });
+          // Read from the updater, not the frozen `state` closure — see the
+          // note on reloadPayouts/reloadCase above.
+          setState((s) => ({
+            ...s,
+            caseVersion: s.caseVersion + 1,
+            payoutVersion: s.payoutVersion + 1,
+          }));
           setTimer(() => go("final"), 1600);
           return txHash;
         } catch (e) {
