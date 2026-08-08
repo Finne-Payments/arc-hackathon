@@ -193,14 +193,36 @@ export function CaseRoom({
               </div>
             );
           })}
-          {/* Law line (clauseNumber 0) — authored, attributed, with disclaimer */}
+          {/* Law line (clauseNumber 0) — the governing-law row: the law library
+              (lawLines) + a disclaimer. Each note renders its one-sentence line,
+              attribution (author), its reviewRef, and a "see" pointer per
+              sourceRef. Settled common-law principles carry an empty sourceRefs
+              and render without a pointer. (FIN-112) */}
           {activeCase.clauses.filter((c) => c.clauseNumber === 0).map((c) => (
             <div key={c.clauseId} style={{ padding: "10px 0 4px", fontSize: 11, color: "var(--color-fg-muted)", lineHeight: 1.5, fontStyle: "italic" }}>
               <span style={{ fontFamily: "var(--font-mono)", fontWeight: 600, fontStyle: "normal", color: "var(--color-fg-subtle)" }}>Governing law · {c.jurisdiction} · </span>
-              {c.text}
-              <div style={{ fontSize: 10, color: "var(--color-fg-subtle)", marginTop: 4, fontStyle: "normal" }}>
-                Authored by {c.author}. Curated offline; not legal advice.
-              </div>
+              {(c.lawLines && c.lawLines.length > 0) ? c.lawLines.map((l) => (
+                <div key={l.note} style={{ marginTop: 6 }}>
+                  {l.text}
+                  <div style={{ fontSize: 10, color: "var(--color-fg-subtle)", marginTop: 4, fontStyle: "normal" }}>
+                    {l.author} · {l.reviewRef}
+                    {l.sourceRefs.map((s, i) => (
+                      <span key={i}>
+                        {i === 0 ? " · see " : "; "}
+                        <a href={s.url} target="_blank" rel="noopener noreferrer" style={{ color: "var(--color-fg-subtle)", textDecoration: "underline", textDecorationStyle: "dotted" }}>{s.cite}</a>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )) : (
+                // Back-compat: a law-line row seeded before lawLines existed.
+                <span>{c.text}</span>
+              )}
+              {c.disclaimer && (
+                <div style={{ fontSize: 10, color: "var(--color-fg-subtle)", marginTop: 6, fontStyle: "normal" }}>
+                  {c.disclaimer}
+                </div>
+              )}
             </div>
           ))}
         </Card>

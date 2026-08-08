@@ -146,12 +146,25 @@ export interface V1Frame {
   generatedAt: string;
   degradeLevel: number; // 0=full, 1=no questions, 2=no frame
 }
+export interface V1LawLine {
+  note: string; // human label, e.g. "law note 1"
+  text: string; // one plain-language sentence — no inline citation
+  jurisdiction: string;
+  author: string;
+  reviewRef: string;
+  version: number;
+  sourceRefs: { cite: string; url: string }[];
+}
 export interface V1Clause {
   clauseId: string;
   packRef: string;
   clauseNumber: number;
   text: string;
   parameters: { hours?: number; days?: number };
+  /** The law library — present on the governing-law row (clauseNumber 0). */
+  lawLines?: V1LawLine[];
+  /** Rendered wherever the pack is cited (general information, not legal advice). */
+  disclaimer?: string;
   jurisdiction?: string;
   author: string;
   reviewRef: string;
