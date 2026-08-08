@@ -2,6 +2,7 @@ import { Router } from "express";
 import { requirePermission, currentRole } from "../middleware.ts";
 import {
   getSharedCase,
+  buildLegacyCaseContext,
   submitResponse,
   attachEvidence,
   requestInfo,
@@ -75,7 +76,15 @@ caseRoutes.get("/cases/:id", requirePermission("case:read"), async (req, res, ne
     } catch {
       // frame store absent in some setups — frame stays null.
     }
-    res.json({ ...body, frame, frameStatus });
+    // Attach the structured case context (sourced on-chain + off-chain facts).
+    // Degrades to null if the chain/DB reads fail — never blocks the case view.
+    let caseContext: unknown = null;
+    try {
+      caseContext = await buildLegacyCaseContext(body);
+    } catch {
+      caseContext = null;
+    }
+    res.json({ ...body, frame, frameStatus, caseContext });
   } catch (e) {
     next(e);
   }
