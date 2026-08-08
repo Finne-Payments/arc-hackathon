@@ -38,9 +38,58 @@ const DEMO_CLAUSES = [
 ];
 
 /**
- * The one-sentence Irish-law governing-law note (FIN-112). Authored by AG,
- * attributed, with the disclaimer rendered wherever the pack is cited. This is
- * the single law line — the seed of the law library, never generated at runtime.
+ * The Irish governing-law notes (FIN-112). The seed of the law library —
+ * authored by AG, signed off, frozen content. Each note is a plain-language
+ * one-sentence statement of what the law provides (never what an arbiter should
+ * conclude), with its citation living separately in sourceRefs. An empty
+ * sourceRefs marks a settled common-law principle; an invented citation is
+ * never permitted (see docs/law-lines-protocol.md).
+ *
+ * The order is load-bearing: binding force / incorporation → performance and
+ * acceptance → breach and proof (the law-lines selection rule).
+ */
+export const DEMO_LAW_LINES = [
+  {
+    note: "law note 1",
+    text: "Under Irish law, businesses are held to the written terms they agree, but a term generally binds only if it was set out, provided, or clearly identified to the other party when contracting — a bare 'terms available on request', or terms produced after the deal, is not enough.",
+    jurisdiction: "Ireland",
+    author: "Arko Ganguli (AG)",
+    reviewRef: "FIN-112 · reviewed and approved by AG 2026-08-06",
+    version: 1,
+    sourceRefs: [
+      {
+        cite: "Noreside Construction Ltd v Irish Asphalt Ltd [2014] IESC 68",
+        url: "https://www.bailii.org/ie/cases/IESC/2014/S68.html",
+      },
+    ],
+  },
+  {
+    note: "law note 2",
+    text: "Under Irish law, deemed-acceptance clauses of this kind are enforceable between businesses; a clawback after acceptance is a contractual claim requiring grounds, not a self-help right.",
+    jurisdiction: "Ireland",
+    author: "Arko Ganguli (AG)",
+    reviewRef: "FIN-112 · authored 2026-08-03",
+    version: 1,
+    sourceRefs: [], // settled freedom-of-contract principle
+  },
+  {
+    note: "law note 3",
+    text: "Under Irish law, the party who alleges a breach of contract must prove it on the balance of probabilities — an enforceable contract, a failure to perform it, and a loss that resulted.",
+    jurisdiction: "Ireland",
+    author: "Arko Ganguli (AG)",
+    reviewRef: "FIN-112 · reviewed and approved by AG 2026-08-06",
+    version: 1,
+    sourceRefs: [], // settled common law (civil standard of proof)
+  },
+] as const;
+
+/** Rendered wherever the pack is cited (FIN-112). */
+export const DEMO_LAW_DISCLAIMER =
+  "Fictional demo terms. The law note is general information recorded by its author, not legal advice.";
+
+/**
+ * The single-line summary for the governing-law row (clauseNumber 0). The full
+ * notes live in lawLines below; `text` is the one-line render for compact views.
  */
 export const DEMO_LAW_LINE = {
   clauseNumber: 0, // 0 marks it as the law line, not a numbered clause
@@ -82,8 +131,12 @@ export async function seedDemoPolicyPack(): Promise<void> {
       return { ...validated, createdAt: now };
     });
 
-    // The law line goes in as its own clause row (clauseNumber 0) so it renders
-    // in the case room with attribution + disclaimer, cited like a clause.
+    // The governing-law row (clauseNumber 0) carries the law library (lawLines)
+    // + the disclaimer. It renders in the case room with attribution, its
+    // reviewRef, a "see" pointer per sourceRef, and the disclaimer wherever the
+    // pack is cited. NOTE: clauseNumber 0 now validates (the schema is
+    // .nonnegative(), not .positive()) — a prior gate silently dropped this row
+    // (and with it the whole seed) on every boot.
     const { schemaVersion: _lsv, ...lawValidated } = validatePolicyClause({
       schemaVersion: 1 as const,
       clauseId: generateId("clause"),
@@ -91,6 +144,16 @@ export async function seedDemoPolicyPack(): Promise<void> {
       clauseNumber: DEMO_LAW_LINE.clauseNumber,
       text: DEMO_LAW_LINE.text,
       parameters: DEMO_LAW_LINE.parameters,
+      lawLines: DEMO_LAW_LINES.map((l) => ({
+        note: l.note,
+        text: l.text,
+        jurisdiction: l.jurisdiction,
+        author: l.author,
+        reviewRef: l.reviewRef,
+        version: l.version,
+        sourceRefs: l.sourceRefs.map((s) => ({ cite: s.cite, url: s.url })),
+      })),
+      disclaimer: DEMO_LAW_DISCLAIMER,
       jurisdiction: "Ireland",
       author: "AG",
       reviewRef: "demo-pack-v1",

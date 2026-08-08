@@ -142,6 +142,56 @@ describe("FIN-130 verdict-field rejection on every agent record", () => {
     expect(() => validatePolicyClause(VALID_CLAUSE)).not.toThrow();
   });
 
+  // FIN-112 law library — the governing-law row (clauseNumber 0) carries the
+  // lawLines[] + disclaimer. validateNoVerdictKeys recurses into the array, so
+  // a smuggled verdict key inside a note still fails at the model layer.
+  const VALID_LAW_CLAUSE = {
+    schemaVersion: 1 as const,
+    clauseId: generateId("clause"),
+    packRef: "pack_demo",
+    clauseNumber: 0, // the governing-law row — now valid (schema is .nonnegative())
+    text: "The contract is governed by Irish law.",
+    parameters: {},
+    lawLines: [
+      {
+        note: "law note 1",
+        text: "Under Irish law, businesses are held to the written terms they agree.",
+        jurisdiction: "Ireland",
+        author: "Arko Ganguli (AG)",
+        reviewRef: "FIN-112 · reviewed and approved by AG 2026-08-06",
+        version: 1,
+        sourceRefs: [
+          { cite: "Noreside Construction Ltd v Irish Asphalt Ltd [2014] IESC 68", url: "https://www.bailii.org/ie/cases/IESC/2014/S68.html" },
+        ],
+      },
+    ],
+    disclaimer: "Fictional demo terms. The law note is general information recorded by its author, not legal advice.",
+    jurisdiction: "Ireland",
+    author: "AG",
+    reviewRef: "demo-pack-v1",
+    version: 1,
+  };
+  it("PolicyClause accepts the law-line row (clauseNumber 0 + lawLines + disclaimer)", () => {
+    expect(() => validatePolicyClause({ ...VALID_LAW_CLAUSE, clauseId: generateId("clause") })).not.toThrow();
+  });
+  it("PolicyClause rejects a verdict key nested inside lawLines[] (verdict scan recurses)", () => {
+    const poisoned = {
+      ...VALID_LAW_CLAUSE,
+      clauseId: generateId("clause"),
+      lawLines: [
+        { ...VALID_LAW_CLAUSE.lawLines[0], verdict: "platform" }, // smuggled into a note
+      ],
+    };
+    expect(() => validatePolicyClause(poisoned)).toThrow();
+  });
+  it("PolicyClause accepts clauseNumber 0 (governing-law row no longer dropped by .positive())", () => {
+    // Regression: the schema was .positive(), which rejected 0 and silently
+    // dropped the law-line row (and the whole seed) on every boot.
+    expect(() => validatePolicyClause({ ...VALID_LAW_CLAUSE, clauseId: generateId("clause") })).not.toThrow();
+    const parsed = validatePolicyClause({ ...VALID_LAW_CLAUSE, clauseId: generateId("clause") });
+    expect(parsed.clauseNumber).toBe(0);
+  });
+
   it("EvidenceAnnotation rejects a verdict key", () => {
     expect(() => validateEvidenceAnnotation({ ...VALID_ANNOTATION, annotationId: generateId("annot"), liability: "recipient" })).toThrow();
   });

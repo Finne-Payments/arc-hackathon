@@ -439,20 +439,57 @@ export const proposedCaseSchema = z.object({
 }).strict();
 
 /**
+ * LawLine (FIN-112) — an authored governing-law note. Plain-language, one
+ * sentence, citation-free in the line itself (sources live in sourceRefs). A
+ * settled common-law principle may carry an empty sourceRefs; an invented
+ * citation is never permitted (law-lines-protocol §3). Authored offline and
+ * signed off by a person (P10); a model-touched draft carries reviewRef
+ * "PENDING AG SIGN-OFF" and never ships in a frozen seed.
+ *
+ * `note` is the human label (e.g. "law note 1"); the parent clause row carries
+ * the numeric clauseNumber.
+ */
+export const lawLineSchema = z.object({
+  note: z.string(), // human label, e.g. "law note 1"
+  text: z.string(), // one plain-language sentence — no inline citation
+  jurisdiction: z.string(), // e.g. "Ireland"
+  author: z.string(), // who authored it (offline); never a model name
+  reviewRef: z.string(), // human-review reference; "PENDING AG SIGN-OFF" until approved
+  version: z.number().int().positive(),
+  sourceRefs: z.array(
+    z.object({
+      cite: z.string(), // citation as it appears on the primary source
+      url: z.string().url(), // the primary source opened during verification
+    }),
+  ),
+}).strict();
+
+/**
  * PolicyClause (FIN-110) — a clause from a hashed policy pack, authored offline
  * and reviewed by a person (P10). Runtime insertion is rejected at the model
  * layer. Parameters carry the clause's numeric windows (hours/days).
+ *
+ * A clause row with clauseNumber 0 is the governing-law note; it carries the
+ * `lawLines[]` (the law library) and a `disclaimer` rendered wherever the pack
+ * is cited. clauseNumber is nonnegative (0 = law line; 4/7/9 = numbered
+ * clauses) — a prior `.positive()` gate silently dropped the law line (and with
+ * it the whole seed) on every boot.
  */
 export const policyClauseSchema = z.object({
   schemaVersion: z.literal(1),
   clauseId: z.string(),
   packRef: z.string(), // the hashed EvidenceItem this clause belongs to
-  clauseNumber: z.number().int().nonnegative(), // e.g. 4, 7, 9; 0 = governing-law line
+  clauseNumber: z.number().int().nonnegative(), // 0 = governing-law row; e.g. 4, 7, 9
   text: z.string(), // plain-language clause, ≤ 3 sentences
   parameters: z.object({
     hours: z.number().int().positive().optional(), // clause 4 grace window
     days: z.number().int().positive().optional(), // clause 7 acceptance period
   }),
+  // The law library — present on the clauseNumber 0 (governing-law) row. Each
+  // note is validated through lawLineSchema; validateNoVerdictKeys recurses
+  // into this array, so a smuggled verdict key inside a note still fails.
+  lawLines: z.array(lawLineSchema).optional(),
+  disclaimer: z.string().optional(), // rendered wherever the pack is cited
   jurisdiction: z.string().optional(), // e.g. "Ireland"
   author: z.string(), // who authored it (offline)
   reviewRef: z.string(), // human-review reference (PR link)
@@ -462,6 +499,7 @@ export const policyClauseSchema = z.object({
 export type DraftFrame = z.infer<typeof draftFrameSchema>;
 export type EvidenceAnnotation = z.infer<typeof evidenceAnnotationSchema>;
 export type ProposedCase = z.infer<typeof proposedCaseSchema>;
+export type LawLine = z.infer<typeof lawLineSchema>;
 export type PolicyClause = z.infer<typeof policyClauseSchema>;
 export type ModelDigest = z.infer<typeof modelDigestSchema>;
 

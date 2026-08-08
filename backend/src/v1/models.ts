@@ -469,11 +469,22 @@ const metaSchema = new Schema<MetaDoc>({
 /* -------------------------------------------------------------------------- */
 
 export interface PolicyClauseDoc extends Document {
+  schemaVersion: number;
   clauseId: string;
   packRef: string; // hashed EvidenceItem this clause belongs to
-  clauseNumber: number;
+  clauseNumber: number; // 0 = governing-law row; 4/7/9 = numbered clauses
   text: string;
   parameters: { hours?: number; days?: number };
+  lawLines?: {
+    note: string;
+    text: string;
+    jurisdiction: string;
+    author: string;
+    reviewRef: string;
+    version: number;
+    sourceRefs: { cite: string; url: string }[];
+  }[]; // the law library — on the clauseNumber 0 row (FIN-112)
+  disclaimer?: string; // rendered wherever the pack is cited
   jurisdiction?: string;
   author: string;
   reviewRef: string;
@@ -481,10 +492,11 @@ export interface PolicyClauseDoc extends Document {
   createdAt: string;
 }
 const POLICY_CLAUSE_IMMUTABLE = [
-  "clauseId", "packRef", "clauseNumber", "text", "parameters", "jurisdiction", "author", "reviewRef", "version",
+  "schemaVersion", "clauseId", "packRef", "clauseNumber", "text", "parameters", "lawLines", "disclaimer", "jurisdiction", "author", "reviewRef", "version",
 ];
 const policyClauseSchema = new Schema<PolicyClauseDoc>(
   {
+    schemaVersion: { type: Number, default: 1 },
     clauseId: { type: String, required: true, unique: true, index: true },
     packRef: { type: String, required: true, index: true },
     clauseNumber: { type: Number, required: true },
@@ -496,6 +508,29 @@ const policyClauseSchema = new Schema<PolicyClauseDoc>(
       ),
       default: {},
     },
+    // The law library (FIN-112). Present on the clauseNumber 0 row; omitted on
+    // numbered clauses. Sub-documents are _id-less so the row reads as data.
+    lawLines: {
+      type: [
+        new Schema(
+          {
+            note: { type: String, required: true },
+            text: { type: String, required: true },
+            jurisdiction: { type: String, required: true },
+            author: { type: String, required: true },
+            reviewRef: { type: String, required: true },
+            version: { type: Number, required: true },
+            sourceRefs: {
+              type: [{ cite: { type: String, required: true }, url: { type: String, required: true } }],
+              default: [],
+            },
+          },
+          { _id: false },
+        ),
+      ],
+      default: undefined,
+    },
+    disclaimer: { type: String, default: undefined },
     jurisdiction: String,
     author: { type: String, required: true },
     reviewRef: { type: String, required: true },

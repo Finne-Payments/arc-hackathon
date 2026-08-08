@@ -160,6 +160,11 @@ export function NewPayout({ actions, apiData }: { actions: FinneActions; apiData
           ? `Payment submitted on Arc · payment #${id}. Opening the receipt.`
           : "Payment submitted on Arc. Opening the ledger.",
       });
+      // Signal that a new payout is landing: the indexer writes the DB row
+      // async (within ~30s of the on-chain PaymentCreated event), so App.tsx
+      // watches payoutVersion and re-fetches the payouts list on a short retry
+      // schedule until the row appears — no manual refresh needed.
+      actions.reloadPayouts();
       setTimeout(() => (id ? actions.viewReceipt(id) : actions.go("ledger")), 800);
     } catch (e) {
       if (isUserRejection(e)) {

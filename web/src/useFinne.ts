@@ -49,6 +49,10 @@ export interface FinneState {
   /** Bumps whenever evidence/reply/info-request is submitted, so App.tsx can
    *  reload the active case and all seats see the new data. */
   caseVersion: number;
+  /** Bumps whenever a new payout is created on chain, so App.tsx can re-fetch
+   *  the payouts list — bridging the indexer's poll gap (the payout row only
+   *  exists once the indexer detects the on-chain PaymentCreated event). */
+  payoutVersion: number;
   stripDismissed: boolean;
   copied: boolean;
   exportToast: boolean;
@@ -85,6 +89,7 @@ export function useFinne(initialRole: Role = "arbiter") {
     selectedPaymentId: null,
     selectedCaseId: null,
     caseVersion: 0,
+    payoutVersion: 0,
     stripDismissed: false,
     copied: false,
     exportToast: false,
@@ -413,6 +418,7 @@ export function useFinne(initialRole: Role = "arbiter") {
       selectedPaymentId: state.selectedPaymentId,
       selectedCaseId: state.selectedCaseId,
       caseVersion: state.caseVersion,
+      payoutVersion: state.payoutVersion,
     };
   }, [state, patch, startSim]);
 
@@ -441,6 +447,10 @@ export function useFinne(initialRole: Role = "arbiter") {
       /** Bump caseVersion so App reloads the active case (used after the agent
           refresh action so the new frame/status flows into the case room). */
       reloadCase: () => patch({ caseVersion: state.caseVersion + 1 }),
+      /** Bump payoutVersion so App re-fetches the payouts list — bridges the
+          indexer's ~30s poll gap so a freshly-created payout appears without a
+          manual refresh (NewPayout → ledger/receipt). */
+      reloadPayouts: () => patch({ payoutVersion: state.payoutVersion + 1 }),
       /**
        * Sign a refund with the reviewer's browser wallet (D1). Falls back to the
        * labeled simulation (D11) when no wallet is detected. The Decision screen

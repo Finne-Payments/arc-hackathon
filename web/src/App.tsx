@@ -249,6 +249,37 @@ function AuthenticatedApp({ user, frontendRole, onLogout }: { user: PublicUser; 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [v.caseVersion]);
 
+  // Bridge the indexer's ~30s poll gap after a new payout is created on chain.
+  // The payout row only exists once the indexer detects the on-chain
+  // PaymentCreated event, which lags the wallet confirmation by up to 30s. The
+  // normal screen-change refresh is one-shot and loses that race, so the ledger
+  // (and receipt) showed stale data until a manual reload. This re-fetches on a
+  // bounded escalating schedule — never a continuous poll (that was deliberately
+  // removed for Arc RPC rate-limit reasons; see useApi.ts header).
+  useEffect(() => {
+    if (v.payoutVersion <= 0) return;
+    let cancelled = false;
+    // Immediate + escalating retries: covers the common fast-detect case and the
+    // worst-case 30s indexer tick without spinning on the RPC.
+    const timers = [0, 2500, 6000, 12000, 22000].map((ms) =>
+      setTimeout(() => {
+        if (cancelled) return;
+        void apiActions.refresh();
+        // If we landed on the receipt for the just-created payout, its row may
+        // not have existed when the screen loaded (404 → empty spinner). Re-load
+        // the receipt on each retry so it fills in once the indexer writes it.
+        if (v.screen === "receipt" && v.selectedPaymentId) {
+          apiActions.loadReceipt(v.selectedPaymentId);
+        }
+      }, ms),
+    );
+    return () => {
+      cancelled = true;
+      timers.forEach((t) => clearTimeout(t));
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [v.payoutVersion]);
+
   // Sync caseStage + reqLog from the live case data so the UI reflects the
   // real server state (e.g. case moved to AWAITING_RESPONSE after info request).
   useEffect(() => {
