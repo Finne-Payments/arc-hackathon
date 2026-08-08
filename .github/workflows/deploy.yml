@@ -170,6 +170,13 @@ jobs:
         env:
           AWS_REGION: ${{ secrets.AWS_REGION }}
           AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+          # Tag the task definition by the immutable git SHA, NOT the mutable
+          # :backend/:web tag. A mutable tag leaves the task definition
+          # unchanged so CloudFormation creates no new revision and ECS re-pulls
+          # a cached digest (the live web bundle stayed stale across "successful"
+          # deploys for exactly this reason). The SHA tag forces a new task def
+          # revision + a genuinely fresh image pull on every deploy.
+          IMAGE_TAG: ${{ github.sha }}
           # The GPU model stack (FinneModelStack) is OFF — the agent layer uses
           # Amazon Bedrock via the ECS task role instead. Set to "true" to bring
           # back the self-hosted vLLM GPU instance.
