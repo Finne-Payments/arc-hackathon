@@ -734,6 +734,15 @@ const STAGE_LABEL: Record<string, string> = {
   assemble: "Assemble frame",
 };
 
+// Outcome requirement labels (ported from v1 FramePanel — FIN-125). The frame's
+// requirements[] are template-authored, so naming outcomes here is safe.
+const OUTCOME_LABEL: Record<string, string> = {
+  RECIPIENT_UPHELD: "Recipient upheld",
+  PLATFORM_UPHELD: "Platform upheld",
+  PARTIAL_PLATFORM_UPHELD: "Partial platform upheld",
+  DISMISSED_INSUFFICIENT_EVIDENCE: "Dismissed — insufficient evidence",
+};
+
 function AgentBriefFrame({ frame }: { frame: AgentFrame }) {
   return (
     <>
@@ -747,6 +756,23 @@ function AgentBriefFrame({ frame }: { frame: AgentFrame }) {
               {q.provenance === "model" && (
                 <span style={{ fontSize: 9, fontFamily: "var(--font-mono)", color: "var(--color-fg-subtle)", background: "var(--color-surface-2)", padding: "1px 5px", borderRadius: "var(--radius-xs)", flexShrink: 0 }}>model</span>
               )}
+            </div>
+          ))}
+        </div>
+      )}
+      {/* Outcome requirements — template-authored, safe to name outcomes (FIN-125).
+          Ported from v1 FramePanel. */}
+      {frame.requirements.length > 0 && (
+        <div style={{ marginBottom: 14 }}>
+          <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: ".04em", textTransform: "uppercase", color: "var(--color-fg-subtle)", marginBottom: 6 }}>What each outcome requires</div>
+          {frame.requirements.map((r, i) => (
+            <div key={`r-${i}`} style={{ padding: "8px 10px", marginBottom: 6, background: "var(--color-surface)", borderRadius: "var(--radius-sm)", border: "1px solid var(--color-border)" }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: "var(--brand-700)", marginBottom: 3 }}>
+                {OUTCOME_LABEL[r.outcome] ?? r.outcome}
+              </div>
+              <div style={{ fontSize: 12, color: "var(--color-fg-muted)", lineHeight: 1.45 }}>
+                {r.filledParams.text}
+              </div>
             </div>
           ))}
         </div>
@@ -765,6 +791,7 @@ function AgentBriefFrame({ frame }: { frame: AgentFrame }) {
       <div style={{ fontSize: 12, color: "var(--color-fg-subtle)", borderTop: "1px solid var(--color-border)", paddingTop: 12 }}>
         Prepared by the Finné agent from on-chain + off-chain facts. It prepares and points; it does not decide.
         {frame.degradeLevel > 0 && <span style={{ color: "var(--warn-600)" }}> ⚠ simplified (model offline).</span>}
+        <span className="no-print"> Citation depth — platform {frame.citationDepth.platform} · recipient {frame.citationDepth.recipient}.</span>
       </div>
     </>
   );
