@@ -109,6 +109,14 @@ export interface Env {
   registryOperatorKey: string | null;
   responseWindowHours: number;
   /**
+   * The platformKey a payout is stamped with when the payer wallet isn't a
+   * registered User. Defaults to "northstar" (the platform every reviewer/arbiter
+   * seat is scoped to — see routes/auth.ts). Without this, a payout paid from an
+   * operator/treasury wallet lands with platformKey = the address prefix and is
+   * invisible to the scoped reviewer, so it never appears in the ledger.
+   */
+  defaultPlatformKey: string;
+  /**
    * Rolling lookback window (in blocks). Each tick the indexer scans this many
    * blocks of contract activity — not the whole chain from deploy. Picks up
    * fresh pays/refunds/withdrawals + anything in the recent window; dedupes via
@@ -184,6 +192,7 @@ export function loadEnv(env: NodeJS.ProcessEnv = process.env): Env {
     },
     registryOperatorKey: env.REGISTRY_OPERATOR_PRIVATE_KEY || null,
     responseWindowHours: parseIntOr(env.RESPONSE_WINDOW_HOURS, 72),
+    defaultPlatformKey: env.DEFAULT_PLATFORM_KEY || "northstar",
     // INDEXER_LOOKBACK_BLOCKS: rolling window of recent contract activity the
     // indexer scans each tick — not the whole chain from deploy. Default 5000
     // (~7 min of Arc blocks at ~510s/block) catches any fresh pay/refund/withdraw

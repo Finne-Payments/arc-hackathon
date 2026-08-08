@@ -224,8 +224,12 @@ export async function recordDetectedPayment(det: DetectedPayment): Promise<{ pay
 
   // Resolve the platformKey from the SENDER's User record so the per-seat scope
   // filter (scopeFor: { platformKey: caller.platformKey }) matches. If the
-  // sender isn't a known user, fall back to the address-derived key.
-  let platformKey = det.txSender ? det.txSender.toLowerCase().slice(0, 10) : "unknown";
+  // sender isn't a known user (the common case — payouts are paid from a
+  // treasury/operator wallet, not the reviewer's login wallet), fall back to the
+  // platform's own key (env.defaultPlatformKey, "northstar") so the payout is
+  // visible to the platform's reviewer. The previous fallback (the sender's
+  // address prefix) made every such payout invisible to the scoped reviewer.
+  let platformKey = loadEnv().defaultPlatformKey;
   if (det.txSender) {
     const senderUser = await User.findOne({
       walletAddress: { $regex: new RegExp(`^${det.txSender.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i") },
@@ -270,7 +274,12 @@ export async function recordDetectedPayment(det: DetectedPayment): Promise<{ pay
     trancheIndex: null,
   });
 
-  await enqueueAnchor("receipt", idToUint256(payout.paymentId), payout.paymentId, receiptHash, 0, {
+  // paymentId is a raw uint256 from the RefundProtocol PaymentCreated event (a
+  // monotonic counter: 9, 10, 11...). It is the contract's receipt mapping key
+  // as-is — do NOT hash it. (idToUint256 is only for string ids like caseNumber.)
+  // The worker's receipt branch BigInt()-coerces job.paymentId, so the raw numeric
+  // string is what lands on chain and what openCase later looks up.
+  await enqueueAnchor("receipt", payout.paymentId, payout.paymentId, receiptHash, 0, {
     payer: det.txSender,
     recipient: det.to,
     // det.amount is in whole USDC (6 decimals) — the registry takes micro-USDC (uint128).
@@ -355,9 +364,10 @@ export async function openDispute(
   await caseDoc.save();
 
   await enqueueAnchor("case", idToUint256(caseDoc.caseNumber), paymentId, caseHash, 0, {
-    // The worker BigInt()-coerces paymentId for the on-chain openCase call, so
-    // it must be the uint256 form — NOT the raw paymentId string.
-    paymentId: idToUint256(paymentId),
+    // paymentId is the RAW uint256 receipt key (the contract's openCase looks up
+    // receipts[paymentId] — it must match the key registerReceipt used, which is
+    // the raw paymentId, NOT idToUint256(paymentId)).
+    paymentId,
     // Mongo backfill key: the worker's entityId is now the keccak uint256, not
     // the caseNumber, so backfillAnchor needs the original caseNumber.
     caseNumber: caseDoc.caseNumber,
