@@ -261,6 +261,11 @@ export interface CaseDoc {
   caseHash: string;
   openedAt: string;
   registryAnchorTx: string | null;
+  /** keccak256(caseNumber) as a decimal uint256 — the contract's caseId key.
+   *  Set by the anchor worker when openCase lands, and lazily by the indexer
+   *  when it sees a CaseOpened event. Lets the indexer reconcile on-chain
+   *  registry events back to a Mongo Case without scanning (RP-03 id encoding). */
+  onChainCaseId?: string | null;
 }
 const caseSchema = new Schema<CaseDoc>(
   {
@@ -278,6 +283,7 @@ const caseSchema = new Schema<CaseDoc>(
     caseHash: String,
     openedAt: String,
     registryAnchorTx: { type: String, default: null },
+    onChainCaseId: { type: String, default: null, index: true },
   },
   { collection: "cases" },
 );
@@ -289,6 +295,10 @@ export interface ResponseDoc {
   text: string;
   evidenceRefs: string[];
   submittedAt: string;
+  /** Canonical keccak256 hash anchored on chain via submitResponse (RP-03). */
+  responseHash?: string | null;
+  /** The registry tx that anchored this response (set by the anchor worker). */
+  registryAnchorTx?: string | null;
 }
 const responseSchema = new Schema<ResponseDoc>(
   {
@@ -298,6 +308,8 @@ const responseSchema = new Schema<ResponseDoc>(
     text: String,
     evidenceRefs: [String],
     submittedAt: String,
+    responseHash: { type: String, default: null },
+    registryAnchorTx: { type: String, default: null },
   },
   { collection: "responses" },
 );
@@ -391,6 +403,7 @@ export type AnchorJobKind =
   | "receipt" // registerReceipt
   | "case" // openCase
   | "response" // submitResponse
+  | "under_review" // markUnderReview
   | "analysis" // anchorAnalysis
   | "decision" // recordDecision
   | "correction_outstanding" // markCorrectionOutstanding
@@ -414,6 +427,7 @@ export interface AnchorJobDoc {
   // For receipt: registerReceipt(paymentId, receiptHash, payer, recipient, amountMicroUsdc, paidAt)
   // For case: openCase(caseId, paymentId, claimHash, challengedAmountMicroUsdc, responseDueAt)
   // For response: submitResponse(caseId, responseHash, submittedBy)
+  // For under_review: markUnderReview(caseId)  — transitions OPEN|RESPONDED → UNDER_REVIEW
   // For analysis: anchorAnalysis(caseId, analysisHash, version)
   // For decision: recordDecision(caseId, decisionHash, outcome, correctionAmountMicroUsdc)
   // For correction_outstanding: markCorrectionOutstanding(caseId, correctionHash)
@@ -432,6 +446,10 @@ export interface AnchorJobDoc {
     outcome?: number;
     correctionAmountMicroUsdc?: string;
     correctionTxHash?: string;
+    // Mongo backfill keys — the worker's entityId is now the on-chain uint256
+    // (keccak-derived), NOT the Mongo id, so backfill needs the original keys.
+    caseNumber?: string; // for kind:"case" → Case.updateOne({caseNumber})
+    decisionId?: string; // for kind:"decision" → Decision.updateOne({_id})
   };
   // Reliability fields (GAP-B5): leasing prevents two replicas double-anchoring;
   // nextAttemptAt implements exponential backoff on failure.

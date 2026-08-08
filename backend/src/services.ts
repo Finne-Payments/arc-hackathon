@@ -19,11 +19,13 @@ import {
   type PayoutDoc,
   type CaseDoc,
   type DecisionDoc,
+  type AnchorJobKind,
 } from "./models/index.ts";
 import { PolicyClause } from "./registrar/models.ts";
 import { DEMO_PACK_REF } from "./seed/policy-pack.ts";
 import { NORTHWIND_PACK_REF } from "./seed/northwind-pack.ts";
 import { loadEnv } from "./env.ts";
+import { keccak256, stringToBytes } from "viem";
 import type { Address } from "viem";
 import type { StructuredCaseContext } from "./registrar/caseContext.ts";
 import { readPayment, readChainFigures } from "./chain/reads.ts";
@@ -268,7 +270,7 @@ export async function recordDetectedPayment(det: DetectedPayment): Promise<{ pay
     trancheIndex: null,
   });
 
-  await enqueueAnchor("receipt", payout.paymentId, payout.paymentId, receiptHash, 0, {
+  await enqueueAnchor("receipt", idToUint256(payout.paymentId), payout.paymentId, receiptHash, 0, {
     payer: det.txSender,
     recipient: det.to,
     // det.amount is in whole USDC (6 decimals) — the registry takes micro-USDC (uint128).
@@ -352,8 +354,13 @@ export async function openDispute(
   caseDoc.status = afterNotice.status;
   await caseDoc.save();
 
-  await enqueueAnchor("case", caseDoc.caseNumber, paymentId, caseHash, 0, {
-    paymentId,
+  await enqueueAnchor("case", idToUint256(caseDoc.caseNumber), paymentId, caseHash, 0, {
+    // The worker BigInt()-coerces paymentId for the on-chain openCase call, so
+    // it must be the uint256 form — NOT the raw paymentId string.
+    paymentId: idToUint256(paymentId),
+    // Mongo backfill key: the worker's entityId is now the keccak uint256, not
+    // the caseNumber, so backfillAnchor needs the original caseNumber.
+    caseNumber: caseDoc.caseNumber,
     challengedAmountMicroUsdc: BigInt(Math.round(Number(body.amountContested) * 1_000_000)).toString(),
     responseDueAt: Math.floor(new Date(responseDeadline).getTime() / 1000),
   });
@@ -409,13 +416,21 @@ export async function submitResponse(
     }
   }
 
+  const submittedAt = new Date().toISOString();
+  // Canonical hash of the response body — the bytes32 anchored on chain via
+  // submitResponse. Mirrors the registrar's buildResponseEnvelope: hash over
+  // {caseRef, author, authorName, text, submittedAt} (no evidence refs, since
+  // those attach separately and the contract anchors the response text only).
+  const responseHash = canonicalHash({ caseRef: caseNumber, author, authorName, text: body.text, submittedAt });
   await ResponseModel.create({
     caseRef: caseNumber,
     author,
     authorName,
     text: body.text,
     evidenceRefs: [],
-    submittedAt: new Date().toISOString(),
+    submittedAt,
+    responseHash,
+    registryAnchorTx: null,
   });
 
   // Attach any evidence submitted with the reply.
@@ -425,6 +440,17 @@ export async function submitResponse(
   await caseDoc.save();
 
   const payoutForNotify = await Payout.findOne({ paymentId: caseDoc.payoutRef }).lean();
+
+  // Anchor the recipient response on chain (submitResponse). The contract
+  // requires the case be on-chain OPEN for this, which it is: openCase landed
+  // OPEN and nothing has moved it yet (markUnderReview is enqueued only at the
+  // decision point). submittedBy is the responder's wallet when known; the
+  // operator key holds PLATFORM_ROLE so it may relay a verified response.
+  await enqueueAnchor("response", idToUint256(caseNumber), caseDoc.payoutRef, responseHash, 0, {
+    caseNumber,
+    submittedBy: author === "recipient" ? (payoutForNotify?.recipientWallet ?? undefined) : undefined,
+  });
+
   await notify({
     type: "reply",
     title: "Recipient replied to the case",
@@ -603,11 +629,25 @@ export async function recordDecision(
     const afterClose = applyCaseEvent({ status: caseDoc.status as never, infoRequestCount: caseDoc.infoRequestCount }, "close");
     caseDoc.status = afterClose.status;
     await caseDoc.save();
-    await enqueueAnchor("decision", decision._id.toString(), caseDoc.payoutRef, decisionHash, outcomeCode(body.outcome), {
+    // On-chain sequence (worker drains by _id order, so enqueue in order):
+    //   markUnderReview  (OPEN|RESPONDED → UNDER_REVIEW)  — recordDecision requires UNDER_REVIEW
+    //   recordDecision   (UNDER_REVIEW → DECIDED)          — outcome DISMISSED(4), correction 0
+    //   closeNoCorrection (DECIDED → CLOSED_NO_CORRECTION) — terminal, no correction
+    await enqueueAnchor("under_review", idToUint256(caseDoc.caseNumber), caseDoc.payoutRef, decisionHash, 0, {
+      caseNumber: caseDoc.caseNumber,
+    });
+    await enqueueAnchor("decision", idToUint256(caseDoc.caseNumber), caseDoc.payoutRef, decisionHash, outcomeCode(body.outcome), {
       // Legacy outcomes {release,no_action} are no-correction → contract Outcome.DISMISSED (4)
       // with zero correction. (refund decisions anchor after on-chain confirmation.)
+      // entityId is the on-chain caseId (= idToUint256(caseNumber)) so recordDecision
+      // matches the case that openCase created; decisionId is the Mongo backfill key.
+      decisionId: decision._id.toString(),
+      caseNumber: caseDoc.caseNumber,
       outcome: 4,
       correctionAmountMicroUsdc: "0",
+    });
+    await enqueueAnchor("close_no_correction", idToUint256(caseDoc.caseNumber), caseDoc.payoutRef, decisionHash, 0, {
+      caseNumber: caseDoc.caseNumber,
     });
   }
 
@@ -703,10 +743,38 @@ export async function confirmRefundExecuted(
       decision.refundTxHash = refundTxHash;
       decision.executedAt = new Date().toISOString();
       await decision.save();
-      await enqueueAnchor("decision", decision._id.toString(), paymentId, decision.decisionHash, 1, {
-        // Refund confirmed on-chain → contract Outcome.PLATFORM_UPHELD (2), correction = refunded amount.
-        outcome: 2,
-        correctionAmountMicroUsdc: BigInt(Math.round(Number(payout.amount) * 1_000_000)).toString(),
+      // On-chain correction sequence for a confirmed refund (worker drains by
+      // _id order, so enqueue strictly in this order). The contract state machine:
+      //   markUnderReview       OPEN|RESPONDED → UNDER_REVIEW
+      //   recordDecision(2,...) UNDER_REVIEW → DECIDED   (outcome PLATFORM_UPHELD, correction = amount)
+      //   markCorrectionOutstanding DECIDED → CORRECTION_OUTSTANDING  (stores correctionHash)
+      //   recordCorrection      CORRECTION_OUTSTANDING → CLOSED_CORRECTED (re-supplies the SAME correctionHash + the Arc refund tx)
+      // markCorrectionOutstanding and recordCorrection MUST receive a byte-identical
+      // correctionHash (the contract enforces equality at FinneCaseRegistry.sol:338).
+      const caseId = idToUint256(caseDoc.caseNumber);
+      const correctionAmountMicroUsdc = BigInt(Math.round(Number(payout.amount) * 1_000_000)).toString();
+      const correctionHash = canonicalHash({
+        caseRef: caseDoc.caseNumber,
+        paymentId,
+        refundTxHash,
+        amountMicroUsdc: correctionAmountMicroUsdc,
+        recipient: payout.recipientWallet,
+        decidedAt: decision.decidedAt,
+      });
+      await enqueueAnchor("under_review", caseId, paymentId, decision.decisionHash, 0, {
+        caseNumber: caseDoc.caseNumber,
+      });
+      await enqueueAnchor("decision", caseId, paymentId, decision.decisionHash, 1, {
+        decisionId: decision._id.toString(),
+        caseNumber: caseDoc.caseNumber,
+        outcome: 2, // PLATFORM_UPHELD
+        correctionAmountMicroUsdc,
+      });
+      await enqueueAnchor("correction_outstanding", caseId, paymentId, correctionHash, 0, {
+        caseNumber: caseDoc.caseNumber,
+      });
+      await enqueueAnchor("correction", caseId, paymentId, correctionHash, 0, {
+        caseNumber: caseDoc.caseNumber,
         correctionTxHash: refundTxHash,
       });
     }
@@ -760,8 +828,21 @@ export async function confirmWithdrawn(paymentId: string, withdrawTxHash: string
 }
 
 /* ---- anchor job enqueue → drained by anchorWorker.ts against FinneCaseRegistry ---- */
+
+/**
+ * keccak256(utf8 id) → decimal uint256 string. This is the on-chain caseId /
+ * paymentId key the FinneCaseRegistry uses in its mappings. The worker passes
+ * `entityId` straight to `BigInt(...)`, so the id MUST be a numeric string by
+ * the time it lands on the job — feeding it the raw `"CASE-0142"` caseNumber or
+ * a Mongo ObjectId hex throws `Cannot convert ... to a BigInt` and dead-letters
+ * the anchor after 8 attempts. Mirrors `registrar/services.ts:idToUint256`.
+ */
+function idToUint256(id: string): string {
+  return BigInt(keccak256(stringToBytes(id))).toString();
+}
+
 async function enqueueAnchor(
-  kind: "receipt" | "case" | "decision",
+  kind: AnchorJobKind,
   entityId: string,
   paymentId: string,
   hash: string,

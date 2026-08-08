@@ -1,7 +1,7 @@
 import type { Log } from "viem";
 import { decodeAbiParameters, parseAbiParameter } from "viem";
 import { fetchChainLogs, decodeLog, readDebt } from "./chain/reads.ts";
-import { ChainEvent, Meta, Payout } from "./models/index.ts";
+import { ChainEvent, Meta, Payout, Case, Decision } from "./models/index.ts";
 import { confirmRefundExecuted, confirmWithdrawn, recordDetectedPayment } from "./services.ts";
 import { loadEnv } from "./env.ts";
 import { fromBaseUnitsDisplay } from "./usdc.ts";
@@ -219,8 +219,63 @@ export async function dispatch(
       }
       break;
     }
-    // Registry events (ReceiptAnchored, CaseOpened, DecisionAnchored) are record-only —
-    // the backend already knows its anchors; the indexer just observes them.
+    // ── FinneCaseRegistry reconciliation ────────────────────────────────────
+    // The anchor worker is the PRIMARY writer of registryAnchorTx, but if it
+    // dead-letters (or the operator key is briefly unset), the on-chain event
+    // still fires. These handlers read the event back and set registryAnchorTx
+    // idempotently — a safety net so the UI's "anchored on chain" chip fills in
+    // even when the worker didn't record it. Case-scoped events match by
+    // onChainCaseId (keccak256 of caseNumber), which the worker stamps on the
+    // Case doc; if that's missing we set it defensively. All handlers swallow
+    // (PRD §13.4 — never crash the indexer); the ChainEvent row is already saved.
+    case "CaseOpened": {
+      const onChainCaseId = String(args.caseId ?? args[0] ?? "");
+      if (!onChainCaseId) break;
+      await Case.updateOne(
+        { onChainCaseId, registryAnchorTx: null },
+        { $set: { registryAnchorTx: txHash } },
+      ).catch(() => {});
+      // Defensive: if the worker hasn't stamped onChainCaseId yet (anchor job
+      // still queued), stamp it now so subsequent events for this case resolve.
+      await Case.updateOne(
+        { onChainCaseId: null, registryAnchorTx: txHash },
+        { $set: { onChainCaseId } },
+      ).catch(() => {});
+      break;
+    }
+    case "HumanDecisionRecorded": {
+      const onChainCaseId = String(args.caseId ?? args[0] ?? "");
+      if (!onChainCaseId) break;
+      // Mark the case's anchor first, then its active decision (the indexer can't
+      // tell which Decision doc from the event alone, so we set the case's anchor
+      // and the decision that still lacks one for this case).
+      await Case.updateOne(
+        { onChainCaseId, registryAnchorTx: null },
+        { $set: { registryAnchorTx: txHash } },
+      ).catch(() => {});
+      const caseDoc = await Case.findOne({ onChainCaseId }).lean().catch(() => null);
+      if (caseDoc) {
+        await Decision.updateOne(
+          { caseRef: caseDoc.caseNumber, registryAnchorTx: null },
+          { $set: { registryAnchorTx: txHash } },
+        ).catch(() => {});
+      }
+      break;
+    }
+    case "ReceiptRegistered": {
+      // The receipt anchor already works (paymentId is numeric), so the worker is
+      // the reliable writer here. Reconcile only as a fallback: match by the tx
+      // hash against any payout whose anchor is still null AND whose anchor job
+      // pointed at this payment — there's no on-chain-id field on Payout, so we
+      // match by txHash which the worker recorded on the AnchorJob, not the doc.
+      // Cheapest correct action: no-op (ChainEvent is already persisted); the
+      // worker backfills this reliably. Kept as a documented case for clarity.
+      break;
+    }
+    // CaseClosed / CorrectionVerified / ResponseSubmitted / AnalysisAnchored /
+    // CaseUnderReview / CorrectionInstructionRecorded: no Mongo field today for
+    // on-chain close/outcome status, and these steps are off-chain by design
+    // (critical-only scope). Record-only via the ChainEvent insert above.
     default:
       break;
   }
