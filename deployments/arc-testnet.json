@@ -24,9 +24,10 @@
   },
   "roleHolders": {
     "registryAdmin": "0x8e5618d427335F865A1E693162417D991f3d8030",
-    "platform": "0xA6DB6ab71FFf9FA4AB6B1742F01eF7CeaD365b82",
-    "reviewer": "0x18a01318e1f99F2B8393980091Ec7992Cb80f500",
-    "agent": "0xf0D99646c32c6dF75774b17499Eefa853b6b6a09"
+    "platform": "0xf0D99646c32c6dF75774b17499Eefa853b6b6a09",
+    "reviewer": "0xf0D99646c32c6dF75774b17499Eefa853b6b6a09",
+    "agent": "0xf0D99646c32c6dF75774b17499Eefa853b6b6a09",
+    "_note": "Verified on-chain 2026-08-08: the operator (0xf0D99646...) holds PLATFORM_ROLE, REVIEWER_ROLE, and AGENT_ROLE (confirmed via hasRole). The deployer (0x8e56...) is DEFAULT_ADMIN. The construction-time platform/reviewer addresses were superseded by explicit grantRole calls; the values above reflect the live on-chain truth, not the constructor args."
   },
   "refundProtocol": {
     "address": "0x6EE86fEE126C94CD3bE0d2a5187F69368965f989",

@@ -63,7 +63,14 @@ async function tick(): Promise<void> {
 
     const client = await import("./chain/client.ts");
     const publicClient = client.getPublicClient();
-    const latestBlock = await publicClient.getBlockNumber().catch(() => 0n);
+    // If we can't reach the RPC for the current block, SKIP this tick entirely
+    // rather than falling back to 0n. The old .catch(() => 0n) made fromBlock = 0,
+    // so fetchChainLogs(0) tried to scan from genesis → the Arc RPC rejects that
+    // as "exceeds defined limit" → tick threw every cycle → the heartbeat never
+    // advanced → /status reported stale:true forever and no payout was ever
+    // detected. Bailing here keeps the last heartbeat's block and retries next tick.
+    const latestBlock = await publicClient.getBlockNumber().catch(() => null);
+    if (latestBlock === null) return;
 
     // Rolling window: scan the last LOOKBACK_BLOCKS for any contract activity.
     // No persistent cursor — the window is the safety net. The {txHash, logIndex}

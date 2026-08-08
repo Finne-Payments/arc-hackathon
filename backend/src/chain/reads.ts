@@ -104,8 +104,11 @@ export async function fetchChainLogsRange(fromBlock: bigint, toBlock: bigint | "
     if (rp) tasks.push(client.getLogs({ address: rp, fromBlock: start, toBlock: chunkEnd }));
     if (registry) tasks.push(client.getLogs({ address: registry, fromBlock: start, toBlock: chunkEnd }));
     if (tasks.length === 0) continue;
-    const results = await Promise.all(tasks);
-    out.push(...results.flat());
+    // allSettled (not Promise.all) so a rate-limit failure on ONE contract's
+    // getLogs doesn't discard the other's results and fail the whole tick. The
+    // indexer's rolling window re-scans next cycle, so a dropped chunk recovers.
+    const results = await Promise.allSettled(tasks);
+    for (const r of results) if (r.status === "fulfilled") out.push(...r.value);
   }
   return out.sort((a, b) => {
     const blockDiff = Number((a.blockNumber ?? 0n) - (b.blockNumber ?? 0n));
