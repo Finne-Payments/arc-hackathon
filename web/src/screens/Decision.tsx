@@ -2,6 +2,7 @@ import type { FinneActions, ViewModel } from "../useFinne";
 import type { ApiData } from "../useApi";
 import type { DecPhase } from "../types";
 import { BackLink, Card, PrimaryButton, SecondaryButton, TechChip, Spinner } from "../components/primitives";
+import { FramePanel } from "../components/FramePanel";
 import { explorerTx, shortHex } from "../mappers";
 import { api } from "../api";
 import { detectWallet, connectWallet, isUserRejection } from "../wallet";
@@ -41,6 +42,25 @@ export function Decision({ v, actions, apiData }: { v: ViewModel; actions: Finne
     }
   })();
 
+  // The agent decision frame (turning questions / requirements / unresolved),
+  // surfaced beside the reason box so the arbiter can accept lines into their
+  // reasons or edit/discard them (FIN-125/127). Ported from v1.
+  const frame = c?.frame ?? null;
+  const onAcceptLine = (text: string) => {
+    // Append the accepted line into the reason box (editable), separated by a
+    // blank line if reasons already exist.
+    const current = v.decReason.trim();
+    v.onReason(current ? `${current}\n\n${text}` : text);
+    if (caseNumber && frame) {
+      void api.logFrameAction(caseNumber, { callId: frame.frameId, action: "accept", originalText: text, provenance: "model" }).catch(() => {});
+    }
+  };
+  const onEditLine = (originalText: string, editedText: string) => {
+    if (caseNumber && frame) {
+      void api.logFrameAction(caseNumber, { callId: frame.frameId, action: "edit", originalText, editedText, provenance: "model" }).catch(() => {});
+    }
+  };
+
   return (
     <div className="rise-in" style={{ maxWidth: 820, margin: 0 }}>
       <BackLink label={caseNumber} onClick={() => actions.go("case")} />
@@ -69,17 +89,23 @@ export function Decision({ v, actions, apiData }: { v: ViewModel; actions: Finne
         arbiterName={arbiterName} arbiterWallet={arbiterWallet}
         previewText={previewText}
         txHash={v.decTxHash}
+        frame={frame}
+        onAcceptLine={onAcceptLine}
+        onEditLine={onEditLine}
       />
     </div>
   );
 }
 
-function PhaseRouter({ phase, v, actions, refundTo, caseNumber, explorerBase, contested, total, recipientName, platformName, arbiterName, arbiterWallet, previewText, txHash }: {
+function PhaseRouter({ phase, v, actions, refundTo, caseNumber, explorerBase, contested, total, recipientName, platformName, arbiterName, arbiterWallet, previewText, txHash, frame, onAcceptLine, onEditLine }: {
   phase: DecPhase; v: ViewModel; actions: FinneActions; refundTo: string; caseNumber: string; explorerBase: string | null;
   contested: string; total: string; recipientName: string; platformName: string; arbiterName: string; arbiterWallet: string; previewText: string;
   txHash: string | null;
+  frame: import("../api").AgentFrame | null;
+  onAcceptLine: (text: string) => void;
+  onEditLine: (originalText: string, editedText: string) => void;
 }) {
-  if (phase === "idle") return <IdlePhase v={v} refundTo={refundTo} caseNumber={caseNumber} actions={actions} contested={contested} total={total} recipientName={recipientName} platformName={platformName} previewText={previewText} />;
+  if (phase === "idle") return <IdlePhase v={v} refundTo={refundTo} caseNumber={caseNumber} actions={actions} contested={contested} total={total} recipientName={recipientName} platformName={platformName} previewText={previewText} frame={frame} onAcceptLine={onAcceptLine} onEditLine={onEditLine} />;
   if (phase === "awaiting") return <AwaitingPhase onCancel={v.cancelSignature} contested={contested} refundTo={refundTo} />;
   if (phase === "sig_rejected") return <SigRejectedPhase onRetry={v.retrySign} onCancel={v.cancelSignature} />;
   if (phase === "pending") return <PendingPhase onCopy={actions.copyTech} refundTo={refundTo} explorerBase={explorerBase} txHash={txHash} />;
@@ -88,9 +114,12 @@ function PhaseRouter({ phase, v, actions, refundTo, caseNumber, explorerBase, co
   return <RecordedPhase onBack={() => actions.go("case")} arbiterName={arbiterName} arbiterWallet={arbiterWallet} />;
 }
 
-function IdlePhase({ v, refundTo, caseNumber, actions, contested, total, recipientName, platformName, previewText }: {
+function IdlePhase({ v, refundTo, caseNumber, actions, contested, total, recipientName, platformName, previewText, frame, onAcceptLine, onEditLine }: {
   v: ViewModel; refundTo: string; caseNumber: string; actions: FinneActions;
   contested: string; total: string; recipientName: string; platformName: string; previewText: string;
+  frame: import("../api").AgentFrame | null;
+  onAcceptLine: (text: string) => void;
+  onEditLine: (originalText: string, editedText: string) => void;
 }) {
   return (
     <Card shadow="var(--shadow-xs)" padding="24px">
@@ -125,6 +154,14 @@ function IdlePhase({ v, refundTo, caseNumber, actions, contested, total, recipie
           )}
         </div>
       )}
+
+      {/* Decision frame (agent) — accept/edit/discard lines into the reason box
+          (FIN-125/127). Ported from v1. The frame only renders when present or
+          when the case has been framed; it never disrupts the wallet-signing
+          flow below. */}
+      <div style={{ marginBottom: 18 }}>
+        <FramePanel frame={frame} onAcceptLine={onAcceptLine} onEditLine={onEditLine} />
+      </div>
 
         <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
         <button

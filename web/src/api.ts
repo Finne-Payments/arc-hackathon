@@ -424,6 +424,11 @@ export const api = {
   decide: (caseNumber: string, body: { outcome: "refund" | "release" | "no_action"; reason: string }) =>
     request<{ decision: DecisionRow; unsignedTx: UnsignedTx | null }>(`/cases/${caseNumber}/decisions`, { method: "POST", body: JSON.stringify(body) }),
 
+  /** Log a per-line reviewer action on the agent decision frame (FIN-127).
+   *  Mirrors the v1 frame/actions route but keyed on caseNumber + legacy auth. */
+  logFrameAction: (caseNumber: string, body: { callId: string; action: "accept" | "edit" | "discard"; lineId?: string; originalText?: string; editedText?: string; provenance?: string }) =>
+    request<void>(`/cases/${caseNumber}/frame/actions`, { method: "POST", body: JSON.stringify(body) }),
+
   timeline: (caseNumber: string) =>
     request<{ events: { time: string; type: string; label: string; txHash?: string }[] }>(`/cases/${caseNumber}/timeline`),
 

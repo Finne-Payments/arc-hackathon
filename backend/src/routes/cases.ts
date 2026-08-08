@@ -21,6 +21,7 @@ import { scopeFor } from "../scope.ts";
 import type { DecisionOutcome } from "../statusVocabulary.ts";
 import { HttpError } from "../errors.ts";
 import { getLatestFrame } from "../agent/frame-assembly.ts";
+import { recordHumanAction } from "../agent/model-client.ts";
 import { getFrameStatus } from "../v1/frameStatus.ts";
 import { assembleForCaseByNumber } from "../v1/frameOrchestrator.ts";
 
@@ -343,6 +344,42 @@ caseRoutes.post("/cases/:id/decisions", requirePermission("case:decide"), async 
       reason: String(reason ?? ""),
     });
     res.status(201).json({ decision, unsignedTx });
+  } catch (e) {
+    next(e);
+  }
+});
+
+/**
+ * POST /cases/:id/frame/actions — log a per-line reviewer action on the agent
+ * decision frame (FIN-127). Mirrors the v1 /v1/cases/:caseId/frame/actions route
+ * but keyed on caseNumber + gated by the legacy case:decide permission (the
+ * arbiter, who accepts/edits/discards frame lines while forming a decision).
+ * recordHumanAction keys on callId, so the path param is contextual only.
+ *
+ * Accepts { callId, action: "accept"|"edit"|"discard", lineId?, originalText?,
+ * editedText?, provenance? }. For "edit", the edited text is stored ALONGSIDE
+ * the original in the corpus (the same shared store v1 uses).
+ */
+caseRoutes.post("/cases/:id/frame/actions", requirePermission("case:decide"), async (req, res, next) => {
+  try {
+    const body = req.body as {
+      callId?: string;
+      action?: string;
+      lineId?: string;
+      originalText?: string;
+      editedText?: string;
+      provenance?: string;
+    };
+    if (!body.callId || !body.action) throw new HttpError(400, "callId and action required.");
+    const valid = ["accept", "edit", "discard"];
+    if (!valid.includes(body.action)) throw new HttpError(400, `action must be one of: ${valid.join(", ")}`);
+    await recordHumanAction(body.callId, body.action, {
+      lineId: body.lineId,
+      originalText: body.originalText,
+      editedText: body.editedText,
+      provenance: body.provenance as "template" | "computed" | "model" | undefined,
+    });
+    res.status(204).end();
   } catch (e) {
     next(e);
   }
