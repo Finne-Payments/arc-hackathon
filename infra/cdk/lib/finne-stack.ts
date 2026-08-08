@@ -262,10 +262,10 @@ export class FinneStack extends cdk.Stack {
     // target for all paths. We deliberately do NOT add a second path-based
     // addTargets() here: doing so creates a *second* target group that inherits
     // the default health-check path of `GET /`, which returns 404 (the backend
-    // has no root handler — only /health/live, /v1/*, etc.). That second TG's
-    // 404 verdict marks the task unhealthy, killing it in a loop and hanging
-    // CloudFormation for up to 3 hours. One TG with the correct health check is
-    // both necessary and sufficient.
+    // has no JSON root handler — it serves /health/live, /api/*, and the SPA at
+    // root). That second TG's 404 verdict marks the task unhealthy, killing it
+    // in a loop and hanging CloudFormation for up to 3 hours. One TG with the
+    // correct health check is both necessary and sufficient.
     alb.addListener("BackendListener", {
       port: 80,
       protocol: elbv2.ApplicationProtocol.HTTP,
