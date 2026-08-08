@@ -22,8 +22,18 @@ const env = { account, region };
 const ECR_URI = `${account}.dkr.ecr.${region}.amazonaws.com/finne`;
 
 // Pre-built ECR images (CI pushes :backend and :web tags before deploy).
-const backendImage = ecs.ContainerImage.fromRegistry(`${ECR_URI}:backend`);
-const webImage = ecs.ContainerImage.fromRegistry(`${ECR_URI}:web`);
+//
+// IMAGE_TAG: the immutable per-build tag (the git SHA) that CI also pushes.
+// Tagging the task definition by SHA — not the mutable :backend/:web tag — is
+// what actually makes a deploy take effect: a mutable tag yields an unchanged
+// task definition, so CloudFormation creates no new revision and ECS re-pulls
+// a cached digest (the live bundle stayed stale across "successful" deploys
+// for exactly this reason). With the SHA tag every push is a new image URI,
+// forcing a new task definition revision and a real fresh pull. Defaults to
+// the mutable tags for local synth where no SHA is available.
+const imageTag = process.env.IMAGE_TAG;
+const backendImage = ecs.ContainerImage.fromRegistry(`${ECR_URI}:${imageTag ? `backend-${imageTag}` : "backend"}`);
+const webImage = ecs.ContainerImage.fromRegistry(`${ECR_URI}:${imageTag ? `web-${imageTag}` : "web"}`);
 
 // The self-hosted model endpoint (private DNS from the model stack). The
 // hackathon deployment uses Amazon Bedrock instead (MODEL_PROVIDER=bedrock in

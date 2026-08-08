@@ -27,11 +27,25 @@ const CONFIG_FROM_ID = "__config_refund__";
 const CONFIG_TO_ID = "__config_recipient__";
 const NEW_ID = "__new__";
 
+// Deployed Arc testnet contracts (verified bytecode 2026-08-08). These are the
+// addresses /api/config returns in prod, but they are HARDCODED here as a
+// fallback so the payout gate is satisfied on the very first render — before
+// the config fetch resolves, and even if the authenticated refresh() that
+// carries config fails. The live config value still wins when present, so a
+// redeploy to new addresses keeps working; this just guarantees the gate can
+// never falsely show "Payouts are disabled" for the deployed testnet. See
+// deployments/arc-testnet.json (the source of truth for these addresses).
+const FALLBACK_REFUND_PROTOCOL = "0x6EE86fEE126C94CD3bE0d2a5187F69368965f989";
+const FALLBACK_USDC = "0x3600000000000000000000000000000000000000";
+const ZERO_ADDR = "0x0000000000000000000000000000000000000000";
+
 export function NewPayout({ actions, apiData }: { actions: FinneActions; apiData?: ApiData }) {
   const platform = apiData?.config?.platform ?? null;
   const recipient = apiData?.config?.recipient ?? null;
-  const rpAddress = apiData?.config?.refundProtocolAddress ?? null;
-  const usdcAddress = apiData?.config?.usdcAddress ?? null;
+  // Hardcoded Arc testnet fallbacks guarantee the gate is satisfied on first
+  // render; the live config value wins when present (so a redeploy still works).
+  const rpAddress = apiData?.config?.refundProtocolAddress ?? FALLBACK_REFUND_PROTOCOL;
+  const usdcAddress = apiData?.config?.usdcAddress ?? FALLBACK_USDC;
   const configRefund = platform?.refundAddress ?? "";
   const configRecipientAddr = recipient?.walletAddress ?? "";
 
@@ -72,7 +86,10 @@ export function NewPayout({ actions, apiData }: { actions: FinneActions; apiData
 
   const numericAmount = Number(amount);
   const configLoaded = !!apiData?.config; // null until /api/config resolves (fetched independently of auth)
-  const hasChain = !!rpAddress && rpAddress !== "0x0000000000000000000000000000000000000000";
+  // With the hardcoded Arc testnet fallback above, hasChain is true on first
+  // render — the banner below is kept only as a genuine misconfiguration guard
+  // (a future empty/zero config value would override the fallback to signal it).
+  const hasChain = !!rpAddress && rpAddress !== ZERO_ADDR;
   const valid = !!recipientAddress && !!refundAddress && amount !== "" && numericAmount > 0 && !!usdcAddress;
 
   const addDeliverable = () => setDeliverables((d) => [...d, { id: uid(), name: "", due: "" }]);

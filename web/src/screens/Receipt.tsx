@@ -8,6 +8,12 @@ import { explorerAddr, explorerTx, receiptStatusView, shortHex } from "../mapper
 import { api } from "../api";
 import { connectWallet, signWithdraw, isUserRejection } from "../wallet";
 
+// Deployed Arc testnet RefundProtocol (verified bytecode 2026-08-08). Hardcoded
+// fallback so the withdraw/refund path works on first render even before
+// /api/config resolves; the live config value wins when present. Mirrors the
+// same fallback in NewPayout.tsx. See deployments/arc-testnet.json.
+const FALLBACK_REFUND_PROTOCOL = "0x6EE86fEE126C94CD3bE0d2a5187F69368965f989";
+
 function ChainRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div>
@@ -37,7 +43,7 @@ export function Receipt({ v, actions, apiData }: { v: ViewModel; actions: FinneA
   const explorerBase = cfg?.explorerUrl ?? null;
   const chainName = cfg?.chainName ?? "Arc";
   const registryAddress = cfg?.caseRegistryAddress ?? null;
-  const refundProtocolAddress = cfg?.refundProtocolAddress ?? null;
+  const refundProtocolAddress = cfg?.refundProtocolAddress ?? FALLBACK_REFUND_PROTOCOL;
   const policySummary = cfg?.platform?.policy?.summary ?? "Money unlocks after the lockup period unless a dispute is open.";
 
   // Receipt status is derived from the payout's real status, not the demo
@@ -63,8 +69,8 @@ export function Receipt({ v, actions, apiData }: { v: ViewModel; actions: FinneA
     setWithdrawing(true);
     setWithdrawMsg("Opening your wallet…");
     try {
-      const cfg = await api.config();
-      const rpAddr = cfg.refundProtocolAddress ?? "";
+      const cfg = await api.config().catch(() => null);
+      const rpAddr = cfg?.refundProtocolAddress ?? FALLBACK_REFUND_PROTOCOL;
       if (!rpAddr) throw new Error("RefundProtocol address not configured.");
       setWithdrawMsg("Confirm the withdrawal in your wallet…");
       await connectWallet();
