@@ -13,7 +13,7 @@ import type {
 } from "./types";
 import { ROLE_ALLOWED, ROLE_HOME } from "./domain/access";
 import { api } from "./api";
-import { signRefund, isUserRejection } from "./wallet";
+import { signRefund, awaitRefundReceipt, isUserRejection } from "./wallet";
 
 /**
  * useFinne is the single source of truth for the prototype.
@@ -72,6 +72,9 @@ export interface FinneState {
   decOption: DecOption;
   decReason: string;
   decPhase: DecPhase;
+  /** The on-chain tx hash of the refund once the wallet has broadcast it, shown
+   *  in the pending phase so the arbiter can watch the real transaction. */
+  decTxHash: string | null;
 
   deadline: number;
   now: number;
@@ -105,6 +108,7 @@ export function useFinne(initialRole: Role = "arbiter") {
     decOption: null,
     decReason: "",
     decPhase: "idle",
+    decTxHash: null,
     deadline: Date.now() + SIX_HOURS_ELEVEN_MIN,
     now: Date.now(),
   });
@@ -292,6 +296,7 @@ export function useFinne(initialRole: Role = "arbiter") {
       },
       retrySign: startSim,
       decPhase: state.decPhase,
+      decTxHash: state.decTxHash,
 
       reqSent,
       reqNotSent: !state.reqOpen,
@@ -455,16 +460,31 @@ export function useFinne(initialRole: Role = "arbiter") {
        * Sign a refund with the reviewer's browser wallet (D1). Falls back to the
        * labeled simulation (D11) when no wallet is detected. The Decision screen
        * calls this after receiving the unsigned tx from the API.
+       *
+       * The tx hash is broadcast first (pending phase), then we WAIT for the real
+       * on-chain receipt before declaring the refund confirmed — never a fake
+       * timer. On confirm we bump caseVersion + payoutVersion so App.tsx re-fetches
+       * the case/receipt on an escalating schedule until the indexer writes the
+       * Refund → refundTxHash and the case moves to EXECUTED/CLOSED (or
+       * DEBT_OUTSTANDING under the D3 debt path). Without these bumps the case
+       * room + receipt stayed stale (still DISPUTED, no refundTxHash) until a
+       * manual refresh — the flow looked broken even though the chain had moved.
        */
       signRefundWithWallet: async (unsignedTx: { to: string; abi: unknown[]; functionName: string; args: (string | number)[] }) => {
         try {
           patch({ decPhase: "awaiting" });
           const txHash = await signRefund(unsignedTx as never);
-          patch({ decPhase: "pending" });
-          // The indexer independently confirms; the UI forwards after a short delay.
-          // In a real deployment, the app would poll for indexer confirmation.
-          setTimer(() => patch({ decPhase: "confirmed" }), 3000);
-          setTimer(() => go("final"), 4600);
+          patch({ decPhase: "pending", decTxHash: txHash });
+          // Genuinely confirm: wait for the tx to be mined on Arc. Throws on
+          // revert/timeout → caught below → failed phase. This replaces the old
+          // hardcoded 3s → confirmed timer that lied about confirmation.
+          await awaitRefundReceipt(txHash);
+          patch({ decPhase: "confirmed" });
+          // The chain has moved, but the indexer writes refundTxHash only on its
+          // next ~30s tick. Bump both versions so App.tsx re-fetches on an
+          // escalating schedule until the case/receipt reflect the real state.
+          patch({ caseVersion: state.caseVersion + 1, payoutVersion: state.payoutVersion + 1 });
+          setTimer(() => go("final"), 1600);
           return txHash;
         } catch (e) {
           if (isUserRejection(e)) {

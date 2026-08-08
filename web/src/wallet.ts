@@ -151,6 +151,40 @@ export async function signRefund(unsignedTx: UnsignedTx): Promise<Hash> {
 }
 
 /**
+ * Wait for a refund (refundByArbiter) transaction to be mined and confirmed on
+ * Arc. Returns the receipt on success; throws on revert or on a timeout so the
+ * caller can surface the `failed` phase instead of faking confirmation.
+ *
+ * The block the tx is in must be known to the public reader; viem polls the
+ * node until the receipt appears. Arc testnet blocks are ~510s, so allow a
+ * generous timeout. `confirmations: 1` means "included in one block" — we do
+ * not require finality-depth for the demo beat (the indexer independently
+ * confirms and writes the refundTxHash).
+ */
+export async function awaitRefundReceipt(hash: Hash): Promise<void> {
+  const publicClient = getPublicReader();
+  try {
+    const receipt = await publicClient.waitForTransactionReceipt({
+      hash,
+      confirmations: 1,
+      timeout: 120_000,
+    });
+    if (receipt.status === "reverted") {
+      throw new Error("The refund transaction reverted on chain — no money moved.");
+    }
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    // Re-surface user rejections as-is so the caller can classify them; any
+    // other failure (timeout, RPC error, revert) is a "didn't go through".
+    if (isUserRejection(e)) throw e;
+    if (/timed out|timeout/i.test(msg)) {
+      throw new Error("Timed out waiting for the refund to confirm on Arc. It may still land — check the explorer.");
+    }
+    throw e;
+  }
+}
+
+/**
  * Sign a withdrawal: the recipient's wallet calls withdraw([paymentId]).
  * Returns the transaction hash on success.
  */

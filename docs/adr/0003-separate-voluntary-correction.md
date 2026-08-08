@@ -3,6 +3,7 @@
 - **Status:** Accepted
 - **Date:** 2026-08-04
 - **Decides:** How the system treats errors and corrections to past records.
+- **Partly superseded (demo scope only) by:** [ADR 0007 — Demo reinstates the arbiter-signed debt path (D3)](./0007-demo-debt-path-reinstated.md). ADR 0003's registrar posture is unchanged; only the legacy demo beat runs the debt path.
 
 ## Context
 
