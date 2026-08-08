@@ -25,6 +25,21 @@ publicRoutes.get("/healthz", (_req, res) => {
 });
 
 /**
+ * /health/live + /health/ready — the liveness/readiness probes the ECS task
+ * definition + ALB target group use (CDK healthCheck path "/health/live"). These
+ * used to live on the v1 sub-app; after the consolidation onto the single escrow
+ * App they live here. Mounted at root (no /api prefix) so the container probe
+ * `curl -f http://localhost:4000/health/live` hits a genuine JSON response, not
+ * the SPA catch-all. Liveness never touches the DB; readiness is the same shape.
+ */
+publicRoutes.get("/health/live", (_req, res) => {
+  res.json({ ok: true });
+});
+publicRoutes.get("/health/ready", (_req, res) => {
+  res.json({ ok: true });
+});
+
+/**
  * @openapi
  * /config:
  *   get:
