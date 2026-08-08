@@ -2,7 +2,7 @@ import type { FinneActions, ViewModel } from "../useFinne";
 import type { ApiData } from "../useApi";
 import type { DecPhase } from "../types";
 import { BackLink, Card, PrimaryButton, SecondaryButton, TechChip, Spinner } from "../components/primitives";
-import { explorerAddr, shortHex } from "../mappers";
+import { explorerTx, shortHex } from "../mappers";
 import { api } from "../api";
 import { detectWallet, connectWallet, isUserRejection } from "../wallet";
 
@@ -68,19 +68,21 @@ export function Decision({ v, actions, apiData }: { v: ViewModel; actions: Finne
         contested={contested} total={total} recipientName={recipientName} platformName={platformName}
         arbiterName={arbiterName} arbiterWallet={arbiterWallet}
         previewText={previewText}
+        txHash={v.decTxHash}
       />
     </div>
   );
 }
 
-function PhaseRouter({ phase, v, actions, refundTo, caseNumber, explorerBase, contested, total, recipientName, platformName, arbiterName, arbiterWallet, previewText }: {
+function PhaseRouter({ phase, v, actions, refundTo, caseNumber, explorerBase, contested, total, recipientName, platformName, arbiterName, arbiterWallet, previewText, txHash }: {
   phase: DecPhase; v: ViewModel; actions: FinneActions; refundTo: string; caseNumber: string; explorerBase: string | null;
   contested: string; total: string; recipientName: string; platformName: string; arbiterName: string; arbiterWallet: string; previewText: string;
+  txHash: string | null;
 }) {
   if (phase === "idle") return <IdlePhase v={v} refundTo={refundTo} caseNumber={caseNumber} actions={actions} contested={contested} total={total} recipientName={recipientName} platformName={platformName} previewText={previewText} />;
   if (phase === "awaiting") return <AwaitingPhase onCancel={v.cancelSignature} contested={contested} refundTo={refundTo} />;
   if (phase === "sig_rejected") return <SigRejectedPhase onRetry={v.retrySign} onCancel={v.cancelSignature} />;
-  if (phase === "pending") return <PendingPhase onCopy={actions.copyTech} refundTo={refundTo} explorerBase={explorerBase} />;
+  if (phase === "pending") return <PendingPhase onCopy={actions.copyTech} refundTo={refundTo} explorerBase={explorerBase} txHash={txHash} />;
   if (phase === "failed") return <FailedPhase onRetry={v.retrySign} onCancel={v.cancelSignature} contested={contested} />;
   if (phase === "confirmed") return <ConfirmedPhase arbiterName={arbiterName} arbiterWallet={arbiterWallet} />;
   return <RecordedPhase onBack={() => actions.go("case")} arbiterName={arbiterName} arbiterWallet={arbiterWallet} />;
@@ -213,16 +215,21 @@ function SigRejectedPhase({ onRetry, onCancel }: { onRetry: () => void; onCancel
   );
 }
 
-function PendingPhase({ onCopy, refundTo, explorerBase }: { onCopy: (v: string) => void; refundTo: string; explorerBase: string | null }) {
+function PendingPhase({ onCopy, refundTo, explorerBase, txHash }: { onCopy: (v: string) => void; refundTo: string; explorerBase: string | null; txHash: string | null }) {
   return (
     <Card shadow="var(--shadow-md)" padding="36px" style={{ textAlign: "center" }}>
       <div style={{ display: "flex", justifyContent: "center", marginBottom: 18 }}>
         <Spinner size={44} color="var(--brand-600)" />
       </div>
-      <div style={{ fontFamily: "var(--font-sans)", fontWeight: 700, fontSize: 17, marginBottom: 6 }}>Signed · watching for confirmation on Arc</div>
-      <div style={{ fontSize: 13, color: "var(--color-fg-muted)", maxWidth: 400, margin: "0 auto", lineHeight: 1.6 }}>
-        Transaction submitted: <TechChip short={shortHex(refundTo)} full={refundTo} onCopy={onCopy} explorer={explorerAddr(explorerBase, refundTo)} />
+      <div style={{ fontFamily: "var(--font-sans)", fontWeight: 700, fontSize: 17, marginBottom: 6 }}>Signed · waiting for the block to confirm</div>
+      <div style={{ fontSize: 13, color: "var(--color-fg-muted)", maxWidth: 420, margin: "0 auto 14px", lineHeight: 1.6 }}>
+        Your refund to <span style={{ fontFamily: "var(--font-mono)", fontSize: 12 }}>{shortHex(refundTo)}</span> is mined on the next Arc block. This page advances the moment the chain confirms — no timer.
       </div>
+      {txHash && (
+        <div style={{ fontSize: 13, color: "var(--color-fg-muted)", maxWidth: 420, margin: "0 auto", lineHeight: 1.6 }}>
+          Transaction: <TechChip short={shortHex(txHash)} full={txHash} onCopy={onCopy} explorer={explorerTx(explorerBase, txHash)} />
+        </div>
+      )}
     </Card>
   );
 }
