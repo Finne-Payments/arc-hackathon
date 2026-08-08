@@ -85,6 +85,9 @@ export function useApi(initialRole: Role): { data: ApiData; actions: ApiActions 
       ]);
       let cfg = dataRef.current.config;
       if (!cfg) {
+        // Backstop: the mount effect (loadConfig) already fetches public config
+        // independently of auth, but if it lost the race to this refresh, fetch
+        // here so the New Payout gate never reads a stale null.
         try {
           cfg = await api.config();
         } catch {
@@ -115,11 +118,33 @@ export function useApi(initialRole: Role): { data: ApiData; actions: ApiActions 
   const dataRef = useRef(data);
   dataRef.current = data;
 
+  // Public chain config (contract addresses, chainId, policy) needs no auth, so
+  // fetch it on mount INDEPENDENTLY of refresh(). Previously config was fetched
+  // only inside refresh() — but refresh() runs the authenticated reads
+  // (status/payouts/cases) in one Promise.all and only reaches the config fetch
+  // if all of those succeed. If the session is absent/expired or any authed read
+  // fails, refresh() threw early and config stayed null forever — which made the
+  // New Payout screen show "RefundProtocol isn't deployed" even though the
+  // contract is live and /api/config returns its address. Fetching config here
+  // (and still as a backstop inside refresh) guarantees the gate always has the
+  // real address. Idempotent — skipped once config is present.
+  const loadConfig = useCallback(async () => {
+    if (dataRef.current.config) return;
+    try {
+      const cfg = await api.config();
+      setData((d) => (d.config ? d : { ...d, config: cfg }));
+    } catch {
+      // Leave config null — the gate will show the "loading/absent" state, not a
+      // false "not deployed". A later refresh() retries via its own backstop.
+    }
+  }, []);
+
   // Initial load only — no interval polling. refresh() is called on demand by
   // the app when the screen changes or the user takes an action.
   useEffect(() => {
     applyRole(initialRole);
     void refresh();
+    void loadConfig();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
