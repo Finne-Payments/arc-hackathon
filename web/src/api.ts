@@ -234,10 +234,39 @@ export interface AgentFrameStatus {
   error: string | null;
 }
 
+/** A governing-law note (FIN-112) — lives on the clauseNumber 0 row's lawLines[]. */
+export interface LawLineRow {
+  note: string;
+  text: string;
+  jurisdiction: string;
+  author: string;
+  reviewRef: string;
+  version: number;
+  sourceRefs: { cite: string; url: string }[];
+}
+
+/** A policy-clause row from the seeded pack (FIN-110/115). clauseNumber 0 is the
+ *  governing-law row carrying lawLines[] + disclaimer; 4/7/9 are numbered clauses. */
+export interface PolicyClauseRow {
+  clauseId: string;
+  packRef?: string;
+  clauseNumber: number;
+  text: string;
+  parameters: { hours?: number; days?: number };
+  lawLines?: LawLineRow[];
+  disclaimer?: string;
+  jurisdiction?: string;
+  author?: string;
+  reviewRef?: string;
+  version?: number;
+}
+
 export interface SharedCase {
   payout: PayoutRow;
   workOrder: WorkOrderRow | null;
   case: CaseRow;
+  /** Policy clauses in force + the governing-law notes (clauseNumber 0). */
+  clauses: PolicyClauseRow[];
   responses: { author: string; authorName: string; text: string; submittedAt: string }[];
   evidence: EvidenceRow[];
   brief: { latest: BriefRow; versions: number } | null;

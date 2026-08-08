@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import type { FinneActions, ViewModel } from "../useFinne";
 import type { ApiData } from "../useApi";
-import type { PayoutRow, CaseRow, AgentFrame, EvidenceRow, EvidenceAnnotation } from "../api";
+import type { PayoutRow, CaseRow, AgentFrame, EvidenceRow, EvidenceAnnotation, PolicyClauseRow } from "../api";
 import { api } from "../api";
 import {
   BackLink,
@@ -77,6 +77,10 @@ export function CaseRoom({ v, actions, apiData }: { v: ViewModel; actions: Finne
   // agents run. frameStatus is non-null while they're running.
   const frame = c?.frame ?? null;
   const frameStatus = c?.frameStatus ?? null;
+  // Policy pack + governing-law notes (ported from v1 CaseRoom, FIN-115). The
+  // clauseNumber 0 row(s) carry the law library; 4/7/9 are numbered clauses.
+  const clauses = c?.clauses ?? [];
+  const [highlightedClause, setHighlightedClause] = useState<number | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
   const [timeline, setTimeline] = useState<TimelineEntry[]>([]);
@@ -554,6 +558,96 @@ export function CaseRoom({ v, actions, apiData }: { v: ViewModel; actions: Finne
           </div>
         )}
       </Card>
+
+      {/* Policy pack — the standard the case is judged under (Addendum §F / FIN-115).
+          Ported from the v1 CaseRoom. Authored offline, hashed like evidence,
+          cited by clause number. The governing-law notes (clauseNumber 0) carry
+          attribution + a not-legal-advice disclaimer. Clause citations are
+          clickable and open the clause text inline. */}
+      {clauses.length > 0 && (
+        <Card shadow="var(--shadow-xs)" padding="22px 24px" style={{ marginBottom: 16 }}>
+          <Eyebrow>Policy pack — the standard</Eyebrow>
+          {clauses.filter((cl) => cl.clauseNumber > 0).map((cl: PolicyClauseRow) => {
+            const highlighted = highlightedClause === cl.clauseNumber;
+            return (
+              <div
+                key={cl.clauseId}
+                id={`clause-${cl.clauseNumber}`}
+                style={{
+                  padding: "8px 10px",
+                  marginBottom: 4,
+                  borderRadius: "var(--radius-sm)",
+                  background: highlighted ? "var(--brand-50)" : "transparent",
+                  border: highlighted ? "1px solid var(--brand-border)" : "1px solid transparent",
+                  transition: "background 0.15s, border 0.15s",
+                }}
+              >
+                <button
+                  onClick={() => setHighlightedClause(highlighted ? null : cl.clauseNumber)}
+                  style={{ display: "flex", gap: 8, alignItems: "baseline", background: "none", border: "none", padding: 0, cursor: "pointer", textAlign: "left", width: "100%" }}
+                >
+                  <span style={{ fontSize: 11, fontFamily: "var(--font-mono)", fontWeight: 700, color: "var(--brand-600)", flexShrink: 0, textDecoration: "underline", textDecorationStyle: "dotted" }}>Clause {cl.clauseNumber}</span>
+                  <span style={{ fontSize: 12, color: "var(--color-fg)", lineHeight: 1.45 }}>{cl.text}</span>
+                </button>
+                {highlighted && cl.parameters && (cl.parameters.hours || cl.parameters.days) && (
+                  <div style={{ fontSize: 10, color: "var(--color-fg-subtle)", marginTop: 4, fontFamily: "var(--font-mono)" }}>
+                    {cl.parameters.hours ? `window: ${cl.parameters.hours}h` : ""}{cl.parameters.days ? `${cl.parameters.hours ? " · " : ""}period: ${cl.parameters.days}d` : ""}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+          {/* Governing-law pointers — the law library (FIN-112). Two shapes, both
+              keyed on clauseNumber === 0:
+              (a) one row carrying a lawLines[] array — each note renders its line,
+                  attribution, reviewRef, and a "see" pointer per sourceRef.
+              (b) a family of clauseNumber===0 rows, each a bare pointer. */}
+          {(() => {
+            const lawRows = clauses.filter((cl) => cl.clauseNumber === 0);
+            if (lawRows.length === 0) return null;
+            const first = lawRows[0];
+            const jurisdiction = first.jurisdiction;
+            const disclaimer = first.disclaimer;
+            const notes = first.lawLines && first.lawLines.length > 0
+              ? first.lawLines.map((l) => ({ key: l.note, text: l.text, author: l.author, reviewRef: l.reviewRef, sourceRefs: l.sourceRefs }))
+              : lawRows.map((cl, i) => ({ key: cl.clauseId, text: cl.text, author: cl.author ?? "", reviewRef: cl.reviewRef ?? "", sourceRefs: [] as { cite: string; url: string }[], last: i === lawRows.length - 1 }));
+            return (
+              <div style={{ padding: "10px 0 4px", marginTop: 6, borderTop: "1px solid var(--color-border-subtle)" }}>
+                <div style={{ fontFamily: "var(--font-mono)", fontWeight: 600, fontStyle: "normal", color: "var(--color-fg-subtle)", fontSize: 10, marginBottom: 6 }}>
+                  Governing law{jurisdiction ? ` · ${jurisdiction}` : ""}
+                </div>
+                {notes.map((l, i) => (
+                  <div key={l.key} style={{ fontSize: 11, color: "var(--color-fg-muted)", lineHeight: 1.5, fontStyle: "italic", marginBottom: i < notes.length - 1 ? 8 : 0 }}>
+                    {l.text}
+                    {(l.author || l.reviewRef || l.sourceRefs.length > 0) && (
+                      <div style={{ fontSize: 10, color: "var(--color-fg-subtle)", marginTop: 4, fontStyle: "normal" }}>
+                        {l.author && <span>{l.author}</span>}
+                        {l.author && l.reviewRef && <span> · </span>}
+                        {l.reviewRef && <span>{l.reviewRef}</span>}
+                        {l.sourceRefs.map((s, j) => (
+                          <span key={j}>
+                            {j === 0 ? " · see " : "; "}
+                            <a href={s.url} target="_blank" rel="noopener noreferrer" style={{ color: "var(--color-fg-subtle)", textDecoration: "underline", textDecorationStyle: "dotted" }}>{s.cite}</a>
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+                {disclaimer ? (
+                  <div style={{ fontSize: 10, color: "var(--color-fg-subtle)", marginTop: 6, fontStyle: "normal" }}>
+                    {disclaimer}
+                  </div>
+                ) : (
+                  <div style={{ fontSize: 10, color: "var(--color-fg-subtle)", marginTop: 6, fontStyle: "normal" }}>
+                    Curated offline; not legal advice. The agent cites these as pointers; it does not recommend or decide.
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+        </Card>
+      )}
 
       {/* (d) timeline */}
       <Card shadow="var(--shadow-xs)" padding="22px 24px" style={{ marginBottom: 16 }}>

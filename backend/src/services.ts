@@ -19,7 +19,28 @@ import {
   type CaseDoc,
   type DecisionDoc,
 } from "./models/index.ts";
+import { PolicyClause } from "./v1/models.ts";
+import { DEMO_PACK_REF } from "./seed/policy-pack.ts";
+import { NORTHWIND_PACK_REF } from "./seed/northwind-pack.ts";
 import { loadEnv } from "./env.ts";
+
+/**
+ * Load the policy clauses applicable to a case (FIN-115). Packs are isolated by
+ * packRef; prefer the Northwind × Kestrel scenario pack when present (its top-3
+ * governing-law pointers + ToS clauses), falling back to the demo Northstar
+ * pack. Surfaces the law library (clauseNumber===0) the case room renders. This
+ * mirrors v1/services.getCaseClauses so the legacy case room shows the same
+ * clauses + law notes without going through the /v1 route tree.
+ */
+async function getCaseClauses() {
+  try {
+    const scenarioRows = await PolicyClause.find({ packRef: NORTHWIND_PACK_REF }).sort({ clauseNumber: 1 }).lean();
+    if (scenarioRows.length > 0) return scenarioRows;
+    return await PolicyClause.find({ packRef: DEMO_PACK_REF }).sort({ clauseNumber: 1 }).lean();
+  } catch {
+    return [];
+  }
+}
 
 /* ============================================================================
    Services — receipt/case/decision assembly + canonical hashing (PRD §9.4, §11).
@@ -679,6 +700,7 @@ export async function getSharedCase(caseNumber: string): Promise<SharedCaseBody>
   const evidence = await Evidence.find({ caseRef: caseNumber }).lean();
   const briefs = await Brief.find({ caseRef: caseNumber }).sort({ version: 1 }).lean();
   const decision = await Decision.findOne({ caseRef: caseNumber }).lean();
+  const clauses = await getCaseClauses();
 
   return {
     payout,
@@ -698,6 +720,7 @@ export async function getSharedCase(caseNumber: string): Promise<SharedCaseBody>
         }
       : workOrder,
     case: caseDoc,
+    clauses,
     responses,
     // Fingerprints only (P3). Also strip the internal objectKey — the storage
     // path is never exposed to clients; downloads are issued per-request via the
@@ -715,6 +738,8 @@ export interface SharedCaseBody {
   payout: unknown;
   workOrder: unknown;
   case: unknown;
+  /** Policy clauses in force + the governing-law notes (clauseNumber===0). */
+  clauses: unknown[];
   responses: unknown[];
   evidence: unknown[];
   brief: { latest: unknown; versions: number } | null;
