@@ -6,9 +6,16 @@ import { V1App } from "./screens/v1/V1App";
 import "./styles/tokens.css";
 import "./styles/global.css";
 
-// The v1 registrar UI is served at /v1-app; the legacy UI remains at /.
-// This lets both coexist during the migration. To default to v1, set
-// REACT_APP_V1_DEFAULT=true in the environment.
+// Two surfaces coexist during the migration to a single product:
+//   - "/"        → the live escrow App (the demo surface): real on-chain
+//                  pay()/refundByArbiter()/withdraw(), the debt path, wallet
+//                  signing, the merchant/customer/platform/arbiter seats.
+//                  This is the default and is what the demo runs on.
+//   - "/v1-app"  → the registrar preview: agent decision frames, immutable
+//                  records, voluntary corrections, the governing-law library.
+//                  Intended to become the single product after the demo.
+// Set VITE_V1_DEFAULT=true to serve the registrar at "/" as well (NOT set by
+// default — flipping it removes the escrow demo beat; see ADR 0007).
 const useV1 = window.location.pathname.startsWith("/v1-app") ||
   (import.meta as unknown as { env?: { VITE_V1_DEFAULT?: string } }).env?.VITE_V1_DEFAULT === "true";
 
