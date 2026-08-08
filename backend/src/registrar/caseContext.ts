@@ -6,8 +6,8 @@
 
    Sources (each degrades to null/empty on absence or RPC failure — the never-
    crash posture the frame assembly depends on, P8):
-     1. Off-chain v1 DB  — case, payment, response, evidence, clauses
-     2. Off-chain legacy — WorkOrder (real deliverables/acceptance/due dates)
+     1. Off-chain DB     — case, payment, response, evidence, clauses
+     2. Off-chain DB     — WorkOrder (real deliverables/acceptance/due dates)
      3. On-chain (live)  — readPayment() + readChainFigures() via existing helpers
      4. Chain events     — recent ChainEvent rows (PaymentCreated/Refund/Withdrawal)
 

@@ -40,7 +40,7 @@ export function validateChainAddress(addr: string | null | undefined, label: str
   return normalizeAddress(addr);
 }
 
-/** Chain config summary for /v1/meta (no secrets). */
+/** Chain config summary for the meta endpoint (no secrets). */
 export function chainMeta(config: Config) {
   return {
     chainId: config.arc.chainId,

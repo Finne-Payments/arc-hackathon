@@ -20,12 +20,12 @@ import {
   type CaseDoc,
   type DecisionDoc,
 } from "./models/index.ts";
-import { PolicyClause } from "./v1/models.ts";
+import { PolicyClause } from "./registrar/models.ts";
 import { DEMO_PACK_REF } from "./seed/policy-pack.ts";
 import { NORTHWIND_PACK_REF } from "./seed/northwind-pack.ts";
 import { loadEnv } from "./env.ts";
 import type { Address } from "viem";
-import type { StructuredCaseContext } from "./v1/caseContext.ts";
+import type { StructuredCaseContext } from "./registrar/caseContext.ts";
 import { readPayment, readChainFigures } from "./chain/reads.ts";
 import { arbiterAddress } from "./chain/client.ts";
 import { toBaseUnits, fromBaseUnitsDisplay } from "./usdc.ts";
@@ -34,9 +34,7 @@ import { toBaseUnits, fromBaseUnitsDisplay } from "./usdc.ts";
  * Load the policy clauses applicable to a case (FIN-115). Packs are isolated by
  * packRef; prefer the Northwind × Kestrel scenario pack when present (its top-3
  * governing-law pointers + ToS clauses), falling back to the demo Northstar
- * pack. Surfaces the law library (clauseNumber===0) the case room renders. This
- * mirrors v1/services.getCaseClauses so the legacy case room shows the same
- * clauses + law notes without going through the /v1 route tree.
+ * pack. Surfaces the law library (clauseNumber===0) the case room renders.
  */
 async function getCaseClauses() {
   try {
@@ -50,14 +48,14 @@ async function getCaseClauses() {
 
 /**
  * Build the structured case context (the same `StructuredCaseContext` shape the
- * v1 case room renders) from the LEGACY shared-case body. This is the legacy
- * adapter for buildCaseContext (v1/caseContext.ts): it maps the legacy Payout/
- * WorkOrder/Case/Evidence/Clauses into the verdict-free sourced-facts card, and
- * reuses the SAME on-chain reads (readPayment/readChainFigures) + ChainEvent
- * chronology as v1. Never throws — every source degrades to null/empty.
+ * case room renders) from the shared-case body. This is the adapter for
+ * buildCaseContext (registrar/caseContext.ts): it maps the Payout/WorkOrder/
+ * Case/Evidence/Clauses into the verdict-free sourced-facts card, and reuses
+ * the SAME on-chain reads (readPayment/readChainFigures) + ChainEvent
+ * chronology as the registrar builder. Never throws — every source degrades to
+ * null/empty.
  *
- * This lets the legacy case room show the structured context card without going
- * through the v1 route tree or the v1 Payment/Case models.
+ * This lets the case room show the structured context card.
  */
 export async function buildLegacyCaseContext(body: SharedCaseBody): Promise<StructuredCaseContext> {
   const caseDoc = body.case as Record<string, unknown> & { payoutRef?: string; openedAt?: string; allegationFreeText?: string; allegationClaimType?: string; allegationAmountContested?: string };
@@ -90,7 +88,7 @@ export async function buildLegacyCaseContext(body: SharedCaseBody): Promise<Stru
     clauseNumber: Number(cl.clauseNumber ?? 0), text: String(cl.text ?? ""), parameters: (cl.parameters ?? {}) as Record<string, number>,
   }));
 
-  // On-chain section — identical to v1's buildCaseContext (shared helpers).
+  // On-chain section — identical to the registrar's buildCaseContext (shared helpers).
   let paymentOnChain: StructuredCaseContext["paymentOnChain"] = null;
   let chainFigures: StructuredCaseContext["chainFigures"] = null;
   let chainEvents: StructuredCaseContext["chainEvents"] = [];
@@ -438,7 +436,7 @@ export async function submitResponse(
 
   // Re-run the agent frame so the narrative + turning questions reflect the new
   // message. Fire-and-forget (P8 never-crash). Mirrors the evidence-add trigger.
-  void import("./v1/frameOrchestrator.ts")
+  void import("./registrar/frameOrchestrator.ts")
     .then(({ assembleForCaseByNumber }) => assembleForCaseByNumber(caseNumber))
     .catch((e) => console.error(`[submitResponse] auto frame-assembly failed for ${caseNumber}:`, e instanceof Error ? e.message : e));
 

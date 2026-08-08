@@ -338,7 +338,7 @@ describe("FIN-132 agent modules import no signing/money-moving code", () => {
     const permitted = [
       'import { createPublicClient } from "viem"',
       'import { generateId } from "@finne/domain"',
-      'import { ModelCall } from "../v1/models.ts"',
+      'import { ModelCall } from "../registrar/models.ts"',
     ];
     for (const line of permitted) {
       const flagged = FORBIDDEN_AGENT_IMPORTS.some((f) => line.includes(f));

@@ -2,8 +2,8 @@
    Frame orchestrator — the shared "run the agents for a case" entry point.
 
    Used by:
-     - openCase()            → auto-trigger (fire-and-forget) on dispute open
-     - POST /v1/cases/:id/frame → manual "Prepare frame" re-run
+     - openCase()              → auto-trigger (fire-and-forget) on dispute open
+     - POST /cases/:id/refresh → manual re-run from the case room
 
    Coordinates: getCaseDetail → buildFrameInput → assembleFrame, with per-stage
    status recorded to frameStatus so the case room can render an "agents running"
@@ -62,10 +62,8 @@ export async function assembleForCase(
 
 /**
  * Run the agent pipeline for a case keyed by caseNumber — the identifier in the
- * URL and the one shared across the legacy + v1 layers. Builds the frame input
- * directly from the legacy shared case body (real payout, work order with
- * deliverables, evidence, responses), so it works for cases that exist ONLY in
- * the legacy layer (e.g. CASE-0143) with no v1 Case row. The frame is persisted
+ * URL. Builds the frame input directly from the shared case body (real payout,
+ * work order with deliverables, evidence, responses). The frame is persisted
  * keyed on the caseNumber, so the GET /cases/:id handler finds it.
  */
 export async function assembleForCaseByNumber(

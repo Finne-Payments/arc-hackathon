@@ -10,7 +10,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import { MongoMemoryServer } from "mongodb-memory-server";
 import mongoose from "mongoose";
-import { PolicyClause } from "../src/v1/models.ts";
+import { PolicyClause } from "../src/registrar/models.ts";
 import {
   seedNorthwindPack,
   NORTHWIND_PACK_REF,

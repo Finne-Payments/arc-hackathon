@@ -35,7 +35,7 @@ import mongoose from "mongoose";
 import { generateId } from "@finne/domain";
 import { canonicalHash } from "../canonical.ts";
 import { loadEnv } from "../env.ts";
-import { ModelCall, FrameAction } from "../v1/models.ts";
+import { ModelCall, FrameAction } from "../registrar/models.ts";
 
 /** Result of a model call. `degraded:true` means use v1 behaviour (P8). */
 export interface CompletionResult {

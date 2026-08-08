@@ -19,7 +19,7 @@
    ========================================================================== */
 
 import { generateId, validateDraftFrame, type DraftFrame } from "@finne/domain";
-import { DraftFrame as DraftFrameModel } from "../v1/models.ts";
+import { DraftFrame as DraftFrameModel } from "../registrar/models.ts";
 import { runChecks, type CheckInput, type CheckResult } from "../proof/checks.ts";
 import { fillOutcomeRequirements } from "./frame-templates.ts";
 import { computeUnresolved, type UnresolvedInput } from "./frame-unresolved.ts";

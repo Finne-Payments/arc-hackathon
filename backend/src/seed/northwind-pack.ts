@@ -17,7 +17,7 @@
    ========================================================================== */
 
 import { generateId, validatePolicyClause } from "@finne/domain";
-import { PolicyClause } from "../v1/models.ts";
+import { PolicyClause } from "../registrar/models.ts";
 
 export const NORTHWIND_PACK_REF = "pack:northwind-kestrel-v1";
 export const NORTHWIND_JURISDICTION = "England & Wales";

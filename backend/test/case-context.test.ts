@@ -8,7 +8,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { MongoMemoryServer } from "mongodb-memory-server";
 import mongoose from "mongoose";
-import { buildCaseContext, contextToPromptText } from "../src/v1/caseContext.ts";
+import { buildCaseContext, contextToPromptText } from "../src/registrar/caseContext.ts";
 
 let mongoServer: MongoMemoryServer;
 

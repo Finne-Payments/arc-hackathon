@@ -18,7 +18,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { MongoMemoryServer } from "mongodb-memory-server";
 import mongoose from "mongoose";
-import { PolicyClause } from "../src/v1/models.ts";
+import { PolicyClause } from "../src/registrar/models.ts";
 import { seedDemoPolicyPack, DEMO_PACK_REF, DEMO_LAW_LINES, DEMO_LAW_DISCLAIMER } from "../src/seed/policy-pack.ts";
 
 let mongoServer: MongoMemoryServer;

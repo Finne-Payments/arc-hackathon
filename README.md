@@ -170,8 +170,7 @@ The deploy pipeline (`.github/workflows/deploy.yml`) auto-deploys on push to `ma
 
 ## Key surface
 
-- **v1 REST API** — 36 operations under `/v1/*` (see [`openapi/finne-v1.yaml`](openapi/finne-v1.yaml)). Includes payment import/verify, case open/respond/decide, correction instruction/verify, evidence upload/download, analysis run/approve, and public proofs.
-- **Legacy API** — the original routes (`/payouts`, `/cases`, `/auth/wallet`) remain for backward compatibility during the migration.
+- **REST API** — the product routes (`/payouts`, `/cases`, `/auth/wallet`, `/config`, evidence uploads, frame actions). The escrow money flow + the agent decision frame + the governing-law library all hang off this one API.
 - **Receipt** — every receipt/case/decision hash is `keccak256` of canonical JSON, verifiable forever.
 
 ### Single product (consolidated)

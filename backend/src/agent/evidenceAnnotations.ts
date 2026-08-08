@@ -84,7 +84,7 @@ export async function summarizeEvidenceDocument(params: SummarizeParams): Promis
   // by-number path so this works for BOTH legacy and v1 cases (legacy cases
   // exist only in the legacy Case collection, which assembleForCaseByNumber reads).
   if (params.caseNumber) {
-    void import("../v1/frameOrchestrator.ts")
+    void import("../registrar/frameOrchestrator.ts")
       .then(({ assembleForCaseByNumber }) => assembleForCaseByNumber(params.caseNumber!))
       .catch((e) => console.error(`[annotations] frame re-run failed for ${params.caseNumber}:`, e instanceof Error ? e.message : e));
   }
@@ -131,7 +131,7 @@ export async function summarizeEvidenceLink(params: SummarizeLinkParams): Promis
     degraded: result.degraded,
   });
 
-  void import("../v1/frameOrchestrator.ts")
+  void import("../registrar/frameOrchestrator.ts")
     .then(({ assembleForCaseByNumber }) => assembleForCaseByNumber(params.caseNumber))
     .catch((e) => console.error(`[annotations] frame re-run failed for ${params.caseNumber}:`, e instanceof Error ? e.message : e));
 }

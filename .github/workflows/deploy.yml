@@ -73,11 +73,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Check v1 routes don't import the quarantined ABI
+      - name: Check registrar modules don't import the quarantined ABI
         run: |
-          if grep -r "RefundProtocol.json" backend/src/v1/ 2>/dev/null; then exit 1; fi
-          if grep -r "refundByArbiter" backend/src/v1/ 2>/dev/null; then exit 1; fi
-          echo "PASS: no RefundProtocol ABI in v1 production code."
+          if grep -r "RefundProtocol.json" backend/src/registrar/ 2>/dev/null; then exit 1; fi
+          if grep -r "refundByArbiter" backend/src/registrar/ 2>/dev/null; then exit 1; fi
+          echo "PASS: no RefundProtocol ABI in registrar modules."
 
   # ── Build + push images to ECR ────────────────────────────────────────────
   build-and-push:
