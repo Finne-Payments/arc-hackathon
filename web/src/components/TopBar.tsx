@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import type { FinneActions } from "../useFinne";
 import type { ApiData } from "../useApi";
 import { api } from "../api";
@@ -32,6 +32,25 @@ export function TopBar({
   const [showSearch, setShowSearch] = useState(false);
   const clusterRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLDivElement>(null);
+  // Fresh wallet balance, fetched when the profile dropdown opens. The cached
+  // value from useApi.refresh() can be stale (it only re-fetches on screen
+  // change), so we override it here the moment the user looks at their balance.
+  const [freshBalance, setFreshBalance] = useState<ApiData["walletBalance"]>(null);
+  const [balanceLoading, setBalanceLoading] = useState(false);
+  const refreshBalance = useCallback(async () => {
+    setBalanceLoading(true);
+    try {
+      const wb = await api.walletBalance();
+      setFreshBalance(wb);
+    } catch {
+      setFreshBalance(null);
+    } finally {
+      setBalanceLoading(false);
+    }
+  }, []);
+  useEffect(() => {
+    if (showProfile) void refreshBalance();
+  }, [showProfile, refreshBalance]);
 
   // Close dropdowns when clicking outside the top-right cluster OR the search box.
   useEffect(() => {
@@ -53,7 +72,9 @@ export function TopBar({
   const unreadCount = apiData?.unreadCount ?? 0;
   const notifications = apiData?.notifications ?? [];
   const walletAddr = user?.walletAddress ?? null;
-  const wb = apiData?.walletBalance ?? null;
+  // Prefer the fresh balance (fetched on profile open); fall back to the cached
+  // value from useApi. This keeps the profile balance current without polling.
+  const wb = freshBalance ?? apiData?.walletBalance ?? null;
   const initial = (user?.displayName ?? user?.email ?? "U").slice(0, 1).toUpperCase();
 
   // Client-side search across payouts + cases + the wallet/tx addresses on each.
@@ -431,7 +452,7 @@ export function TopBar({
 
               <div style={{ borderTop: "1px solid var(--color-border)", margin: "2px 8px", paddingTop: 8, display: "flex", flexDirection: "column", gap: 6 }}>
                 <ProfileRow label="Role" value={roleLabel} />
-                <ProfileRow label="Balance" value={wb?.usdc != null ? `${wb.usdc} USDC` : "Loading…"} mono />
+                <ProfileRow label="Balance" value={balanceLoading ? "Loading…" : wb?.usdc != null ? `${wb.usdc} USDC` : walletAddr ? "—" : "No wallet linked"} mono />
                 {wb?.protected != null && Number(wb.protected) > 0 && (
                   <ProfileRow label="Protected" value={`${wb.protected} USDC`} mono />
                 )}
