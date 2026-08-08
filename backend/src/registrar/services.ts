@@ -2,6 +2,17 @@
    Registrar service layer — the business logic for the agent + anchoring loop.
    Drives the @finne/domain state machines, builds canonical envelopes, and
    enqueues registry writes + jobs. Routes stay thin.
+
+   NOTE (post-consolidation): the single product's live routes consume only
+   getCaseDetail() (via frameOrchestrator) from this file. The other exports —
+   createVerifiedPayment, openCase, submitResponse, recordDecision,
+   createCorrectionInstruction/verifyCorrection/declineCorrection,
+   saveAnalysis/approveAnalysis, listPayments, getPaymentDetail,
+   enqueueReceiptAnchor, advanceDeadline, getCaseContext — were the v1 router's
+   business logic. They are dormant now (no route calls them) but are kept
+   because getCaseDetail reads the Analysis/Correction/Decision collections they
+   populate, and trimming them cascades into the frame/case-context pipeline.
+   Safe to remove in a dedicated cleanup once the frame pipeline is simplified.
    ========================================================================== */
 
 import {
