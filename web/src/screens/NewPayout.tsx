@@ -71,6 +71,7 @@ export function NewPayout({ actions, apiData }: { actions: FinneActions; apiData
   const [pendingContracts, setPendingContracts] = useState<File[]>([]);
 
   const numericAmount = Number(amount);
+  const configLoaded = !!apiData?.config; // null until /api/config resolves (fetched independently of auth)
   const hasChain = !!rpAddress && rpAddress !== "0x0000000000000000000000000000000000000000";
   const valid = !!recipientAddress && !!refundAddress && amount !== "" && numericAmount > 0 && !!usdcAddress;
 
@@ -189,10 +190,20 @@ export function NewPayout({ actions, apiData }: { actions: FinneActions; apiData
       </p>
 
       {!hasChain && (
-        <div style={{ background: "var(--risk-soft, var(--warn-soft))", border: "1px solid var(--risk-border, var(--warn-border))", borderRadius: "var(--radius-md)", padding: "14px 16px", marginBottom: 20, fontSize: 13, color: "var(--risk-600, var(--warn-600))", lineHeight: 1.5 }}>
-          <strong>Payouts are disabled — the RefundProtocol contract isn't deployed.</strong>
-          <br />
-          A protected payout can only be created by a real on-chain <code style={{ fontFamily: "var(--font-mono)" }}>pay()</code> on Arc.
+        <div style={{ background: configLoaded ? "var(--risk-soft, var(--warn-soft))" : "var(--color-surface)", border: "1px solid var(--risk-border, var(--warn-border))", borderRadius: "var(--radius-md)", padding: "14px 16px", marginBottom: 20, fontSize: 13, color: "var(--risk-600, var(--warn-600))", lineHeight: 1.5 }}>
+          {configLoaded ? (
+            <>
+              <strong>Payouts are disabled — the RefundProtocol contract isn't configured.</strong>
+              <br />
+              A protected payout can only be created by a real on-chain <code style={{ fontFamily: "var(--font-mono)" }}>pay()</code> on Arc.
+            </>
+          ) : (
+            <>
+              <strong>Loading chain configuration…</strong>
+              <br />
+              Connecting to Arc to read the RefundProtocol address. A protected payout can only be created by a real on-chain <code style={{ fontFamily: "var(--font-mono)" }}>pay()</code>.
+            </>
+          )}
         </div>
       )}
 
