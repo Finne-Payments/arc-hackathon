@@ -11,13 +11,13 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import { MongoMemoryServer } from "mongodb-memory-server";
 import mongoose from "mongoose";
 import { Payout, WorkOrder, Case } from "../src/models/index.ts";
-import { DraftFrame } from "../src/v1/models.ts";
+import { DraftFrame } from "../src/registrar/models.ts";
 import {
   seedNorthwindScenario,
   NORTHWIND_CASE_NUMBER,
   NORTHWIND_PAYMENT_ID,
 } from "../src/seed/northwind-scenario.ts";
-import { assembleForCaseByNumber } from "../src/v1/frameOrchestrator.ts";
+import { assembleForCaseByNumber } from "../src/registrar/frameOrchestrator.ts";
 
 let mongoServer: MongoMemoryServer;
 

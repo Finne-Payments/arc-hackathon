@@ -14,7 +14,7 @@
    ========================================================================== */
 
 import { generateId, validatePolicyClause } from "@finne/domain";
-import { PolicyClause } from "../v1/models.ts";
+import { PolicyClause } from "../registrar/models.ts";
 
 export const DEMO_PACK_REF = "pack:demo-northstar-terms-v1";
 

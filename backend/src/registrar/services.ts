@@ -1,5 +1,5 @@
 /* ============================================================================
-   v1 service layer — the business logic for the registrar product loop.
+   Registrar service layer — the business logic for the agent + anchoring loop.
    Drives the @finne/domain state machines, builds canonical envelopes, and
    enqueues registry writes + jobs. Routes stay thin.
    ========================================================================== */
@@ -147,7 +147,7 @@ async function enqueueAnchor(
   }).catch((e) => {
     // Enqueue must never break the product flow — the hash is already in the DB
     // and verifiable; the anchor is the durable extra. Log and move on.
-    console.error(`[v1] enqueueAnchor(${kind} ${entityId}) failed:`, e instanceof Error ? e.message : e);
+    console.error(`[registrar] enqueueAnchor(${kind} ${entityId}) failed:`, e instanceof Error ? e.message : e);
   });
 }
 
@@ -227,9 +227,9 @@ export async function createVerifiedPayment(input: CreatePaymentInput) {
 
 /**
  * Explicitly enqueue a receipt anchor for an existing payment. Used by the
- * POST /v1/payments/:paymentId/anchors route for backfill / re-anchor. Looks up
- * the stored receipt hash + payment fields and enqueues a registerReceipt job.
- * No-op if the payment has no receiptHash yet.
+ * receipt-anchor backfill path for re-anchor. Looks up the stored receipt hash
+ * + payment fields and enqueues a registerReceipt job. No-op if the payment has
+ * no receiptHash yet.
  */
 export async function enqueueReceiptAnchor(paymentId: string): Promise<void> {
   const payment = await Payment.findOne({ paymentId });

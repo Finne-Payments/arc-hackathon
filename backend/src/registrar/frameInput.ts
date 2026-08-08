@@ -2,10 +2,9 @@
    Frame-input builder — the single source of truth for translating a case
    record into the shape `assembleFrame` consumes.
 
-   Extracted from the POST /v1/cases/:caseId/frame handler so that both the
-   manual "Prepare frame" route AND the auto-trigger on case-open share one
-   builder. Degrades gracefully when payment/work-order data is incomplete —
-   the checks return "missing" findings rather than throwing.
+   Extracted so that both the manual refresh route AND the auto-trigger on
+   case-open share one builder. Degrades gracefully when payment/work-order
+   data is incomplete — the checks return "missing" findings rather than throwing.
 
    The case context fed to the model is the structured, sourced summary from
    caseContext.ts (on-chain + off-chain facts), so the Bedrock turning-questions

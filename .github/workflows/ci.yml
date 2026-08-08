@@ -86,14 +86,14 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - name: Check backend/src/abi/RefundProtocol.json is NOT imported by v1 routes
+      - name: Check backend/src/abi/RefundProtocol.json is NOT imported by registrar modules
         run: |
-          if grep -r "RefundProtocol.json" backend/src/v1/ 2>/dev/null; then
-            echo "FAIL: v1 routes import the quarantined RefundProtocol ABI."
+          if grep -r "RefundProtocol.json" backend/src/registrar/ 2>/dev/null; then
+            echo "FAIL: registrar modules import the quarantined RefundProtocol ABI."
             exit 1
           fi
-          if grep -r "refundByArbiter" backend/src/v1/ 2>/dev/null; then
-            echo "FAIL: v1 routes reference refundByArbiter (legacy escrow ABI)."
+          if grep -r "refundByArbiter" backend/src/registrar/ 2>/dev/null; then
+            echo "FAIL: registrar modules reference refundByArbiter (legacy escrow ABI)."
             exit 1
           fi
-          echo "PASS: no RefundProtocol ABI or refundByArbiter in v1 production code."
+          echo "PASS: no RefundProtocol ABI or refundByArbiter in registrar modules."

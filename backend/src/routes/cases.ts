@@ -22,8 +22,8 @@ import type { DecisionOutcome } from "../statusVocabulary.ts";
 import { HttpError } from "../errors.ts";
 import { getLatestFrame } from "../agent/frame-assembly.ts";
 import { recordHumanAction } from "../agent/model-client.ts";
-import { getFrameStatus } from "../v1/frameStatus.ts";
-import { assembleForCaseByNumber } from "../v1/frameOrchestrator.ts";
+import { getFrameStatus } from "../registrar/frameStatus.ts";
+import { assembleForCaseByNumber } from "../registrar/frameOrchestrator.ts";
 
 /* ============================================================================
    Case routes (PRD §11.2). The shared case body is byte-identical across
@@ -351,10 +351,10 @@ caseRoutes.post("/cases/:id/decisions", requirePermission("case:decide"), async 
 
 /**
  * POST /cases/:id/frame/actions — log a per-line reviewer action on the agent
- * decision frame (FIN-127). Mirrors the v1 /v1/cases/:caseId/frame/actions route
- * but keyed on caseNumber + gated by the legacy case:decide permission (the
- * arbiter, who accepts/edits/discards frame lines while forming a decision).
- * recordHumanAction keys on callId, so the path param is contextual only.
+ * decision frame (FIN-127). Keyed on caseNumber + gated by the case:decide
+ * permission (the arbiter, who accepts/edits/discards frame lines while forming
+ * a decision). recordHumanAction keys on callId, so the path param is
+ * contextual only.
  *
  * Accepts { callId, action: "accept"|"edit"|"discard", lineId?, originalText?,
  * editedText?, provenance? }. For "edit", the edited text is stored ALONGSIDE
