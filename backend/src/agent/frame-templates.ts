@@ -50,11 +50,15 @@ const NON_DELIVERY_TEMPLATES: Partial<Record<DecisionOutcome, { id: string; body
       // Recipient upheld = contested work was properly delivered / accepted.
       const grace = f.find((x) => x.checkId.startsWith("grace_window:") && x.result === "pass");
       const acceptance = failedCheckForClause(f, 7);
+      // Order-of-performance: if present, upholding the recipient needs the
+      // payment to have followed acceptance (or the transfer to count as acceptance).
+      const orderingFail = failedCheckForClause(f, 41);
       return {
-        text: `Upholding the recipient requires the contested deliverable to have been delivered within the clause-4 grace window AND not yet deemed accepted under clause 7 at the time of dispute.`,
+        text: `Upholding the recipient requires the contested deliverable to have been delivered within the clause-4 grace window AND not yet deemed accepted under clause 7 at the time of dispute${orderingFail ? "; where the order-of-performance check (clause 41) failed, the reviewer must find the USDC transfer itself constituted acceptance" : ""}.`,
         params: {
           graceFinding: grace?.checkId ?? "none-passed",
           acceptanceFinding: acceptance?.checkId ?? "none-failed",
+          orderingFinding: orderingFail?.checkId ?? "none-failed",
         },
       };
     },
@@ -65,11 +69,15 @@ const NON_DELIVERY_TEMPLATES: Partial<Record<DecisionOutcome, { id: string; body
       // Platform upheld = delivery failed or was outside acceptance window for the full amount.
       const noDelivery = f.find((x) => x.checkId.startsWith("delivery_recorded:") && x.result === "missing");
       const graceFail = f.find((x) => x.checkId.startsWith("grace_window:") && x.result === "fail");
+      // Order-of-performance: a clause-41 fail (payment before acceptance) is an
+      // independent ground for upholding the platform's clawback claim.
+      const orderingFail = failedCheckForClause(f, 41);
       return {
-        text: `Upholding the platform for the full contested amount requires the deliverable to be undelivered, or delivered outside the clause-4 grace window with a written rejection, AND disputed before clause-7 deemed acceptance where clause 9 applies.`,
+        text: `Upholding the platform for the full contested amount requires the deliverable to be undelivered, or delivered outside the clause-4 grace window with a written rejection, AND disputed before clause-7 deemed acceptance where clause 9 applies${orderingFail ? "; a failed order-of-performance check (clause 41 — payment before acceptance) is an independent ground" : ""}.`,
         params: {
           deliveryMissing: noDelivery?.checkId ?? "none",
           graceFailed: graceFail?.checkId ?? "none",
+          orderingFailed: orderingFail?.checkId ?? "none",
         },
       };
     },
@@ -94,6 +102,12 @@ const NON_DELIVERY_TEMPLATES: Partial<Record<DecisionOutcome, { id: string; body
 
 const TEMPLATES_BY_CLAIM_TYPE: Record<string, Partial<Record<DecisionOutcome, { id: string; body: TemplateBody }>>> = {
   non_delivery: NON_DELIVERY_TEMPLATES,
+  // A dedicated order-of-performance claim type models a "paid before
+  // acceptance" dispute directly (rather than overloading non_delivery). The
+  // Northwind scenario is filed as non_delivery today, so its outcome lines
+  // come from the ordering-aware NON_DELIVERY templates above; this set is for
+  // cases explicitly filed as order_of_performance.
+  order_of_performance: NON_DELIVERY_TEMPLATES,
 };
 
 /**

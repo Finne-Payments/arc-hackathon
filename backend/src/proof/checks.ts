@@ -56,10 +56,22 @@ export interface CheckInput {
    * platform reject in writing within the grace window, else deemed on time.
    */
   rejectionTimestamps: Record<string, string | null>;
+  /**
+   * Written-acceptance evidence: for each deliverable, the timestamp of a
+   * written acceptance from the platform (ISO), or null. Drives the order-of-
+   * performance check (payment must follow acceptance). Mapped by name.
+   */
+  acceptanceTimestamps?: Record<string, string | null>;
   /** Clause parameters from the seeded policy pack. */
   clauses: {
     graceWindowHours: number; // clause 4
     acceptancePeriodDays: number; // clause 7
+    /**
+     * Deemed-acceptance window in days — used by the order-of-performance check
+     * (clause 4.1) to flag a transfer that landed before a milestone could even
+     * have been deemed accepted. Optional; defaults to acceptancePeriodDays.
+     */
+    deemedAcceptanceDays?: number; // clause 4.1 (Northwind scenario pack)
   };
 }
 
@@ -222,6 +234,106 @@ registerCheck(function acceptanceStatus(input: CheckInput): CheckResult[] {
       result: disputedBeforeAcceptance ? "pass" : "fail",
       clauseRef: 7,
       checkId: `acceptance_status:${d.name}`,
+    } satisfies CheckResult;
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* Check 10 — order of performance (Northwind scenario clause 41/42)          */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Was the on-chain USDC transfer for this deliverable released AFTER its
+ * acceptance (written or deemed)? This is the "right order" evaluation — the
+ * load-bearing finding in the Northwind × Kestrel scenario: clause 4.1 requires
+ * payment to follow acceptance, and clause 4.2 states a transfer before
+ * acceptance is NOT itself acceptance.
+ *
+ * Pure function over: payment.paidAt (the on-chain transfer time), the
+ * deliverable's written-acceptance timestamp (if any), its submission time
+ * (used to compute deemed acceptance), and the deemed-acceptance window.
+ *
+ * Outcomes:
+ *   - pass    — payment on/after written acceptance (correct order)
+ *   - fail    — payment before any acceptance could have occurred (wrong order)
+ *   - missing — no submission timestamp, so deemed acceptance cannot be computed
+ *
+ * Findings cite clause 41 (the order clause) so they render as clickable
+ * citations in the case room, and surface as turning questions for the reviewer.
+ * The check never states a conclusion about the dispute — only what the
+ * timestamps show.
+ */
+registerCheck(function paymentOrdering(input: CheckInput): CheckResult[] {
+  // The check is OPT-IN: it only runs when the caller supplies an
+  // acceptanceTimestamps map. This keeps the demo / non-delivery cases (which
+  // never populate it) free of spurious order findings, and confines the
+  // order-of-performance evaluation to cases that have acceptance data. A null
+  // value inside the map is meaningful — it signals "no written acceptance on
+  // record" and routes the check through the deemed-acceptance branch.
+  const hasAcceptanceMap =
+    input.acceptanceTimestamps && Object.keys(input.acceptanceTimestamps).length > 0;
+  if (!hasAcceptanceMap) return []; // inert — no signal this is an ordering case
+
+  return input.deliverables.map((d) => {
+    const paidAt = input.payment.paidAt;
+    const paidMs = Date.parse(paidAt);
+    if (Number.isNaN(paidMs)) {
+      return {
+        check: `Order of performance (clause 4.1): ${d.name}`,
+        expected: "an on-chain payment timestamp to compare against acceptance",
+        found: `payment time not parseable (${paidAt})`,
+        result: "missing" as const,
+        clauseRef: 41,
+        checkId: `payment_ordering:${d.name}`,
+      } satisfies CheckResult;
+    }
+
+    // Written acceptance on record for this deliverable?
+    const writtenAcceptance = hasAcceptanceMap ? input.acceptanceTimestamps![d.name] : null;
+    if (writtenAcceptance) {
+      const acceptMs = Date.parse(writtenAcceptance);
+      const paidAfterAcceptance = paidMs >= acceptMs;
+      return {
+        check: `Order of performance (clause 4.1): ${d.name}`,
+        expected: `payment after written acceptance (${writtenAcceptance})`,
+        found: paidAfterAcceptance
+          ? `paid ${paidAt}, after acceptance ${writtenAcceptance}`
+          : `paid ${paidAt}, BEFORE acceptance ${writtenAcceptance} (wrong order)`,
+        result: paidAfterAcceptance ? "pass" : "fail",
+        clauseRef: 41,
+        checkId: `payment_ordering:${d.name}`,
+      } satisfies CheckResult;
+    }
+
+    // No written acceptance — compare against deemed acceptance (submission +
+    // deemed-acceptance window). A payment before deemed acceptance is, per
+    // clause 4.2, not itself acceptance and breaches the order clause.
+    const submitted = input.deliveryTimestamps[d.name];
+    if (!submitted) {
+      return {
+        check: `Order of performance (clause 4.1): ${d.name}`,
+        expected: "a submission timestamp to compute deemed acceptance, or a written acceptance",
+        found: "no acceptance and no submission timestamp — cannot assess order",
+        result: "missing" as const,
+        clauseRef: 41,
+        checkId: `payment_ordering:${d.name}`,
+      } satisfies CheckResult;
+    }
+    const deemedDays =
+      input.clauses.deemedAcceptanceDays ?? input.clauses.acceptancePeriodDays;
+    const periodMs = deemedDays * 86_400_000;
+    const deemedMs = Date.parse(submitted) + periodMs;
+    const deemedIso = new Date(deemedMs).toISOString();
+    const paidBeforeDeemed = paidMs < deemedMs;
+    return {
+      check: `Order of performance (clause 4.1): ${d.name}`,
+      expected: `payment on/after deemed acceptance (${deemedIso})`,
+      found: paidBeforeDeemed
+        ? `paid ${paidAt}, before deemed acceptance ${deemedIso} (wrong order)`
+        : `paid ${paidAt}, on/after deemed acceptance ${deemedIso}`,
+      result: paidBeforeDeemed ? "fail" : "pass",
+      clauseRef: 41,
+      checkId: `payment_ordering:${d.name}`,
     } satisfies CheckResult;
   });
 });

@@ -8,6 +8,8 @@ import { createV1Router } from "./v1/router.ts";
 import { createV1App, mountErrorHandler } from "./v1/app.ts";
 import { loadConfig } from "@finne/config";
 import { seedDemoPolicyPack } from "./seed/policy-pack.ts";
+import { seedNorthwindPack } from "./seed/northwind-pack.ts";
+import { seedNorthwindScenario } from "./seed/northwind-scenario.ts";
 
 /* ============================================================================
    Server entry. Boot order (PRD §16.2):
@@ -31,6 +33,14 @@ async function main(): Promise<void> {
   // Seed the demo policy pack (clauses 4/7/9 + law line) if absent. Idempotent
   // and best-effort — never blocks boot (PRD Addendum A §F, FIN-110/111/112).
   void seedDemoPolicyPack();
+  // Seed the Northwind × Kestrel scenario pack (ToS clauses + the top-3
+  // governing-law pointers for England & Wales). Same idempotent, best-effort
+  // contract. Surfaces the scenario's clauses + law pointers in the case room.
+  void seedNorthwindPack();
+  // Seed the runnable Northwind scenario (Payout + WorkOrder + Case) so the
+  // agent pipeline can run end-to-end on CASE-NW01. Same idempotent, best-
+  // effort contract. Must run after the policy pack so clauses are in force.
+  void seedNorthwindScenario();
 
   if (!env.registryOperatorKey) {
     console.warn("[backend] REGISTRY_OPERATOR_PRIVATE_KEY not set — anchor jobs will queue indefinitely.");

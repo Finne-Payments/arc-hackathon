@@ -193,38 +193,46 @@ export function CaseRoom({
               </div>
             );
           })}
-          {/* Law line (clauseNumber 0) — the governing-law row: the law library
-              (lawLines) + a disclaimer. Each note renders its one-sentence line,
-              attribution (author), its reviewRef, and a "see" pointer per
-              sourceRef. Settled common-law principles carry an empty sourceRefs
-              and render without a pointer. (FIN-112) */}
-          {activeCase.clauses.filter((c) => c.clauseNumber === 0).map((c) => (
-            <div key={c.clauseId} style={{ padding: "10px 0 4px", fontSize: 11, color: "var(--color-fg-muted)", lineHeight: 1.5, fontStyle: "italic" }}>
-              <span style={{ fontFamily: "var(--font-mono)", fontWeight: 600, fontStyle: "normal", color: "var(--color-fg-subtle)" }}>Governing law · {c.jurisdiction} · </span>
-              {(c.lawLines && c.lawLines.length > 0) ? c.lawLines.map((l) => (
-                <div key={l.note} style={{ marginTop: 6 }}>
-                  {l.text}
-                  <div style={{ fontSize: 10, color: "var(--color-fg-subtle)", marginTop: 4, fontStyle: "normal" }}>
-                    {l.author} · {l.reviewRef}
-                    {l.sourceRefs.map((s, i) => (
-                      <span key={i}>
-                        {i === 0 ? " · see " : "; "}
-                        <a href={s.url} target="_blank" rel="noopener noreferrer" style={{ color: "var(--color-fg-subtle)", textDecoration: "underline", textDecorationStyle: "dotted" }}>{s.cite}</a>
-                      </span>
-                    ))}
+          {/* Governing-law row (clauseNumber 0) — the law library (lawLines) +
+              a disclaimer. Each note renders its one-sentence line, attribution
+              (author), its reviewRef, and a "see" pointer per sourceRef. Settled
+              common-law principles carry an empty sourceRefs and render without a
+              pointer. The agent cites these as pointers and frames turning
+              questions against them; it never decides. (FIN-112) */}
+          {(() => {
+            const lawRow = activeCase.clauses.find((c) => c.clauseNumber === 0);
+            if (!lawRow) return null;
+            const jurisdiction = lawRow.jurisdiction;
+            const notes = lawRow.lawLines && lawRow.lawLines.length > 0
+              ? lawRow.lawLines
+              : [{ note: "law", text: lawRow.text, jurisdiction: jurisdiction ?? "", author: lawRow.author, reviewRef: lawRow.reviewRef, version: lawRow.version, sourceRefs: [] }]; // back-compat
+            return (
+              <div style={{ padding: "10px 0 4px", marginTop: 6, borderTop: "1px solid var(--color-border-subtle)" }}>
+                <div style={{ fontFamily: "var(--font-mono)", fontWeight: 600, fontStyle: "normal", color: "var(--color-fg-subtle)", fontSize: 10, marginBottom: 6 }}>
+                  Governing law{jurisdiction ? ` · ${jurisdiction}` : ""}
+                </div>
+                {notes.map((l, i) => (
+                  <div key={l.note} style={{ fontSize: 11, color: "var(--color-fg-muted)", lineHeight: 1.5, fontStyle: "italic", marginBottom: i < notes.length - 1 ? 8 : 0 }}>
+                    {l.text}
+                    <div style={{ fontSize: 10, color: "var(--color-fg-subtle)", marginTop: 4, fontStyle: "normal" }}>
+                      {l.author} · {l.reviewRef}
+                      {l.sourceRefs.map((s, j) => (
+                        <span key={j}>
+                          {j === 0 ? " · see " : "; "}
+                          <a href={s.url} target="_blank" rel="noopener noreferrer" style={{ color: "var(--color-fg-subtle)", textDecoration: "underline", textDecorationStyle: "dotted" }}>{s.cite}</a>
+                        </span>
+                      ))}
+                    </div>
                   </div>
-                </div>
-              )) : (
-                // Back-compat: a law-line row seeded before lawLines existed.
-                <span>{c.text}</span>
-              )}
-              {c.disclaimer && (
-                <div style={{ fontSize: 10, color: "var(--color-fg-subtle)", marginTop: 6, fontStyle: "normal" }}>
-                  {c.disclaimer}
-                </div>
-              )}
-            </div>
-          ))}
+                ))}
+                {lawRow.disclaimer && (
+                  <div style={{ fontSize: 10, color: "var(--color-fg-subtle)", marginTop: 6, fontStyle: "normal" }}>
+                    {lawRow.disclaimer}
+                  </div>
+                )}
+              </div>
+            );
+          })()}
         </Card>
       )}
 

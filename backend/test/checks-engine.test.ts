@@ -117,3 +117,79 @@ describe("FIN-115 checks engine — clause citations enabled", () => {
     expect(f.length).toBe(10); // 1 + 3 + 3 + 3
   });
 });
+
+/* -------------------------------------------------------------------------- */
+/* Check 10 — order of performance (Northwind scenario clause 4.1)            */
+/* Evaluation (b): did the payment happen in the right order — i.e. AFTER     */
+/* acceptance? The load-bearing finding in the Northwind × Kestrel dispute.   */
+/* -------------------------------------------------------------------------- */
+
+// A Northwind-scenario-shaped input: M3 (UI motion assets), submitted 15 Jun,
+// paid 17 Jun (BEFORE any acceptance), rejected 20 Jun. Deemed-acceptance
+// window 7 business days ~ 7 days here for the check.
+const NW = (over: Partial<CheckInput>): CheckInput => ({
+  payment: { amountMicroUsdc: "500000000", recipient: "0xkestrel", payer: "0xnorthwind", paidAt: "2026-06-17T00:00:00Z" },
+  challengedAmountMicroUsdc: "500000000",
+  claimType: "non_delivery",
+  allegation: "Payment released before acceptance of M3.",
+  disputeOpenedAt: "2026-06-23T00:00:00Z",
+  deliverables: [{ name: "UI motion assets", due: "2026-06-15T00:00:00Z", acceptanceCriteria: "hero animations per spec" }],
+  deliveryTimestamps: { "UI motion assets": "2026-06-15T00:00:00Z" }, // submitted 15 Jun
+  rejectionTimestamps: { "UI motion assets": "2026-06-20T00:00:00Z" },
+  acceptanceTimestamps: { "UI motion assets": null }, // no written acceptance
+  clauses: { graceWindowHours: 48, acceptancePeriodDays: 14, deemedAcceptanceDays: 7 },
+  ...over,
+});
+
+describe("check 10: order of performance (clause 4.1)", () => {
+  it("FAILS the Northwind beat — paid before deemed acceptance, no written acceptance", () => {
+    // paid 17 Jun; submitted 15 Jun + 7d deemed = 22 Jun → paid before deemed.
+    const f = runChecks(NW({}));
+    const o = f.find((x) => x.checkId === "payment_ordering:UI motion assets");
+    expect(o?.result).toBe("fail");
+    expect(o?.clauseRef).toBe(41);
+    expect(o?.found).toContain("wrong order");
+  });
+
+  it("PASSES when paid after written acceptance (correct order)", () => {
+    const f = runChecks(NW({
+      payment: { amountMicroUsdc: "500000000", recipient: "0xkestrel", payer: "0xnorthwind", paidAt: "2026-06-21T00:00:00Z" },
+      acceptanceTimestamps: { "UI motion assets": "2026-06-20T00:00:00Z" }, // accepted 20 Jun, paid 21 Jun
+    }));
+    const o = f.find((x) => x.checkId === "payment_ordering:UI motion assets");
+    expect(o?.result).toBe("pass");
+    expect(o?.found).toContain("after acceptance");
+  });
+
+  it("FAILS when paid BEFORE written acceptance", () => {
+    const f = runChecks(NW({
+      // accepted retroactively 24 Jun, but paid 17 Jun → wrong order.
+      acceptanceTimestamps: { "UI motion assets": "2026-06-24T00:00:00Z" },
+    }));
+    const o = f.find((x) => x.checkId === "payment_ordering:UI motion assets");
+    expect(o?.result).toBe("fail");
+  });
+
+  it("PASSES when paid on/after deemed acceptance (no written acceptance)", () => {
+    const f = runChecks(NW({
+      payment: { amountMicroUsdc: "500000000", recipient: "0xkestrel", payer: "0xnorthwind", paidAt: "2026-06-22T00:00:00Z" },
+      acceptanceTimestamps: { "UI motion assets": null }, // none — rely on deemed
+    }));
+    // deemed = 15 Jun + 7d = 22 Jun; paid 22 Jun → on/after deemed.
+    const o = f.find((x) => x.checkId === "payment_ordering:UI motion assets");
+    expect(o?.result).toBe("pass");
+  });
+
+  it("is MISSING when no acceptance and no submission timestamp", () => {
+    const f = runChecks(NW({ deliveryTimestamps: { "UI motion assets": null } }));
+    const o = f.find((x) => x.checkId === "payment_ordering:UI motion assets");
+    expect(o?.result).toBe("missing");
+  });
+
+  it("is inert (no payment_ordering findings) when acceptanceTimestamps is absent", () => {
+    // The demo/non-delivery cases never populate acceptanceTimestamps, so the
+    // check must not emit spurious findings for them.
+    const f = runChecks(base({}));
+    expect(f.some((x) => x.checkId.startsWith("payment_ordering:"))).toBe(false);
+  });
+});

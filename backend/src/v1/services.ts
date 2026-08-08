@@ -19,6 +19,7 @@ import {
 import { AnchorJob, type AnchorJobKind } from "../models/index.ts";
 import { getLatestFrame } from "../agent/frame-assembly.ts";
 import { DEMO_PACK_REF } from "../seed/policy-pack.ts";
+import { NORTHWIND_PACK_REF } from "../seed/northwind-pack.ts";
 import { getFrameStatus } from "./frameStatus.ts";
 import { buildCaseContext } from "./caseContext.ts";
 
@@ -29,6 +30,29 @@ async function getDemoClauses() {
     return rows;
   } catch {
     return [];
+  }
+}
+
+/**
+ * Load the policy clauses applicable to a case. Packs are isolated by packRef
+ * (clause numbers are unique within a pack and disjoint across packs, so a
+ * finding's clauseRef + pack together name exactly one clause).
+ *
+ * Resolution: prefer the Northwind × Kestrel scenario pack when present; fall
+ * back to the demo Northstar pack otherwise. This surfaces the scenario's ToS
+ * clauses + its top-3 governing-law pointers (the clauseNumber===0 law-line
+ * family) without a per-case pack-ref field on the Case document. If the
+ * scenario pack isn't seeded, behaviour is unchanged (demo clauses render).
+ */
+async function getCaseClauses(): Promise<
+  Array<{ clauseId: string; clauseNumber: number; text: string; parameters: Record<string, unknown>; jurisdiction?: string }>
+> {
+  try {
+    const scenarioRows = await PolicyClause.find({ packRef: NORTHWIND_PACK_REF }).sort({ clauseNumber: 1 }).lean();
+    if (scenarioRows.length > 0) return scenarioRows as Array<{ clauseId: string; clauseNumber: number; text: string; parameters: Record<string, unknown>; jurisdiction?: string }>;
+    return await getDemoClauses();
+  } catch {
+    return await getDemoClauses();
   }
 }
 import {
@@ -778,7 +802,7 @@ export async function getCaseDetail(caseId: string) {
   // Agent layer (PRD Addendum A): latest decision frame + policy-pack clauses.
   // Both degrade to null/empty if absent — the case room renders v1 without them.
   const frame = await getLatestFrame(caseId);
-  const clauses = await getDemoClauses();
+  const clauses = await getCaseClauses();
   // frameStatus: non-null only while the agent pipeline is running (or briefly
   // after). Lets the UI render an "agents running" card without polling.
   const frameStatus = getFrameStatus(caseId);

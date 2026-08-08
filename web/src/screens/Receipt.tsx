@@ -36,6 +36,8 @@ export function Receipt({ v, actions, apiData }: { v: ViewModel; actions: FinneA
   const cfg = apiData?.config ?? null;
   const explorerBase = cfg?.explorerUrl ?? null;
   const chainName = cfg?.chainName ?? "Arc";
+  const registryAddress = cfg?.caseRegistryAddress ?? null;
+  const refundProtocolAddress = cfg?.refundProtocolAddress ?? null;
   const policySummary = cfg?.platform?.policy?.summary ?? "Money unlocks after the lockup period unless a dispute is open.";
 
   // Receipt status is derived from the payout's real status, not the demo
@@ -161,6 +163,30 @@ export function Receipt({ v, actions, apiData }: { v: ViewModel; actions: FinneA
                   <TechChip short={shortHex(payout.registryAnchorTx)} full={payout.registryAnchorTx} onCopy={actions.copyTech} explorer={explorerTx(explorerBase, payout.registryAnchorTx)} />
                 </ChainRow>
               )}
+            </div>
+
+            {/* The contracts that govern this payment — escrow + the integrity
+                registry that anchors every lifecycle hash on chain. Both are
+                clickable to the explorer so anyone can audit the full picture. */}
+            <div style={{ marginTop: 22, paddingTop: 16, borderTop: "1px solid var(--color-border)" }}>
+              <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: ".04em", textTransform: "uppercase", color: "var(--ink-400)", marginBottom: 12 }}>Contracts on {chainName}</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 13 }}>
+                {refundProtocolAddress && (
+                  <ChainRow label="Circle Refund Protocol (escrow)">
+                    <TechChip short={shortHex(refundProtocolAddress)} full={refundProtocolAddress} onCopy={actions.copyTech} explorer={explorerAddr(explorerBase, refundProtocolAddress)} />
+                  </ChainRow>
+                )}
+                {registryAddress && (
+                  <ChainRow label="Finné Case Registry (hash anchoring)">
+                    <TechChip short={shortHex(registryAddress)} full={registryAddress} onCopy={actions.copyTech} explorer={explorerAddr(explorerBase, registryAddress)} />
+                  </ChainRow>
+                )}
+                {!payout.registryAnchorTx && registryAddress && (
+                  <div style={{ fontSize: 12, color: "var(--ink-400)", lineHeight: 1.5 }}>
+                    Receipt hash anchoring is pending — the registry worker posts it on chain shortly after payment confirms.
+                  </div>
+                )}
+              </div>
             </div>
           </Card>
 

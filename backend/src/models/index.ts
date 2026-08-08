@@ -57,7 +57,7 @@ export interface WorkOrderDoc {
   platformKey: string;
   recipientKey: string;
   description: string;
-  deliverables: { name: string; due: string; acceptanceCriteria: string }[];
+  deliverables: WorkOrderDeliverable[];
   amount: string;
   currency: "USDC";
   status: "open" | "closed";
@@ -69,6 +69,24 @@ export interface WorkOrderDoc {
    *  Stored in S3 (objectKey); only the arbiter may download. Surfaces in the
    *  case context when a dispute opens so the agent reasons over the contract. */
   documents: WorkOrderDocument[];
+}
+/**
+ * A deliverable within a work order. The core fields (name, due,
+ * acceptanceCriteria) have always existed. The optional timestamp fields record
+ * the per-deliverable lifecycle events the deterministic checks reason over:
+ *   - submittedAt → delivery evidence (drives the grace-window check)
+ *   - acceptedAt  → written acceptance (drives the order-of-performance check)
+ *   - rejectedAt  → written rejection (drives the grace-window rejection branch)
+ * All optional and absent by default — legacy work orders omit them and the
+ * checks degrade to "missing" findings, exactly as before.
+ */
+export interface WorkOrderDeliverable {
+  name: string;
+  due: string;
+  acceptanceCriteria: string;
+  submittedAt?: string | null;
+  acceptedAt?: string | null;
+  rejectedAt?: string | null;
 }
 /** A document attached to a work order (a contract, brief, spec, etc.). */
 export interface WorkOrderDocument {
@@ -85,7 +103,17 @@ const workOrderSchema = new Schema<WorkOrderDoc>(
     platformKey: String,
     recipientKey: String,
     description: String,
-    deliverables: [{ name: String, due: String, acceptanceCriteria: String }],
+    deliverables: [{
+      name: String,
+      due: String,
+      acceptanceCriteria: String,
+      // Optional per-deliverable lifecycle timestamps (null by default). Drive
+      // the grace-window / order-of-performance / acceptance-status checks.
+      // Absent on legacy work orders → checks degrade to "missing".
+      submittedAt: { type: String, default: null },
+      acceptedAt: { type: String, default: null },
+      rejectedAt: { type: String, default: null },
+    }],
     amount: String,
     currency: String,
     status: String,
