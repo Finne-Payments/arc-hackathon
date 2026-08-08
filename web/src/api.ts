@@ -261,6 +261,32 @@ export interface PolicyClauseRow {
   version?: number;
 }
 
+/** Structured, verdict-free case context — sourced on-chain + off-chain facts
+ *  the agents reasoned over (ported from v1's V1CaseContext). Every field null-
+ *  tolerant; onChainUnavailable flags an RPC/indexing gap. */
+export interface CaseContextRow {
+  allegation: string;
+  claimType: string;
+  challengedAmountMicroUsdc: string;
+  disputeOpenedAt: string;
+  paymentAmountMicroUsdc: string;
+  payer: string;
+  recipient: string;
+  paidAt: string;
+  paymentTxHash: string;
+  response: { text: string; submittedAt: string } | null;
+  deliverables: { name: string; due: string | null; acceptanceCriteria: string | null; source: string }[];
+  evidence: { evidenceId: string; title: string; submittedBy: string; sha256: string; mimeType: string; source: string }[];
+  clauses: { clauseNumber: number; text: string; parameters: Record<string, number> }[];
+  paymentOnChain: {
+    to: string; amountDisplay: string; releaseTimestamp: string; refundTo: string;
+    withdrawnAmountDisplay: string; refunded: boolean; source: string;
+  } | null;
+  chainFigures: { arbiterReserve: string; recipientDebt: string; source: string } | null;
+  chainEvents: { eventName: string; txHash: string; block: number | null; seenAt: string; source: string }[];
+  onChainUnavailable: boolean;
+}
+
 export interface SharedCase {
   payout: PayoutRow;
   workOrder: WorkOrderRow | null;
@@ -275,6 +301,8 @@ export interface SharedCase {
   frame: AgentFrame | null;
   /** Non-null while the agent pipeline is running (drives the "agents running" card). */
   frameStatus: AgentFrameStatus | null;
+  /** Structured, verdict-free case context (sourced on-chain + off-chain facts). */
+  caseContext: CaseContextRow | null;
 }
 
 export interface SharedReceipt {
@@ -395,6 +423,11 @@ export const api = {
 
   decide: (caseNumber: string, body: { outcome: "refund" | "release" | "no_action"; reason: string }) =>
     request<{ decision: DecisionRow; unsignedTx: UnsignedTx | null }>(`/cases/${caseNumber}/decisions`, { method: "POST", body: JSON.stringify(body) }),
+
+  /** Log a per-line reviewer action on the agent decision frame (FIN-127).
+   *  Mirrors the v1 frame/actions route but keyed on caseNumber + legacy auth. */
+  logFrameAction: (caseNumber: string, body: { callId: string; action: "accept" | "edit" | "discard"; lineId?: string; originalText?: string; editedText?: string; provenance?: string }) =>
+    request<void>(`/cases/${caseNumber}/frame/actions`, { method: "POST", body: JSON.stringify(body) }),
 
   timeline: (caseNumber: string) =>
     request<{ events: { time: string; type: string; label: string; txHash?: string }[] }>(`/cases/${caseNumber}/timeline`),

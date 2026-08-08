@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import type { FinneActions, ViewModel } from "../useFinne";
 import type { ApiData } from "../useApi";
-import type { PayoutRow, CaseRow, AgentFrame, EvidenceRow, EvidenceAnnotation, PolicyClauseRow } from "../api";
+import type { PayoutRow, CaseRow, AgentFrame, EvidenceRow, EvidenceAnnotation, PolicyClauseRow, CaseContextRow } from "../api";
 import { api } from "../api";
 import {
   BackLink,
@@ -77,6 +77,8 @@ export function CaseRoom({ v, actions, apiData }: { v: ViewModel; actions: Finne
   // agents run. frameStatus is non-null while they're running.
   const frame = c?.frame ?? null;
   const frameStatus = c?.frameStatus ?? null;
+  // Structured case context (sourced on-chain + off-chain facts), ported from v1.
+  const caseContext = c?.caseContext ?? null;
   // Policy pack + governing-law notes (ported from v1 CaseRoom, FIN-115). The
   // clauseNumber 0 row(s) carry the law library; 4/7/9 are numbered clauses.
   const clauses = c?.clauses ?? [];
@@ -649,6 +651,16 @@ export function CaseRoom({ v, actions, apiData }: { v: ViewModel; actions: Finne
         </Card>
       )}
 
+      {/* Case context — sourced on-chain + off-chain facts the agents reasoned
+          over (ported from v1 CaseRoom). Each fact carries its source; refresh
+          re-reads the chain + re-runs the agents. Verdict-free by construction. */}
+      {caseContext && (
+        <CaseContextCard
+          ctx={caseContext}
+          onRefresh={() => { setRefreshing(true); api.refreshCase(caseNumber).then(() => actions.reloadCase()).finally(() => setRefreshing(false)); }}
+        />
+      )}
+
       {/* (d) timeline */}
       <Card shadow="var(--shadow-xs)" padding="22px 24px" style={{ marginBottom: 16 }}>
         <Eyebrow style={{ marginBottom: 14 }}>Timeline</Eyebrow>
@@ -821,5 +833,94 @@ function AgentBriefRunning({ stages }: { stages: { name: string; status: string 
         })}
       </div>
     </div>
+  );
+}
+
+/* ---- Case context card (ported from v1 CaseRoom, FIN-115 sourced facts) ---- */
+const CTX_SRC: React.CSSProperties = { fontSize: 9, fontFamily: "var(--font-mono)", color: "var(--color-fg-subtle)", background: "var(--color-surface-2)", padding: "1px 5px", borderRadius: "var(--radius-xs)", marginLeft: 4 };
+const CTX_ROW: React.CSSProperties = { display: "flex", gap: 8, alignItems: "center", padding: "3px 0", fontSize: 12, color: "var(--color-fg-muted)" };
+
+function formatCtxUsdc(micro: string, decimals = 2): string {
+  try {
+    const n = Number(BigInt(micro)) / 1_000_000;
+    return n.toFixed(decimals);
+  } catch { return micro; }
+}
+
+function CaseContextCard({ ctx, onRefresh }: { ctx: CaseContextRow; onRefresh: () => void }) {
+  const [refreshing, setRefreshing] = useState(false);
+  const refresh = async () => { setRefreshing(true); try { await onRefresh(); } finally { setRefreshing(false); } };
+  return (
+    <Card shadow="var(--shadow-xs)" padding="22px 24px" style={{ marginBottom: 16 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+        <Eyebrow style={{ marginBottom: 0 }}>Case context · sources the agents used</Eyebrow>
+        <button onClick={refresh} disabled={refreshing} style={{ fontSize: 11, fontWeight: 600, padding: "4px 12px", border: "1px solid var(--color-border)", borderRadius: "var(--radius-sm)", background: "var(--color-surface)", color: "var(--color-fg)", cursor: refreshing ? "default" : "pointer", opacity: refreshing ? 0.6 : 1 }}>
+          {refreshing ? "Refreshing…" : "↻ Refresh"}
+        </button>
+      </div>
+
+      <div style={{ fontSize: 12, color: "var(--color-fg)", lineHeight: 1.5, marginBottom: 12 }}>
+        <strong>{ctx.allegation || "(no allegation)"}</strong>
+        <div style={{ fontSize: 11, color: "var(--color-fg-muted)", marginTop: 2 }}>
+          Claim: {ctx.claimType.replace(/_/g, " ")}. Challenged: {formatCtxUsdc(ctx.challengedAmountMicroUsdc)} USDC. Opened {ctx.disputeOpenedAt ? new Date(ctx.disputeOpenedAt).toLocaleString() : "—"}.
+        </div>
+      </div>
+
+      {ctx.paymentOnChain ? (
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ fontSize: 11, fontWeight: 600, marginBottom: 4 }}>On-chain payment state<span style={CTX_SRC}>on-chain</span></div>
+          <div style={CTX_ROW}>Amount: <strong>{ctx.paymentOnChain.amountDisplay} USDC</strong></div>
+          <div style={CTX_ROW}>Withdrawn: {ctx.paymentOnChain.withdrawnAmountDisplay} USDC · Refunded: {ctx.paymentOnChain.refunded ? "yes" : "no"}</div>
+          <div style={CTX_ROW}>Release: {new Date(ctx.paymentOnChain.releaseTimestamp).toLocaleString()}</div>
+        </div>
+      ) : (
+        <div style={{ fontSize: 11, color: "var(--warn-600)", marginBottom: 12 }}>
+          {ctx.onChainUnavailable ? "On-chain state unavailable (RPC unreachable or payment not indexed)." : "No on-chain payment link."}
+        </div>
+      )}
+
+      {ctx.chainFigures && (
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ fontSize: 11, fontWeight: 600, marginBottom: 4 }}>Reserves<span style={CTX_SRC}>on-chain</span></div>
+          <div style={CTX_ROW}>Arbiter reserve: {ctx.chainFigures.arbiterReserve} USDC</div>
+          <div style={CTX_ROW}>Recipient debt: {ctx.chainFigures.recipientDebt} USDC</div>
+        </div>
+      )}
+
+      <div style={{ marginBottom: 12 }}>
+        <div style={{ fontSize: 11, fontWeight: 600, marginBottom: 4 }}>Deliverables<span style={CTX_SRC}>{ctx.deliverables[0]?.source ?? "none"}</span></div>
+        {ctx.deliverables.map((d, i) => (
+          <div key={i} style={CTX_ROW}>
+            <span style={{ flex: 1 }}>{d.name}{d.due ? ` (due ${new Date(d.due).toLocaleDateString()})` : ""}</span>
+            {d.acceptanceCriteria && <span style={{ fontSize: 10, color: "var(--color-fg-subtle)" }}>{d.acceptanceCriteria}</span>}
+          </div>
+        ))}
+      </div>
+
+      {ctx.evidence.length > 0 && (
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ fontSize: 11, fontWeight: 600, marginBottom: 4 }}>Evidence<span style={CTX_SRC}>evidence</span></div>
+          {ctx.evidence.map((e) => (
+            <div key={e.evidenceId} style={CTX_ROW}>
+              <span style={{ flex: 1 }}>{e.title}</span>
+              <span style={{ fontSize: 10, color: "var(--color-fg-subtle)" }}>by {shortHex(e.submittedBy)}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {ctx.response && (
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ fontSize: 11, fontWeight: 600, marginBottom: 4 }}>Recipient reply<span style={CTX_SRC}>off-chain</span></div>
+          <div style={{ fontSize: 12, color: "var(--color-fg-muted)", lineHeight: 1.45, padding: "6px 10px", background: "var(--color-surface)", borderRadius: "var(--radius-sm)", border: "1px solid var(--color-border)" }}>
+            {ctx.response.text}
+          </div>
+        </div>
+      )}
+
+      <div style={{ fontSize: 10, color: "var(--color-fg-subtle)", fontStyle: "italic" }}>
+        Facts only — the agents prepare, they never decide. Each fact is sourced; refresh re-reads the chain and re-runs the agents.
+      </div>
+    </Card>
   );
 }

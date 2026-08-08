@@ -8,6 +8,7 @@ import {
   AnchorJob,
   Brief,
   Case,
+  ChainEvent,
   Decision,
   Evidence,
   Payout,
@@ -23,6 +24,11 @@ import { PolicyClause } from "./v1/models.ts";
 import { DEMO_PACK_REF } from "./seed/policy-pack.ts";
 import { NORTHWIND_PACK_REF } from "./seed/northwind-pack.ts";
 import { loadEnv } from "./env.ts";
+import type { Address } from "viem";
+import type { StructuredCaseContext } from "./v1/caseContext.ts";
+import { readPayment, readChainFigures } from "./chain/reads.ts";
+import { arbiterAddress } from "./chain/client.ts";
+import { toBaseUnits, fromBaseUnitsDisplay } from "./usdc.ts";
 
 /**
  * Load the policy clauses applicable to a case (FIN-115). Packs are isolated by
@@ -40,6 +46,98 @@ async function getCaseClauses() {
   } catch {
     return [];
   }
+}
+
+/**
+ * Build the structured case context (the same `StructuredCaseContext` shape the
+ * v1 case room renders) from the LEGACY shared-case body. This is the legacy
+ * adapter for buildCaseContext (v1/caseContext.ts): it maps the legacy Payout/
+ * WorkOrder/Case/Evidence/Clauses into the verdict-free sourced-facts card, and
+ * reuses the SAME on-chain reads (readPayment/readChainFigures) + ChainEvent
+ * chronology as v1. Never throws — every source degrades to null/empty.
+ *
+ * This lets the legacy case room show the structured context card without going
+ * through the v1 route tree or the v1 Payment/Case models.
+ */
+export async function buildLegacyCaseContext(body: SharedCaseBody): Promise<StructuredCaseContext> {
+  const caseDoc = body.case as Record<string, unknown> & { payoutRef?: string; openedAt?: string; allegationFreeText?: string; allegationClaimType?: string; allegationAmountContested?: string };
+  const payout = body.payout as Record<string, unknown> & { paymentId?: string; amount?: string; recipientWallet?: string; txHash?: string; paidAt?: string; platformKey?: string } | null;
+  const workOrder = body.workOrder as Record<string, unknown> & { deliverables?: { name: string; due?: string | null; acceptanceCriteria?: string | null }[] } | null;
+  const response = (body.responses as { text: string; submittedAt: string }[] | undefined)?.[0] ?? null;
+
+  const allegation = caseDoc?.allegationFreeText ?? "";
+  const claimType = caseDoc?.allegationClaimType ?? "non_delivery";
+  const disputeOpenedAt = caseDoc?.openedAt ?? "";
+  const paymentAmountMicroUsdc = payout?.amount ? toBaseUnits(String(payout.amount)).toString() : "0";
+  const challengedAmountMicroUsdc = caseDoc?.allegationAmountContested
+    ? toBaseUnits(String(caseDoc.allegationAmountContested)).toString()
+    : paymentAmountMicroUsdc;
+
+  // Deliverables from the legacy work order (or a placeholder).
+  let deliverables: StructuredCaseContext["deliverables"] = [];
+  if (workOrder?.deliverables?.length) {
+    deliverables = workOrder.deliverables.map((d) => ({
+      name: d.name, due: d.due ?? null, acceptanceCriteria: d.acceptanceCriteria ?? null, source: "work_order" as const,
+    }));
+  }
+  if (deliverables.length === 0) deliverables = [{ name: "Contested deliverable", due: null, acceptanceCriteria: null, source: "placeholder" }];
+
+  const evidence: StructuredCaseContext["evidence"] = (body.evidence as Record<string, unknown>[]).map((e) => ({
+    evidenceId: String(e.evidenceId ?? ""), title: String(e.title ?? "(untitled)"), submittedBy: String(e.submittedBy ?? "unknown"),
+    sha256: String(e.sha256 ?? ""), mimeType: String(e.mimeType ?? ""), source: "evidence" as const,
+  }));
+  const clauses: StructuredCaseContext["clauses"] = (body.clauses as Record<string, unknown>[]).map((cl) => ({
+    clauseNumber: Number(cl.clauseNumber ?? 0), text: String(cl.text ?? ""), parameters: (cl.parameters ?? {}) as Record<string, number>,
+  }));
+
+  // On-chain section — identical to v1's buildCaseContext (shared helpers).
+  let paymentOnChain: StructuredCaseContext["paymentOnChain"] = null;
+  let chainFigures: StructuredCaseContext["chainFigures"] = null;
+  let chainEvents: StructuredCaseContext["chainEvents"] = [];
+  let onChainUnavailable = false;
+  const recipient = (payout?.recipientWallet ?? "") as Address | "";
+  const txHash = payout?.txHash ?? "";
+
+  let onChainPaymentId: bigint | null = null;
+  if (txHash) {
+    try {
+      const found = await Payout.findOne({ txHash }).lean();
+      if (found?.paymentId && /^\d+$/.test(found.paymentId)) onChainPaymentId = BigInt(found.paymentId);
+    } catch { /* no payout row — skip */ }
+  }
+  if (onChainPaymentId) {
+    const [onChain, figures] = await Promise.all([
+      readPayment(onChainPaymentId),
+      readChainFigures(arbiterAddress(), (recipient || null) as Address | null),
+    ]);
+    if (onChain) {
+      paymentOnChain = {
+        to: onChain.to, amountDisplay: fromBaseUnitsDisplay(onChain.amount),
+        releaseTimestamp: new Date(Number(onChain.releaseTimestamp) * 1000).toISOString(),
+        refundTo: onChain.refundTo, withdrawnAmountDisplay: fromBaseUnitsDisplay(onChain.withdrawnAmount),
+        refunded: onChain.refunded, source: "on_chain",
+      };
+    } else { onChainUnavailable = true; }
+    if (figures) chainFigures = { ...figures, source: "on_chain" };
+  } else if (txHash) {
+    onChainUnavailable = true;
+  }
+  if (txHash) {
+    try {
+      const events = await ChainEvent.find({ txHash }).sort({ block: 1 }).limit(20).lean();
+      chainEvents = events.map((e) => ({
+        eventName: String(e.eventName ?? ""), txHash: String(e.txHash ?? ""), block: (e.block as number | null) ?? null,
+        seenAt: String(e.seenAt ?? ""), source: "chain_event" as const,
+      }));
+    } catch { /* chainevents absent — skip */ }
+  }
+
+  return {
+    allegation, claimType, challengedAmountMicroUsdc, disputeOpenedAt,
+    paymentAmountMicroUsdc, payer: payout?.platformKey ?? "", recipient, paidAt: payout?.paidAt ?? disputeOpenedAt, paymentTxHash: txHash,
+    response: response ? { text: response.text, submittedAt: response.submittedAt } : null,
+    deliverables, evidence, clauses, paymentOnChain, chainFigures, chainEvents, onChainUnavailable,
+  };
 }
 
 /* ============================================================================
