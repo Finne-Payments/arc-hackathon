@@ -262,8 +262,11 @@ function AuthenticatedApp({ user, frontendRole, onLogout }: { user: PublicUser; 
     if (v.payoutVersion <= 0) return;
     let cancelled = false;
     // Immediate + escalating retries: covers the common fast-detect case and the
-    // worst-case 30s indexer tick without spinning on the RPC.
-    const timers = [0, 2500, 6000, 12000, 22000].map((ms) =>
+    // worst-case 30s indexer tick without spinning on the RPC. The schedule
+    // tops out at 38s — strictly beyond POLL_MS (30s) so a payout that lands on
+    // the indexer's next tick is still picked up (the old 22s ceiling lost that
+    // race, leaving freshly-created payouts invisible until a manual reload).
+    const timers = [0, 2500, 6000, 12000, 22000, 38000].map((ms) =>
       setTimeout(() => {
         if (cancelled) return;
         void apiActions.refresh();

@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { Address, Hash, LocalAccount } from "viem";
 import { getWalletClient, caseRegistryAddress, getPublicClient } from "./chain/client.ts";
 import { CASE_REGISTRY_ABI } from "./chain/abis.ts";
-import { AnchorJob, Payout, Case, Decision } from "./models/index.ts";
+import { AnchorJob, Payout, Case, Decision, Response as ResponseModel } from "./models/index.ts";
 
 /* ============================================================================
    Anchor worker (PRD §9.4, NEW-1 → real). Drains the AnchorJob queue and
@@ -158,6 +158,21 @@ async function processJob(job: typeof AnchorJob.prototype, registry: Address, op
         });
         break;
       }
+      case "under_review": {
+        // markUnderReview(uint256 caseId) — REVIEWER_ROLE; OPEN|RESPONDED → UNDER_REVIEW.
+        // MUST be processed before any recordDecision job for this caseId, otherwise
+        // the contract reverts (recordDecision requires status UNDER_REVIEW). The
+        // worker drains jobs in _id order, so enqueue this before the decision.
+        txHash = await wallet.writeContract({
+          address: registry,
+          abi: CASE_REGISTRY_ABI,
+          functionName: "markUnderReview",
+          args: [BigInt(job.entityId)],
+          account: operator,
+          chain: wallet.chain,
+        });
+        break;
+      }
       case "analysis": {
         // anchorAnalysis(uint256 caseId, bytes32 analysisHash, uint32 version)
         txHash = await wallet.writeContract({
@@ -289,10 +304,50 @@ async function processJob(job: typeof AnchorJob.prototype, registry: Address, op
 
 async function backfillAnchor(job: typeof AnchorJob.prototype, txHash: string): Promise<void> {
   if (job.kind === "receipt") {
+    // paymentId is the raw numeric string (the job's paymentId field, NOT entityId,
+    // which is now the keccak uint256 form).
     await Payout.updateOne({ paymentId: job.paymentId }, { $set: { registryAnchorTx: txHash } });
   } else if (job.kind === "case") {
-    await Case.updateOne({ caseNumber: job.entityId }, { $set: { registryAnchorTx: txHash } });
+    // entityId is the keccak-derived on-chain caseId; backfill Mongo by caseNumber
+    // (passed in args) and persist onChainCaseId so the indexer can reconcile
+    // later CaseOpened/DecisionRecorded events by the same key.
+    const caseNumber = job.args.caseNumber;
+    if (caseNumber) {
+      await Case.updateOne(
+        { caseNumber },
+        { $set: { registryAnchorTx: txHash, onChainCaseId: job.entityId } },
+      );
+    }
   } else if (job.kind === "decision") {
-    await Decision.updateOne({ _id: job.entityId }, { $set: { registryAnchorTx: txHash } });
+    // entityId is the case's on-chain caseId; the Mongo Decision is keyed by its
+    // own _id (decisionId in args), NOT the caseId.
+    const decisionId = job.args.decisionId;
+    if (decisionId) {
+      await Decision.updateOne({ _id: decisionId }, { $set: { registryAnchorTx: txHash } });
+    }
+  } else if (job.kind === "response") {
+    // Match the response we just created by caseRef + responseHash. submittedAt
+    // would be more precise but isn't on the job; caseRef+hash is unique enough.
+    const caseNumber = job.args.caseNumber;
+    if (caseNumber) {
+      await ResponseModel.updateOne(
+        { caseRef: caseNumber, responseHash: job.hash },
+        { $set: { registryAnchorTx: txHash } },
+      );
+    }
+  } else if (
+    job.kind === "under_review" ||
+    job.kind === "correction_outstanding" ||
+    job.kind === "correction" ||
+    job.kind === "close_no_correction"
+  ) {
+    // No dedicated Mongo field for these intermediate states; stamp the case's
+    // registryAnchorTx to the latest anchor so the UI reflects ongoing on-chain
+    // activity. Match by caseNumber (the keccak entityId isn't stored until the
+    // case-open anchor lands — backfillAnchor for "case" sets onChainCaseId).
+    const caseNumber = job.args.caseNumber;
+    if (caseNumber) {
+      await Case.updateOne({ caseNumber }, { $set: { registryAnchorTx: txHash } });
+    }
   }
 }
