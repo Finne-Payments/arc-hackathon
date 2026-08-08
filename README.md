@@ -174,6 +174,25 @@ The deploy pipeline (`.github/workflows/deploy.yml`) auto-deploys on push to `ma
 - **Legacy API** — the original routes (`/payouts`, `/cases`, `/auth/wallet`) remain for backward compatibility during the migration.
 - **Receipt** — every receipt/case/decision hash is `keccak256` of canonical JSON, verifiable forever.
 
+### Two web surfaces during migration
+
+The web app currently serves **two surfaces** while the codebase consolidates onto a single product. This is temporary and documented here so the split is not confusing:
+
+| Path | Surface | What it has | Status |
+|---|---|---|---|
+| `/` (default) | **Escrow App** (legacy) | Real on-chain `pay()` / `refundByArbiter()` / `withdraw()`, the debt path, browser-wallet signing, the merchant/customer/platform/arbiter seats, the disputes list, the decide flow. | **Live demo surface.** This is what the 9 Aug demo runs on. |
+| `/v1-app` | **Registrar preview** (v1) | The agent decision frame, immutable records, voluntary (Circle-sponsored) corrections, the governing-law library, RBAC, S3 evidence. Registrar-only — no money movement. | Preview of the intended single product. |
+
+- The default is the **escrow App at `/`** because the demo's signature beat (arbiter signs `refundByArbiter`, money visibly returns) exists only there. Set `VITE_V1_DEFAULT=true` to serve the registrar at `/` too — but note that flips off the money-moving beat (see [ADR 0007](docs/adr/0007-demo-debt-path-reinstated.md)).
+- **Consolidation plan:** after the demo, the registrar (`/v1-app`) becomes the single product. The escrow money-moving beat gets ported onto it, the load-bearing seams (`AnchorJob`, the indexer, the scheduler, case-context sources) are migrated to v1 models, and the legacy surface is removed. The coupling is structural — see `backend/src/v1/services.ts` (imports `AnchorJob`), `backend/src/v1/frameOrchestrator.ts` (reads legacy `Payout`/`WorkOrder`), and `backend/src/indexer.ts` (legacy-native) — so this is a phased migration, not a delete.
+
+## Tests
+
+```bash
+npm run test --workspaces     # runs all workspace tests
+cd contracts/refund-protocol && forge test    # contract tests
+```
+
 ## Tests
 
 ```bash
