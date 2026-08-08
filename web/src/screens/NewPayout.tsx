@@ -4,6 +4,7 @@ import type { ApiData } from "../useApi";
 import { BackLink, PrimaryButton, SecondaryButton, TechChip, SpinnerLabel } from "../components/primitives";
 import { shortHex } from "../mappers";
 import { sameAddress, uid, useAddressBook, type AddressEntry } from "../useAddressBook";
+import { CONTRACT_TEMPLATES, dueDateFromOffset, type ContractTemplate } from "../contractTemplates";
 import { api, ApiError } from "../api";
 import { approveAndPay, isUserRejection } from "../wallet";
 
@@ -83,6 +84,15 @@ export function NewPayout({ actions, apiData }: { actions: FinneActions; apiData
   // Payment-time contracts: collected as files here, uploaded to S3 AFTER the
   // on-chain pay() confirms (the WorkOrder they attach to only exists then).
   const [pendingContracts, setPendingContracts] = useState<File[]>([]);
+  // Selected England & Wales contract template (pre-fills description +
+  // deliverables). Null = start from scratch.
+  const [template, setTemplate] = useState<ContractTemplate | null>(null);
+
+  const applyTemplate = (t: ContractTemplate) => {
+    setTemplate(t);
+    setDescription(t.description);
+    setDeliverables(t.deliverables.map((d) => ({ id: uid(), name: d.name, due: dueDateFromOffset(d.dueInDays) })));
+  };
 
   const numericAmount = Number(amount);
   const configLoaded = !!apiData?.config; // null until /api/config resolves (fetched independently of auth)
@@ -225,6 +235,34 @@ export function NewPayout({ actions, apiData }: { actions: FinneActions; apiData
       )}
 
       <div style={{ background: "var(--color-surface)", border: "1px solid var(--color-border)", borderRadius: "var(--radius-lg)", boxShadow: "var(--shadow-xs)", padding: 28, display: "flex", flexDirection: "column", gap: 20 }}>
+        {/* England & Wales contract template picker — pre-fills description +
+            deliverables so the merchant can start fast, then edit. */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <label style={{ fontSize: 13, fontWeight: 600 }}>Start from a template (England & Wales)</label>
+          <select
+            className="finne-input"
+            value={template?.id ?? ""}
+            onChange={(e) => {
+              const t = CONTRACT_TEMPLATES.find((x) => x.id === e.target.value) ?? null;
+              if (t) applyTemplate(t);
+              else { setTemplate(null); }
+            }}
+            style={{ padding: "9px 12px", fontSize: 14 }}
+          >
+            <option value="">Start from scratch</option>
+            {CONTRACT_TEMPLATES.map((t) => (
+              <option key={t.id} value={t.id}>{t.label} — {t.hint}</option>
+            ))}
+          </select>
+          {template && (
+            <div style={{ fontSize: 12, color: "var(--color-fg-muted)", lineHeight: 1.5, padding: "10px 12px", background: "var(--color-surface-2)", border: "1px solid var(--color-border)", borderRadius: "var(--radius-sm)" }}>
+              <div style={{ fontWeight: 600, marginBottom: 4, color: "var(--color-fg-subtle)" }}>Governing law</div>
+              {template.governingLawNote}
+              <div style={{ marginTop: 6, fontStyle: "italic" }}>Pre-filled the description + {template.deliverables.length} deliverables — edit them below before paying.</div>
+            </div>
+          )}
+        </div>
+
         {/* from (refund / treasury) — refunds return here */}
         <AddressField
           fieldLabel="Refund wallet (your treasury)"
