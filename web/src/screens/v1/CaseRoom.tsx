@@ -193,41 +193,56 @@ export function CaseRoom({
               </div>
             );
           })}
-          {/* Governing-law row (clauseNumber 0) — the law library (lawLines) +
-              a disclaimer. Each note renders its one-sentence line, attribution
-              (author), its reviewRef, and a "see" pointer per sourceRef. Settled
-              common-law principles carry an empty sourceRefs and render without a
-              pointer. The agent cites these as pointers and frames turning
-              questions against them; it never decides. (FIN-112) */}
+          {/* Governing-law pointers — the law library. Two supported shapes, both
+              keyed on clauseNumber === 0:
+              (a) one governing-law row carrying a lawLines[] array — each note
+                  renders its line, attribution (author), reviewRef, and a "see"
+                  pointer per sourceRef. Settled principles carry empty sourceRefs.
+              (b) a family of clauseNumber===0 rows, each a bare pointer (text +
+                  jurisdiction) — the Northwind pack's shape.
+              The agent cites these as pointers and frames turning questions
+              against them; it never decides. (FIN-112) */}
           {(() => {
-            const lawRow = activeCase.clauses.find((c) => c.clauseNumber === 0);
-            if (!lawRow) return null;
-            const jurisdiction = lawRow.jurisdiction;
-            const notes = lawRow.lawLines && lawRow.lawLines.length > 0
-              ? lawRow.lawLines
-              : [{ note: "law", text: lawRow.text, jurisdiction: jurisdiction ?? "", author: lawRow.author, reviewRef: lawRow.reviewRef, version: lawRow.version, sourceRefs: [] }]; // back-compat
+            const lawRows = activeCase.clauses.filter((c) => c.clauseNumber === 0);
+            if (lawRows.length === 0) return null;
+            const first = lawRows[0];
+            const jurisdiction = first.jurisdiction;
+            const disclaimer = first.disclaimer;
+            // (a) the lawLines[] array shape (artifact spec): render from the row.
+            const notes = first.lawLines && first.lawLines.length > 0
+              ? first.lawLines.map((l) => ({ key: l.note, text: l.text, author: l.author, reviewRef: l.reviewRef, sourceRefs: l.sourceRefs }))
+              // (b) the multi-row pointer shape (Northwind pack): one note per row.
+              : lawRows.map((c, i) => ({ key: c.clauseId, text: c.text, author: c.author, reviewRef: c.reviewRef, sourceRefs: [] as { cite: string; url: string }[] , last: i === lawRows.length - 1 }));
             return (
               <div style={{ padding: "10px 0 4px", marginTop: 6, borderTop: "1px solid var(--color-border-subtle)" }}>
                 <div style={{ fontFamily: "var(--font-mono)", fontWeight: 600, fontStyle: "normal", color: "var(--color-fg-subtle)", fontSize: 10, marginBottom: 6 }}>
                   Governing law{jurisdiction ? ` · ${jurisdiction}` : ""}
                 </div>
                 {notes.map((l, i) => (
-                  <div key={l.note} style={{ fontSize: 11, color: "var(--color-fg-muted)", lineHeight: 1.5, fontStyle: "italic", marginBottom: i < notes.length - 1 ? 8 : 0 }}>
+                  <div key={l.key} style={{ fontSize: 11, color: "var(--color-fg-muted)", lineHeight: 1.5, fontStyle: "italic", marginBottom: i < notes.length - 1 ? 8 : 0 }}>
                     {l.text}
-                    <div style={{ fontSize: 10, color: "var(--color-fg-subtle)", marginTop: 4, fontStyle: "normal" }}>
-                      {l.author} · {l.reviewRef}
-                      {l.sourceRefs.map((s, j) => (
-                        <span key={j}>
-                          {j === 0 ? " · see " : "; "}
-                          <a href={s.url} target="_blank" rel="noopener noreferrer" style={{ color: "var(--color-fg-subtle)", textDecoration: "underline", textDecorationStyle: "dotted" }}>{s.cite}</a>
-                        </span>
-                      ))}
-                    </div>
+                    {(l.author || l.reviewRef || l.sourceRefs.length > 0) && (
+                      <div style={{ fontSize: 10, color: "var(--color-fg-subtle)", marginTop: 4, fontStyle: "normal" }}>
+                        {l.author && <span>{l.author}</span>}
+                        {l.author && l.reviewRef && <span> · </span>}
+                        {l.reviewRef && <span>{l.reviewRef}</span>}
+                        {l.sourceRefs.map((s, j) => (
+                          <span key={j}>
+                            {j === 0 ? " · see " : "; "}
+                            <a href={s.url} target="_blank" rel="noopener noreferrer" style={{ color: "var(--color-fg-subtle)", textDecoration: "underline", textDecorationStyle: "dotted" }}>{s.cite}</a>
+                          </span>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 ))}
-                {lawRow.disclaimer && (
+                {disclaimer ? (
                   <div style={{ fontSize: 10, color: "var(--color-fg-subtle)", marginTop: 6, fontStyle: "normal" }}>
-                    {lawRow.disclaimer}
+                    {disclaimer}
+                  </div>
+                ) : (
+                  <div style={{ fontSize: 10, color: "var(--color-fg-subtle)", marginTop: 6, fontStyle: "normal" }}>
+                    Curated offline; not legal advice. The agent cites these as pointers; it does not recommend or decide.
                   </div>
                 )}
               </div>
