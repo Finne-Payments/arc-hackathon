@@ -233,6 +233,31 @@ async function derivePlatformKey(txSender?: string): Promise<string> {
   return loadEnv().defaultPlatformKey;
 }
 
+/**
+ * One-time, idempotent boot reconciliation. Payouts created before the
+ * Platform-collection derivation were stamped with a stale platformKey (the
+ * payer's address prefix, or the payer's seat platformKey) and are invisible to
+ * the scoped reviewer. The indexer can't self-heal them once they've aged out
+ * of the rolling window (e.g. paymentId 11 ended up ~90k blocks behind). This
+ * scans every payout and re-derives platformKey from the operating Platform,
+ * correcting any that don't match a known Platform key. Safe to run on every
+ * boot: it only writes when a value actually changes, and platformKey is now
+ * mutable (not in PAYOUT_IMMUTABLE).
+ */
+export async function reconcilePayoutPlatformKeys(): Promise<void> {
+  const knownKeys = (await Platform.find({}).select("key").lean()).map((p) => p.key);
+  const correctKey = knownKeys[0] ?? loadEnv().defaultPlatformKey;
+  const payouts = await Payout.find({}).lean();
+  let fixed = 0;
+  for (const p of payouts) {
+    if (!knownKeys.includes(p.platformKey)) {
+      await Payout.updateOne({ _id: p._id }, { $set: { platformKey: correctKey } });
+      fixed++;
+    }
+  }
+  if (fixed > 0) console.log(`[reconcile] corrected platformKey on ${fixed} payout(s) → "${correctKey}"`);
+}
+
 /** Idempotent: a replay of a known paymentId returns the existing payout. */
 export async function recordDetectedPayment(det: DetectedPayment): Promise<{ payout: PayoutTypes; created: boolean }> {
   const existing = await Payout.findOne({ paymentId: det.paymentId });
