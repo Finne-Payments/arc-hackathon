@@ -7,6 +7,7 @@ import { startDeadlineScheduler } from "./scheduler.ts";
 import { seedDemoPolicyPack } from "./seed/policy-pack.ts";
 import { seedNorthwindPack } from "./seed/northwind-pack.ts";
 import { seedNorthwindScenario } from "./seed/northwind-scenario.ts";
+import { reconcilePayoutPlatformKeys } from "./services.ts";
 
 /* ============================================================================
    Server entry. Boot order (PRD §16.2):
@@ -38,6 +39,13 @@ async function main(): Promise<void> {
   // agent pipeline can run end-to-end on CASE-NW01. Same idempotent, best-
   // effort contract. Must run after the policy pack so clauses are in force.
   void seedNorthwindScenario();
+
+  // Reconcile payout platformKeys AFTER the seeds (so the Platform collection is
+  // populated). Corrects payouts stamped with a stale platformKey (the payer's
+  // address prefix / seat key) that are invisible to the scoped reviewer and
+  // that the indexer can't self-heal once they age out of its rolling window.
+  // Idempotent + best-effort — never blocks boot.
+  void reconcilePayoutPlatformKeys();
 
   if (!env.registryOperatorKey) {
     console.warn("[backend] REGISTRY_OPERATOR_PRIVATE_KEY not set — anchor jobs will queue indefinitely.");
