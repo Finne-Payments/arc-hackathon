@@ -30,21 +30,35 @@ const POLL_MS = 30_000;
 const STALE_THRESHOLD_MS = 90_000;
 
 let running = false;
-let timer: ReturnType<typeof setInterval> | null = null;
+let timer: ReturnType<typeof setTimeout> | null = null;
 
 export function startIndexer(): void {
   if (running) return;
   running = true;
-  timer = setInterval(tick, POLL_MS);
-  // fire one immediately so we don't wait on boot
+  // Self-scheduling setTimeout (NOT setInterval): a tick does many sequential
+  // RPC calls (getLogs per chunk + getTransaction per event + Mongo writes), so
+  // under Arc's rate-limiting a single tick can take longer than POLL_MS. With
+  // setInterval those ticks would OVERLAP and pile up — each issuing more RPC
+  // calls, triggering more rate-limiting, until the event loop saturates and the
+  // heartbeat stops advancing entirely (the live indexer stalled exactly this
+  // way: /status reported stale:true with a frozen lastSeenAt). Self-scheduling
+  // guarantees at most one tick is ever in flight.
+  const scheduleNext = () => {
+    if (!running) return;
+    timer = setTimeout(async () => {
+      await tick();
+      scheduleNext();
+    }, POLL_MS);
+  };
   void tick();
+  scheduleNext();
   const lookback = loadEnv().indexerLookbackBlocks;
-  console.log("[indexer] scanning last", lookback.toString(), "blocks every", POLL_MS, "ms");
+  console.log("[indexer] scanning last", lookback.toString(), "blocks every", POLL_MS, "ms (no-overlap)");
 }
 
 export function stopIndexer(): void {
   running = false;
-  if (timer) clearInterval(timer);
+  if (timer) clearTimeout(timer);
   timer = null;
 }
 
