@@ -333,6 +333,15 @@ export class FinneStack extends cdk.Stack {
        this makes CloudFront behave exactly like hitting the ALB directly, just
        with HTTPS + a stable URL. No domain → CloudFront's free default cert on
        its *.cloudfront.net domain (still AWS-generated, but secure).
+
+       ALL_VIEWER origin request policy: auth is a stateless JWT in the
+       `Authorization: Bearer` header (no cookies). CloudFront WITHHOLDS the
+       Authorization header from the origin by default — without an origin
+       request policy that forwards it, every authenticated API call arrived at
+       the backend header-less → anonymous session → 401 "Log in first". This
+       was invisible locally (Vite proxies /api → :4000 with no stripping) but
+       broke every protected route in prod. ALL_VIEWER forwards all viewer
+       headers (incl. Authorization), cookies, and query strings to the ALB.
        ====================================================================== */
     const distribution = new cloudfront.Distribution(this, "FinneDistribution", {
       defaultBehavior: {
@@ -341,6 +350,9 @@ export class FinneStack extends cdk.Stack {
         }),
         // API + SPA must not be cached at the edge.
         cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
+        // Forward the Authorization header (JWT) + all viewer headers/cookies to
+        // the origin. Without this CloudFront strips Authorization → 401s.
+        originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER,
         // Allow POST/PUT/PATCH so API writes work.
         allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
         viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
