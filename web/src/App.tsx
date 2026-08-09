@@ -98,14 +98,36 @@ export default function App() {
   const [user, setUser] = useState<PublicUser | null>(null);
   const [frontendRole, setFrontendRole] = useState<Role | null>(null);
   const [authChecked, setAuthChecked] = useState(false);
+  // A token exists but the session couldn't be restored due to a TRANSIENT
+  // failure (not a 401). Show a "couldn't reach the server — retry" state
+  // instead of the login screen, so a refresh during a deploy doesn't look like
+  // a logout. The token is retained; retrying may succeed once the backend is
+  // reachable again.
+  const [restoreFailed, setRestoreFailed] = useState(false);
   const navigate = useNavigate();
 
   // Boot: if a token exists in localStorage, restore the session + chosen role.
   useEffect(() => {
     const token = getToken();
-    if (token) {
+    if (!token) {
+      setAuthChecked(true);
+      return;
+    }
+
+    // Restore the user from the token. Only log out on a DEFINITIVE auth
+    // rejection (HTTP 401 = the token itself is invalid/expired). A transient
+    // failure (network blip, 5xx, CloudFront edge still propagating, an ECS
+    // redeploy mid-request) must NOT discard a valid token — otherwise a single
+    // hiccup on refresh logs the user out even though their session is fine.
+    // That was happening: getMe() failing once → setToken(null) → login screen.
+    // On a transient failure we keep the token and surface as "still loading"
+    // (authChecked stays false) so a refresh during a deploy doesn't evict the
+    // user; they can refresh again once the backend is reachable.
+    let cancelled = false;
+    const restore = (attempt: number) => {
       api.getMe()
         .then((res) => {
+          if (cancelled) return;
           setUser(res.user);
           // Restore the frontend role from localStorage (chosen at login), or
           // fall back to the seat the backend bound to this wallet, then to the
@@ -118,16 +140,61 @@ export default function App() {
           } else {
             setFrontendRole(userRoleToFrontend(res.user.role));
           }
+          setAuthChecked(true);
         })
-        .catch(() => setToken(null))
-        .finally(() => setAuthChecked(true));
-    } else {
-      setAuthChecked(true);
-    }
+        .catch((err: unknown) => {
+          if (cancelled) return;
+          const status = (err as { status?: number })?.status;
+          if (status === 401) {
+            // Definitive: the token is bad/expired. Drop it and show login.
+            setToken(null);
+            setAuthChecked(true);
+            return;
+          }
+          // Transient (network / 5xx / edge propagation). Retry once after a
+          // short delay; if it still fails, keep the token and let the user
+          // retry by refreshing — do NOT evict a possibly-valid session.
+          if (attempt < 1) {
+            setTimeout(() => restore(attempt + 1), 1200);
+          } else {
+            setRestoreFailed(true);
+            setAuthChecked(true);
+          }
+        });
+    };
+    restore(0);
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   if (!authChecked) {
     return <div style={{ minHeight: "100vh", background: "var(--color-bg)" }} />;
+  }
+
+  // A token exists but the session couldn't be restored due to a transient
+  // failure (the token was NOT discarded). Offer a retry instead of showing the
+  // login screen, so a refresh during a deploy/edge-propagation doesn't look
+  // like a logout. Clicking retry re-runs the restore; a full reload works too.
+  if (restoreFailed && (!user || !frontendRole)) {
+    return (
+      <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "var(--color-bg)", padding: 16 }}>
+        <div style={{ textAlign: "center", maxWidth: 360 }}>
+          <div style={{ fontFamily: "var(--font-sans)", fontWeight: 700, fontSize: 16, color: "var(--color-fg)", marginBottom: 8 }}>
+            Couldn't reach Finné
+          </div>
+          <div style={{ fontFamily: "var(--font-sans)", fontSize: 13, color: "var(--color-fg-muted)", marginBottom: 16 }}>
+            Your session is still saved — the server couldn't be reached just now. Try again in a moment.
+          </div>
+          <button
+            onClick={() => window.location.reload()}
+            style={{ fontFamily: "var(--font-sans)", fontWeight: 600, fontSize: 13, padding: "8px 16px", borderRadius: "var(--radius-md)", border: "1px solid var(--color-border)", background: "var(--brand-500)", color: "#fff", cursor: "pointer" }}
+          >
+            Retry
+          </button>
+        </div>
+      </div>
+    );
   }
 
   // Not logged in → show the login screen.
