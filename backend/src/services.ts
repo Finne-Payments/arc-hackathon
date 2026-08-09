@@ -14,7 +14,6 @@ import {
   Payout,
   Platform,
   Response as ResponseModel,
-  User,
   WorkOrder,
   type PayoutDoc,
   type CaseDoc,
@@ -210,10 +209,46 @@ export interface DetectedPayment {
   releaseTimestamp?: string;
 }
 
+/**
+ * Resolve the platformKey a payout should be stamped with so the per-seat scope
+ * filter (scopeFor: { platformKey: caller.platformKey }) matches and the
+ * reviewer sees the payout in the ledger. A payout belongs to the PLATFORM that
+ * operates it — NOT to whoever happened to sign the pay() tx. Resolve
+ * most-specific first:
+ *   1. the Platform whose payWallet made the payment (the operator treasury)
+ *   2. otherwise the single operating platform (Platform.findOne — single-platform deploy)
+ *   3. otherwise env.defaultPlatformKey ("northstar")
+ * The previous logic derived platformKey from the payer's USER record, which
+ * (a) left payouts paid from an unregistered wallet stamped with the address
+ * prefix and invisible to the reviewer, and (b) when the payer WAS a User,
+ * inherited that user's seat platformKey — wrong for a treasury/operator key.
+ */
+async function derivePlatformKey(txSender?: string): Promise<string> {
+  const byWallet = txSender
+    ? await Platform.findOne({ payWallet: { $regex: new RegExp(`^${txSender.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i") } }).lean()
+    : null;
+  if (byWallet?.key) return byWallet.key;
+  const operatingPlatform = await Platform.findOne({}).lean();
+  if (operatingPlatform?.key) return operatingPlatform.key;
+  return loadEnv().defaultPlatformKey;
+}
+
 /** Idempotent: a replay of a known paymentId returns the existing payout. */
 export async function recordDetectedPayment(det: DetectedPayment): Promise<{ payout: PayoutTypes; created: boolean }> {
   const existing = await Payout.findOne({ paymentId: det.paymentId });
-  if (existing) return { payout: existing, created: false };
+  if (existing) {
+    // Re-derive platformKey and correct it if the stored value is stale. Earlier
+    // builds stamped payouts with the payer's address prefix (or the payer's
+    // User-seat platformKey), which made them invisible to the scoped reviewer.
+    // platformKey is now mutable (removed from PAYOUT_IMMUTABLE) precisely so
+    // this reconciliation can backfill existing rows without a manual migration.
+    const freshKey = await derivePlatformKey(det.txSender);
+    if (freshKey && freshKey !== existing.platformKey) {
+      existing.platformKey = freshKey;
+      await existing.save();
+    }
+    return { payout: existing, created: false };
+  }
 
   // Derive the recipient key from the real on-chain recipient address. Do NOT
   // look up seeded Recipient/Platform/work-order records (which would stamp
@@ -222,20 +257,8 @@ export async function recordDetectedPayment(det: DetectedPayment): Promise<{ pay
   // endpoint, linked to the real paymentId.
   const recipientKey = det.to.toLowerCase().slice(0, 10);
 
-  // Resolve the platformKey from the SENDER's User record so the per-seat scope
-  // filter (scopeFor: { platformKey: caller.platformKey }) matches. If the
-  // sender isn't a known user (the common case — payouts are paid from a
-  // treasury/operator wallet, not the reviewer's login wallet), fall back to the
-  // platform's own key (env.defaultPlatformKey, "northstar") so the payout is
-  // visible to the platform's reviewer. The previous fallback (the sender's
-  // address prefix) made every such payout invisible to the scoped reviewer.
-  let platformKey = loadEnv().defaultPlatformKey;
-  if (det.txSender) {
-    const senderUser = await User.findOne({
-      walletAddress: { $regex: new RegExp(`^${det.txSender.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i") },
-    }).lean();
-    if (senderUser?.platformKey) platformKey = senderUser.platformKey;
-  }
+  // A payout belongs to the PLATFORM that operates it (see derivePlatformKey).
+  const platformKey = await derivePlatformKey(det.txSender);
 
   // lockupEnd = the REAL on-chain release timestamp when the indexer provides it
   // (from the PaymentCreated event). Falls back to paidAt + 30 days only when the

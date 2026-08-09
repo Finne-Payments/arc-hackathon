@@ -160,8 +160,14 @@ export interface PayoutDoc {
 }
 const PAYOUT_IMMUTABLE = [
   "paymentId", "chain", "contractAddress", "txHash", "amount", "refundTo",
-  "platformKey", "recipientKey", "recipientWallet", "workOrderRef", "trancheIndex",
+  "recipientKey", "recipientWallet", "workOrderRef", "trancheIndex",
   "disputeDeadline", "lockupEnd", "receiptHash", "paidAt",
+  // NOTE: platformKey is intentionally NOT immutable. It's a derived scoping
+  // field (which platform a payout belongs to), not an audit anchor like
+  // txHash/amount/receiptHash. Keeping it mutable lets the indexer/backfill
+  // correct it when the derivation changes — e.g. payouts created before the
+  // Platform-collection derivation were stamped with the payer's address prefix
+  // and were invisible to the scoped reviewer until platformKey was corrected.
 ];
 const payoutSchema = new Schema<PayoutDoc>(
   {
