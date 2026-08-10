@@ -217,8 +217,21 @@ function IdlePhase({ v, refundTo, caseNumber, actions, contested, total, recipie
               // No wallet or fallback → simulation
               v.recordDecision();
             } else {
-              // Non-refund decisions are password-only (no wallet needed).
-              v.recordDecision();
+              // Non-refund decisions (reject/no_action): persist to the backend,
+              // which closes the case server-side. Previously this only flipped
+              // local phase state (a pure simulation), so the decision was never
+              // recorded and the CaseRoom stayed "Under review" with the decide
+              // button still visible.
+              try {
+                await api.decide(caseNumber, { outcome: "release", reason: v.decReason });
+                // Reload the case so the CaseRoom reflects DECIDED/CLOSED and the
+                // decide affordance disappears (gated on decision presence).
+                actions.reloadCase();
+                actions.reloadPayouts();
+                v.recordDecision(); // flips local phase to "recorded"
+              } catch (e) {
+                setWalletError(e instanceof Error ? e.message : "Could not record the decision. Try again.");
+              }
             }
           }}
           disabled={v.recordDisabled}
