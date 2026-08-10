@@ -481,10 +481,10 @@ export function useFinne(initialRole: Role = "arbiter") {
        * room + receipt stayed stale (still DISPUTED, no refundTxHash) until a
        * manual refresh — the flow looked broken even though the chain had moved.
        */
-      signRefundWithWallet: async (unsignedTx: { to: string; abi: unknown[]; functionName: string; args: (string | number)[] }) => {
+      signRefundWithWallet: async (unsignedTx: { to: string; abi: unknown[]; functionName: string; args: (string | number)[] }, requiredSigner?: string) => {
         try {
           patch({ decPhase: "awaiting" });
-          const txHash = await signRefund(unsignedTx as never);
+          const txHash = await signRefund(unsignedTx as never, requiredSigner);
           patch({ decPhase: "pending", decTxHash: txHash });
           // Genuinely confirm: wait for the tx to be mined on Arc. Throws on
           // revert/timeout → caught below → failed phase. This replaces the old
