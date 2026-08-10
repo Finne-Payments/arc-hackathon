@@ -26,6 +26,7 @@ export function caseStatusToStage(status: string): CaseStage {
       return "under_review";
     case "CLOSED":
     case "EXECUTED":
+    case "DECIDED": // a refund decision sits in DECIDED while awaiting on-chain confirmation
       return "decided";
     default:
       return "under_review";

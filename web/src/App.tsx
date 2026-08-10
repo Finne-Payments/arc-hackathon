@@ -365,7 +365,11 @@ function AuthenticatedApp({ user, frontendRole, onLogout }: { user: PublicUser; 
     const status = c.status ?? "UNDER_REVIEW";
     const newStage = status === "AWAITING_RESPONSE" ? "awaiting_response"
       : status === "UNDER_REVIEW" ? "under_review"
-      : status === "CLOSED" || status === "EXECUTED" ? "decided"
+      // DECIDED must map to "decided" too — a refund decision sits in DECIDED
+      // while awaiting wallet signature + on-chain confirmation. Falling through
+      // to "under_review" kept the Decide button visible and showed "Under
+      // review" for a case that was already decided.
+      : status === "DECIDED" || status === "CLOSED" || status === "EXECUTED" ? "decided"
       : "under_review";
     if (newStage !== v.stage) {
       actions.setCaseStage(newStage);

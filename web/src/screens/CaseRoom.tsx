@@ -673,7 +673,12 @@ export function CaseRoom({ v, actions, apiData }: { v: ViewModel; actions: Finne
 
       {/* case actions */}
 
-      {v.canDecide && (
+      {/* Hide the decide affordance entirely once a decision exists — even for a
+          refund that's still awaiting wallet signature / on-chain confirmation
+          (case status DECIDED). The decision row is the source of truth here:
+          if it's present the case is decided, period. Without this the arbiter
+          could re-enter the decision flow for a case that's already decided. */}
+      {v.canDecide && !c?.decision && (
         <>
           {v.reqSent && (
             <div style={{ display: "flex", alignItems: "center", gap: 10, background: "var(--brand-50)", border: "1px solid var(--brand-200)", borderRadius: "var(--radius-md)", padding: "12px 16px", marginBottom: 12, fontSize: 13, color: "var(--brand-800)" }}>
