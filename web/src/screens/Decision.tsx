@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type { FinneActions, ViewModel } from "../useFinne";
 import type { ApiData } from "../useApi";
 import type { DecPhase } from "../types";
@@ -5,7 +6,7 @@ import { BackLink, Card, PrimaryButton, SecondaryButton, TechChip, Spinner } fro
 import { FramePanel } from "../components/FramePanel";
 import { explorerTx, shortHex } from "../mappers";
 import { api } from "../api";
-import { detectWallet, connectWallet, isUserRejection } from "../wallet";
+import { detectWallet, connectWallet, isUserRejection, WrongWalletError } from "../wallet";
 
 export function Decision({ v, actions, apiData }: { v: ViewModel; actions: FinneActions; apiData?: ApiData }) {
   const c = apiData?.activeCase ?? null;
@@ -105,7 +106,7 @@ function PhaseRouter({ phase, v, actions, refundTo, caseNumber, explorerBase, co
   onAcceptLine: (text: string) => void;
   onEditLine: (originalText: string, editedText: string) => void;
 }) {
-  if (phase === "idle") return <IdlePhase v={v} refundTo={refundTo} caseNumber={caseNumber} actions={actions} contested={contested} total={total} recipientName={recipientName} platformName={platformName} previewText={previewText} frame={frame} onAcceptLine={onAcceptLine} onEditLine={onEditLine} />;
+  if (phase === "idle") return <IdlePhase v={v} refundTo={refundTo} caseNumber={caseNumber} actions={actions} contested={contested} total={total} recipientName={recipientName} platformName={platformName} previewText={previewText} frame={frame} onAcceptLine={onAcceptLine} onEditLine={onEditLine} arbiterWallet={arbiterWallet} />;
   if (phase === "awaiting") return <AwaitingPhase onCancel={v.cancelSignature} contested={contested} refundTo={refundTo} />;
   if (phase === "sig_rejected") return <SigRejectedPhase onRetry={v.retrySign} onCancel={v.cancelSignature} />;
   if (phase === "pending") return <PendingPhase onCopy={actions.copyTech} refundTo={refundTo} explorerBase={explorerBase} txHash={txHash} />;
@@ -114,13 +115,18 @@ function PhaseRouter({ phase, v, actions, refundTo, caseNumber, explorerBase, co
   return <RecordedPhase onBack={() => actions.go("case")} arbiterName={arbiterName} arbiterWallet={arbiterWallet} />;
 }
 
-function IdlePhase({ v, refundTo, caseNumber, actions, contested, total, recipientName, platformName, previewText, frame, onAcceptLine, onEditLine }: {
+function IdlePhase({ v, refundTo, caseNumber, actions, contested, total, recipientName, platformName, previewText, frame, onAcceptLine, onEditLine, arbiterWallet }: {
   v: ViewModel; refundTo: string; caseNumber: string; actions: FinneActions;
   contested: string; total: string; recipientName: string; platformName: string; previewText: string;
   frame: import("../api").AgentFrame | null;
   onAcceptLine: (text: string) => void;
   onEditLine: (originalText: string, editedText: string) => void;
+  arbiterWallet: string;
 }) {
+  // Wallet-signing error to surface (e.g. the wrong wallet is connected for
+  // refundByArbiter). Without this the flow silently fell through to the labeled
+  // simulation on any wallet error, hiding the real cause.
+  const [walletError, setWalletError] = useState<string | null>(null);
   return (
     <Card shadow="var(--shadow-xs)" padding="24px">
       <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>Your reasons</div>
@@ -163,10 +169,22 @@ function IdlePhase({ v, refundTo, caseNumber, actions, contested, total, recipie
         <FramePanel frame={frame} onAcceptLine={onAcceptLine} onEditLine={onEditLine} />
       </div>
 
+        {walletError && (
+          <div style={{ background: "rgba(192, 42, 42, 0.08)", border: "1px solid rgba(192, 42, 42, 0.4)", borderRadius: "var(--radius-md)", padding: "12px 14px", marginBottom: 14, fontSize: 13, lineHeight: 1.55, color: "var(--color-fg)" }}>
+            <strong>Can&apos;t sign yet.</strong> {walletError}
+            {arbiterWallet && (
+              <div style={{ marginTop: 6, fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--color-fg-muted)" }}>
+                Required wallet: {arbiterWallet}
+              </div>
+            )}
+          </div>
+        )}
+
         <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
         <button
           onClick={async () => {
             if (v.recordDisabled) return;
+            setWalletError(null);
             if (v.approveSelected) {
               // Refund requires a wallet signature. Try the real wallet path first;
               // fall back to the labeled simulation if no wallet is detected.
@@ -176,14 +194,24 @@ function IdlePhase({ v, refundTo, caseNumber, actions, contested, total, recipie
                   // First, record the decision via the API to get the unsigned tx.
                   const result = await api.decide(caseNumber, { outcome: "refund", reason: v.decReason });
                   if (result.unsignedTx) {
-                    // Connect the wallet and sign the real transaction.
+                    // Connect the wallet and sign the real transaction. Pass the
+                    // arbiter address so signRefund can pre-flight: refundByArbiter
+                    // has onlyArbiter, so a non-arbiter wallet reverts on chain
+                    // with no readable reason. WrongWalletError is thrown BEFORE
+                    // broadcasting and surfaced below — not swallowed into the sim.
                     await connectWallet();
-                    await actions.signRefundWithWallet(result.unsignedTx);
+                    await actions.signRefundWithWallet(result.unsignedTx, arbiterWallet || undefined);
                     return;
                   }
                 }
               } catch (e) {
                 if (isUserRejection(e)) return; // user declined — stay on the decision
+                // Wrong wallet → show a clear message, do NOT fall through to the
+                // simulation (which would silently pretend the refund happened).
+                if (e instanceof WrongWalletError) {
+                  setWalletError(e.message);
+                  return;
+                }
                 // other wallet error → fall through to simulation
               }
               // No wallet or fallback → simulation

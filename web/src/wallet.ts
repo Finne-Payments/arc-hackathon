@@ -1,6 +1,22 @@
 import { createWalletClient, custom, defineChain, createPublicClient, http, type WalletClient, type Address, type Hash } from "viem";
 import type { UnsignedTx } from "./api";
 
+/**
+ * Thrown when the connected wallet is not the one a transaction requires.
+ * refundByArbiter reverts on chain unless msg.sender == arbiter; without this
+ * pre-flight check the user discovers that only as a reverted tx in their
+ * wallet/explorer (the contract revert `CallerNotAllowed` carries no message).
+ * Catch this in the UI to tell them which wallet to connect.
+ */
+export class WrongWalletError extends Error {
+  constructor(public readonly connected: string, public readonly required: string) {
+    super(
+      `Wrong wallet connected. This action must be signed by ${required}, but the connected wallet is ${connected}. Switch your wallet to the required account and try again.`,
+    );
+    this.name = "WrongWalletError";
+  }
+}
+
 /* ============================================================================
    Wallet integration (PRD §14.3, D1/D11).
    Detects an injected EIP-1193 provider (window.ethereum) and exposes two
@@ -135,10 +151,20 @@ export function getWalletClient(): WalletClient | null {
  * Sign a refund: the reviewer's browser wallet calls refundByArbiter(paymentId)
  * on the RefundProtocol. Returns the transaction hash on success.
  * User rejection throws — the caller classifies it and recovers (D11).
+ *
+ * `requiredSigner` (the arbiter address) enables a pre-flight check: the
+ * contract's refundByArbiter has `onlyArbiter` (msg.sender == arbiter), so if
+ * the connected wallet isn't the arbiter the tx reverts on chain with no
+ * readable reason. We throw WrongWalletError BEFORE broadcasting so the UI can
+ * tell the user which wallet to connect instead of showing a mysterious revert.
  */
-export async function signRefund(unsignedTx: UnsignedTx): Promise<Hash> {
+export async function signRefund(unsignedTx: UnsignedTx, requiredSigner?: string): Promise<Hash> {
   const client = _walletClient ?? (await connectWallet());
   await ensureArcChain();
+  const connected = client.account?.address;
+  if (requiredSigner && connected && connected.toLowerCase() !== requiredSigner.toLowerCase()) {
+    throw new WrongWalletError(connected, requiredSigner);
+  }
   const hash = await client.writeContract({
     address: unsignedTx.to as Address,
     abi: unsignedTx.abi as never,
