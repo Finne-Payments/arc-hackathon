@@ -261,7 +261,7 @@ export async function reconcilePayoutPlatformKeys(): Promise<void> {
 
 /** Idempotent: a replay of a known paymentId returns the existing payout. */
 export async function recordDetectedPayment(det: DetectedPayment): Promise<{ payout: PayoutTypes; created: boolean }> {
-  const existing = await Payout.findOne({ paymentId: det.paymentId });
+  const existing = await Payout.findOne({ paymentId: det.paymentId, contractAddress: det.contractAddress });
   if (existing) {
     // Re-derive platformKey and correct it if the stored value is stale.
     const freshKey = await derivePlatformKey(det.txSender);
@@ -1167,7 +1167,10 @@ export interface SharedCaseBody {
 
 /* ---- shared receipt assembly (P3 — identical body for every seat) ---- */
 export async function getSharedReceipt(paymentId: string): Promise<SharedReceiptBody> {
-  const payout = await Payout.findOne({ paymentId }).lean();
+  // Prefer the current contract's payout; fall back to any contract (legacy).
+  const env = loadEnv();
+  const payout = await Payout.findOne({ paymentId, contractAddress: env.arc.refundProtocolAddress ?? undefined }).lean()
+    ?? await Payout.findOne({ paymentId }).lean();
   if (!payout) throw new HttpError(404, `No payout ${paymentId} found.`);
   // Resolve the work order by its direct link to this payment — not by
   // name-matching against seeded recipient records (which stamped hardcoded

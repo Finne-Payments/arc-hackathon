@@ -275,7 +275,7 @@ describe("append-only enforcement (P5)", () => {
     const res = await request(app)
       .post("/payouts/detected")
       .set("x-finne-internal", process.env.INTERNAL_TOKEN ?? "dev-internal")
-      .send({ paymentId: p.paymentId, txHash: "0xCHANGED", to: recipientWallet, amount: "999", refundTo: "0x1" });
+      .send({ paymentId: p.paymentId, contractAddress: "0x1", txHash: "0xCHANGED", to: recipientWallet, amount: "999", refundTo: "0x1" });
     // Idempotent replay returns the existing receipt (201) — it does NOT mutate.
     expect(res.status).toBe(201);
     const after = await Payout.findOne({ paymentId: p.paymentId }).lean();
