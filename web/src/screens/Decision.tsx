@@ -24,9 +24,8 @@ export function Decision({ v, actions, apiData }: { v: ViewModel; actions: Finne
   const refundTo = (c?.payout as { refundTo?: string })?.refundTo ?? "";
   const explorerBase = apiData?.config?.explorerUrl ?? null;
 
-  // Real identity + amounts from config + case data (replaces hard-coded names).
-  const platformName = apiData?.config?.platform?.name ?? "the platform";
-  const recipientName = apiData?.config?.recipient?.displayName ?? "the recipient";
+  // Arbiter name from config (display only; the arbiter ADDRESS is read from
+  // the contract below for accuracy).
   const arbiterName = apiData?.config?.platform?.arbiterName ?? "the reviewer";
   // Read the arbiter from the CONTRACT (source of truth), not the Platform DB
   // record which can be stale. Falls back to the config value if the RPC fails.
@@ -45,13 +44,18 @@ export function Decision({ v, actions, apiData }: { v: ViewModel; actions: Finne
     return Number.isFinite(t) && Number.isFinite(ch) ? String(Math.max(0, t - ch)) : "0";
   })();
 
-  // Preview text built from REAL amounts + names (was hard-coded "100 USDC / Maya / Northstar").
+  // Preview text built from REAL payment data (addresses + amounts), not
+  // config-derived names that may not match the actual payment.
+  const recipientWallet = (c?.payout as { recipientWallet?: string })?.recipientWallet ?? "";
+  const customerLabel = refundTo ? `the customer (${shortHex(refundTo)})` : "the customer";
+  const merchantLabel = recipientWallet ? `the merchant (${shortHex(recipientWallet)})` : "the merchant";
+
   const previewText = (() => {
     switch (v.decOption) {
       case "approve":
-        return `The contested ${contested} USDC is returned to ${platformName} at their refund address; the remaining ${remaining} USDC stays protected for ${recipientName}. Your written reasons are recorded and shown to both sides.`;
+        return `The contested ${contested} USDC is returned to ${customerLabel} — the funds move from the escrow contract to the customer's refund address (${refundTo ? shortHex(refundTo) : "fixed at payment time"}). The remaining ${remaining} USDC stays protected for ${merchantLabel}.`;
       case "reject":
-        return `No refund. The full ${total} USDC is released to ${recipientName}, who can withdraw when the protection window ends. Your reasons are shown to both sides.`;
+        return `No refund. The full ${total} USDC stays with ${merchantLabel} — the customer's refund claim is rejected and the merchant can withdraw when the protection window ends.`;
       default:
         return "";
     }
@@ -100,7 +104,8 @@ export function Decision({ v, actions, apiData }: { v: ViewModel; actions: Finne
       <PhaseRouter
         phase={v.decPhase} v={v} actions={actions}
         refundTo={refundTo} caseNumber={caseNumber} explorerBase={explorerBase}
-        contested={contested} total={total} recipientName={recipientName} platformName={platformName}
+        contested={contested} total={total}
+        recipientWallet={recipientWallet} rpAddress={rpAddress}
         arbiterName={arbiterName} arbiterWallet={arbiterWallet}
         previewText={previewText}
         txHash={v.decTxHash}
@@ -112,15 +117,15 @@ export function Decision({ v, actions, apiData }: { v: ViewModel; actions: Finne
   );
 }
 
-function PhaseRouter({ phase, v, actions, refundTo, caseNumber, explorerBase, contested, total, recipientName, platformName, arbiterName, arbiterWallet, previewText, txHash, frame, onAcceptLine, onEditLine }: {
+function PhaseRouter({ phase, v, actions, refundTo, caseNumber, explorerBase, contested, total, recipientWallet, rpAddress, arbiterName, arbiterWallet, previewText, txHash, frame, onAcceptLine, onEditLine }: {
   phase: DecPhase; v: ViewModel; actions: FinneActions; refundTo: string; caseNumber: string; explorerBase: string | null;
-  contested: string; total: string; recipientName: string; platformName: string; arbiterName: string; arbiterWallet: string; previewText: string;
+  contested: string; total: string; recipientWallet: string; rpAddress: string; arbiterName: string; arbiterWallet: string; previewText: string;
   txHash: string | null;
   frame: import("../api").AgentFrame | null;
   onAcceptLine: (text: string) => void;
   onEditLine: (originalText: string, editedText: string) => void;
 }) {
-  if (phase === "idle") return <IdlePhase v={v} refundTo={refundTo} caseNumber={caseNumber} actions={actions} contested={contested} total={total} recipientName={recipientName} platformName={platformName} previewText={previewText} frame={frame} onAcceptLine={onAcceptLine} onEditLine={onEditLine} arbiterWallet={arbiterWallet} />;
+  if (phase === "idle") return <IdlePhase v={v} refundTo={refundTo} caseNumber={caseNumber} actions={actions} contested={contested} total={total} recipientWallet={recipientWallet} rpAddress={rpAddress} previewText={previewText} frame={frame} onAcceptLine={onAcceptLine} onEditLine={onEditLine} arbiterWallet={arbiterWallet} />;
   if (phase === "awaiting") return <AwaitingPhase onCancel={v.cancelSignature} contested={contested} refundTo={refundTo} />;
   if (phase === "sig_rejected") return <SigRejectedPhase onRetry={v.retrySign} onCancel={v.cancelSignature} />;
   if (phase === "pending") return <PendingPhase onCopy={actions.copyTech} refundTo={refundTo} explorerBase={explorerBase} txHash={txHash} />;
@@ -129,9 +134,9 @@ function PhaseRouter({ phase, v, actions, refundTo, caseNumber, explorerBase, co
   return <RecordedPhase onBack={() => actions.go("case")} arbiterName={arbiterName} arbiterWallet={arbiterWallet} />;
 }
 
-function IdlePhase({ v, refundTo, caseNumber, actions, contested, total, recipientName, platformName, previewText, frame, onAcceptLine, onEditLine, arbiterWallet }: {
+function IdlePhase({ v, refundTo, caseNumber, actions, contested, total, recipientWallet, rpAddress, previewText, frame, onAcceptLine, onEditLine, arbiterWallet }: {
   v: ViewModel; refundTo: string; caseNumber: string; actions: FinneActions;
-  contested: string; total: string; recipientName: string; platformName: string; previewText: string;
+  contested: string; total: string; recipientWallet: string; rpAddress: string; previewText: string;
   frame: import("../api").AgentFrame | null;
   onAcceptLine: (text: string) => void;
   onEditLine: (originalText: string, editedText: string) => void;
@@ -159,17 +164,22 @@ function IdlePhase({ v, refundTo, caseNumber, actions, contested, total, recipie
       )}
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, margin: "18px 0", opacity: v.optionsOpacity, pointerEvents: v.optionsPointer as React.CSSProperties["pointerEvents"] }}>
-        <OptionCard onClick={v.selectApprove} border={v.approveBorder} bg={v.approveBg} title="Approve refund" desc={`The contested ${contested} USDC is returned to ${platformName} at their refund address, fixed when the payment was made.`} />
-        <OptionCard onClick={v.selectReject} border={v.rejectBorder} bg={v.rejectBg} title="Reject refund and release" desc={`No refund. The full ${total} USDC is released to ${recipientName}, who can withdraw when the protection window ends.`} />
+        <OptionCard onClick={v.selectApprove} border={v.approveBorder} bg={v.approveBg} title="Approve refund" desc={`The contested ${contested} USDC is returned to the customer (${refundTo ? shortHex(refundTo) : "their refund address"}). Funds move from escrow to the customer.`} />
+        <OptionCard onClick={v.selectReject} border={v.rejectBorder} bg={v.rejectBg} title="Reject refund and release" desc={`No refund. The full ${total} USDC stays with the merchant (${recipientWallet ? shortHex(recipientWallet) : "the recipient"}), who can withdraw when the protection window ends.`} />
       </div>
 
       {v.showPreview && (
         <div style={{ background: "var(--color-surface-2)", border: "1px solid var(--color-border)", borderRadius: "var(--radius-md)", padding: "14px 16px", marginBottom: 18, fontSize: 13, lineHeight: 1.6 }}>
           <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: ".04em", textTransform: "uppercase", color: "var(--color-fg-subtle)", marginBottom: 6 }}>What happens if you confirm</div>
           {previewText}
-          {v.approveSelected && (
+          {v.approveSelected && refundTo && (
             <div style={{ marginTop: 8 }}>
-              Destination: <TechChip short={shortHex(refundTo)} full={refundTo} /> · fixed at payment time
+              <strong>Refund destination (customer):</strong> <TechChip short={shortHex(refundTo)} full={refundTo} onCopy={actions.copyTech} /> · fixed at payment time
+            </div>
+          )}
+          {v.approveSelected && recipientWallet && (
+            <div style={{ marginTop: 4 }}>
+              <strong>Escrow contract:</strong> <TechChip short={shortHex(rpAddress)} full={rpAddress} onCopy={actions.copyTech} /> · funds move from here to the customer
             </div>
           )}
         </div>
