@@ -493,10 +493,11 @@ export function useFinne(initialRole: Role = "arbiter") {
           // for block confirmation (can take minutes on Arc). The indexer
           // independently confirms and stamps the case CLOSED on its next tick.
           patch({ decPhase: "confirmed", decTxHash: txHash });
-          // Stamp the refund tx hash on the decision so the receipt shows it.
+          // Stamp the refund tx hash on the decision. AWAIT so the receipt
+          // has the data when it loads.
           const cn = state.selectedCaseId;
           if (cn) {
-            void api.stampRefundTx(cn, txHash).catch(() => {});
+            await api.stampRefundTx(cn, txHash).catch(() => {});
           }
           // The chain has moved, but the indexer writes refundTxHash only on its
           // next ~30s tick. Bump both versions so App.tsx re-fetches on an
@@ -505,6 +506,7 @@ export function useFinne(initialRole: Role = "arbiter") {
           // note on reloadPayouts/reloadCase above.
           setState((s) => ({
             ...s,
+            selectedPaymentId: s.selectedPaymentId, // keep whatever is set
             caseVersion: s.caseVersion + 1,
             payoutVersion: s.payoutVersion + 1,
           }));
@@ -549,13 +551,16 @@ export function useFinne(initialRole: Role = "arbiter") {
             // wait for block confirmation (that can take minutes on Arc).
             patch({ decPhase: "confirmed", decTxHash: hash });
             // Stamp the refund tx hash on the decision + payout in the DB so
-            // the receipt shows the refund transaction immediately (not waiting
-            // for the indexer's 30s tick). Fire-and-forget — the indexer
-            // reconciles anyway.
+            // the receipt shows the refund transaction. AWAIT this — the
+            // receipt reads the decision from the DB, so the stamp must land
+            // before we navigate to it.
             if (!hash.startsWith("0xalready-refunded")) {
-              void api.stampRefundTx(caseNumber, hash).catch(() => {});
+              await api.stampRefundTx(caseNumber, hash).catch(() => {});
             }
-            setState((s) => ({ ...s, caseVersion: s.caseVersion + 1, payoutVersion: s.payoutVersion + 1 }));
+            // Set the selectedPaymentId so the receipt loads this payout's data
+            // when we navigate to "final". Without this, the receipt has no
+            // paymentId and shows nothing.
+            setState((s) => ({ ...s, selectedPaymentId: paymentId, caseVersion: s.caseVersion + 1, payoutVersion: s.payoutVersion + 1 }));
             setTimer(() => go("final"), 1600);
             return hash;
           }
@@ -582,11 +587,12 @@ export function useFinne(initialRole: Role = "arbiter") {
           // Tx relayed — record the hash and proceed immediately. Same as path
           // 1: don't wait for block confirmation.
           patch({ decPhase: "confirmed", decTxHash: txHash });
-          // Stamp the refund tx hash on the decision + payout so the receipt
-          // shows the refund transaction immediately.
-          void api.stampRefundTx(caseNumber, txHash).catch(() => {});
+          // Stamp the refund tx hash on the decision + payout. AWAIT so the
+          // receipt has the data when it loads.
+          await api.stampRefundTx(caseNumber, txHash).catch(() => {});
           setState((s) => ({
             ...s,
+            selectedPaymentId: paymentId,
             caseVersion: s.caseVersion + 1,
             payoutVersion: s.payoutVersion + 1,
           }));
