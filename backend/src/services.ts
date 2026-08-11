@@ -295,6 +295,17 @@ export async function recordDetectedPayment(det: DetectedPayment): Promise<{ pay
   // A payout belongs to the PLATFORM that operates it (see derivePlatformKey).
   const platformKey = await derivePlatformKey(det.txSender);
 
+  // Defensive: ensure amount is in DISPLAY units (whole USDC, e.g. "1.00"), NOT
+  // base units (micro-USDC, e.g. "1000000"). If the confirm endpoint or indexer
+  // passed base units, detect and convert. This catches edge cases where the
+  // receipt-read path or a stale code path stored the raw event amount.
+  let displayAmount = String(det.amount);
+  const parsed = Number(displayAmount);
+  if (Number.isFinite(parsed) && parsed >= 10000) {
+    // Looks like base units (no one sends 10,000+ USDC in a single demo payout).
+    displayAmount = (parsed / 1_000_000).toFixed(2);
+  }
+
   // Settlement window: when the merchant can withdraw. The on-chain release
   // timestamp is the source of truth, but for the demo we enforce a MINIMUM of
   // T+3 days from payment so the settlement window is visible. If the contract's
@@ -316,7 +327,7 @@ export async function recordDetectedPayment(det: DetectedPayment): Promise<{ pay
     chain: det.chain,
     contractAddress: det.contractAddress,
     txHash: det.txHash,
-    amount: det.amount,
+    amount: displayAmount,
     refundTo: det.refundTo,
     recipientKey,
     platformKey,

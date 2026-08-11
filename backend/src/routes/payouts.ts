@@ -177,6 +177,15 @@ payoutRoutes.post("/payouts/confirm", requirePermission("payout:create"), requir
     }
 
     const { payout, created } = await recordDetectedPayment(det);
+
+    // Ensure the payout's platformKey matches the caller's platformKey so it's
+    // visible in their scoped ledger. derivePlatformKey may return a different
+    // key if no Platform record matches the txSender.
+    if (created && caller?.platformKey && payout.platformKey !== caller.platformKey) {
+      await Payout.updateOne({ _id: payout._id }, { $set: { platformKey: caller.platformKey } });
+      payout.platformKey = caller.platformKey;
+    }
+
     res.status(201).json({ paymentId: det.paymentId, payout, created });
   } catch (e) {
     next(e);
