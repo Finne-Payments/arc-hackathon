@@ -7,7 +7,7 @@
   "explorerUrl": "https://testnet.arcscan.app",
   "registry": {
     "name": "FinneCaseRegistry",
-    "address": "0x297730EaF53C95B9d8322b9Af5e48b47227D1e82",
+    "address": "0x23ef3e711d30204025324Ad5C5638d8a8a6CF7E6",
     "deploymentTx": "0xbf555687e7b3825a066fc07e2319c18e3293929f52503f74fc1a01957732a99e",
     "deploymentBlock": 55262050,
     "deployer": "0x8e5618d427335F865A1E693162417D991f3d8030",
@@ -15,7 +15,7 @@
     "optimizerRuns": 200,
     "abiHash": "_pending_",
     "bytecodeHash": "_pending_",
-    "verificationUrl": "https://testnet.arcscan.app/address/0x297730EaF53C95B9d8322b9Af5e48b47227D1e82"
+    "verificationUrl": "https://testnet.arcscan.app/address/0x23ef3e711d30204025324Ad5C5638d8a8a6CF7E6"
   },
   "usdc": {
     "address": "0x3600000000000000000000000000000000000000",

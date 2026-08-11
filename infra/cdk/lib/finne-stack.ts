@@ -207,7 +207,7 @@ export class FinneStack extends cdk.Stack {
         ARC_EXPLORER_URL: "https://testnet.arcscan.app",
         ARC_USDC_ADDRESS: "0x3600000000000000000000000000000000000000",
         REFUND_PROTOCOL_ADDRESS: "0x66e3F1B6667C7f5E2FECDE70db9BeE9F2f47209d",
-        CASE_REGISTRY_ADDRESS: "0x297730EaF53C95B9d8322b9Af5e48b47227D1e82",
+        CASE_REGISTRY_ADDRESS: "0x23ef3e711d30204025324Ad5C5638d8a8a6CF7E6",
         EVIDENCE_BUCKET: evidenceBucket.bucketName,
         SQS_QUEUE_URL: jobQueue.queueUrl,
         SQS_DLQ_URL: dlq.queueUrl,

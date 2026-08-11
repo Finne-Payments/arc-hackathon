@@ -151,7 +151,7 @@ export interface Env {
    construction is immutable and documented in contracts/.env.deploy.
    ========================================================================== */
 const DEFAULT_REFUND_PROTOCOL_ADDRESS = "0x66e3F1B6667C7f5E2FECDE70db9BeE9F2f47209d";
-const DEFAULT_CASE_REGISTRY_ADDRESS = "0x297730EaF53C95B9d8322b9Af5e48b47227D1e82";
+const DEFAULT_CASE_REGISTRY_ADDRESS = "0x23ef3e711d30204025324Ad5C5638d8a8a6CF7E6";
 
 let loaded: Env | null = null;
 
