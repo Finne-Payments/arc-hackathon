@@ -160,6 +160,9 @@ payoutRoutes.post("/payouts/confirm", requirePermission("payout:create"), requir
       if (!derivedPaymentId || !to || !amount) {
         throw new HttpError(400, "The transaction isn't mined yet and the payment ID couldn't be determined. It will appear once the indexer detects it.");
       }
+      // The caller (authenticated user) IS the payer — use their wallet address
+      // as txSender so registerReceipt can anchor a valid payer address.
+      const caller = req.session.userId ? await User.findById(req.session.userId).lean() : null;
       det = {
         paymentId: derivedPaymentId,
         chain: "arc",
@@ -169,7 +172,7 @@ payoutRoutes.post("/payouts/confirm", requirePermission("payout:create"), requir
         amount: String(amount),
         refundTo: String(refundTo ?? ""),
         blockTimestamp: new Date().toISOString(),
-        txSender: "",
+        txSender: caller?.walletAddress ?? String(refundTo ?? ""),
       };
     }
 

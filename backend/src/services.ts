@@ -263,15 +263,24 @@ export async function reconcilePayoutPlatformKeys(): Promise<void> {
 export async function recordDetectedPayment(det: DetectedPayment): Promise<{ payout: PayoutTypes; created: boolean }> {
   const existing = await Payout.findOne({ paymentId: det.paymentId });
   if (existing) {
-    // Re-derive platformKey and correct it if the stored value is stale. Earlier
-    // builds stamped payouts with the payer's address prefix (or the payer's
-    // User-seat platformKey), which made them invisible to the scoped reviewer.
-    // platformKey is now mutable (removed from PAYOUT_IMMUTABLE) precisely so
-    // this reconciliation can backfill existing rows without a manual migration.
+    // Re-derive platformKey and correct it if the stored value is stale.
     const freshKey = await derivePlatformKey(det.txSender);
     if (freshKey && freshKey !== existing.platformKey) {
       existing.platformKey = freshKey;
       await existing.save();
+    }
+    // If the receipt hasn't been anchored yet AND we now have a valid txSender
+    // (the indexer resolved it from the real tx), re-enqueue the receipt job.
+    // This fixes the case where /payouts/confirm created the payout optimistically
+    // with an empty txSender, causing the original receipt anchor to fail.
+    if (!existing.registryAnchorTx && det.txSender && det.txSender.startsWith("0x") && det.txSender.length >= 42) {
+      const receiptHash = existing.receiptHash;
+      await enqueueAnchor("receipt", existing.paymentId, existing.paymentId, receiptHash, 0, {
+        payer: det.txSender,
+        recipient: existing.recipientWallet,
+        amountMicroUsdc: BigInt(Math.round(Number(existing.amount) * 1_000_000)).toString(),
+        paidAt: Math.floor(new Date(existing.paidAt).getTime() / 1000),
+      }).catch(() => {}); // best-effort — the original job may still be retrying
     }
     return { payout: existing, created: false };
   }
