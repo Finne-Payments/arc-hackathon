@@ -733,7 +733,7 @@ export function CaseRoom({ v, actions, apiData }: { v: ViewModel; actions: Finne
         <div style={{ display: "flex", alignItems: "center", gap: 12, background: "var(--color-surface)", border: "1px solid var(--color-border)", borderRadius: "var(--radius-md)", padding: "14px 18px", flexWrap: "wrap" }}>
           <StatusPill label="Refunded" dot="risk" />
           <span style={{ fontSize: 13, color: "var(--color-fg-muted)", flex: 1 }}>This case is closed. The record is locked; corrections are added, never edited.</span>
-          <SecondaryButton onClick={() => actions.go("final")} style={{ fontSize: 13, padding: "8px 15px" }}>
+          <SecondaryButton onClick={() => caseDoc?.payoutRef && actions.viewFinalReceipt(caseDoc.payoutRef)} style={{ fontSize: 13, padding: "8px 15px" }}>
             View final receipt
           </SecondaryButton>
         </div>

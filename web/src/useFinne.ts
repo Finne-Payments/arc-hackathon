@@ -147,6 +147,12 @@ export function useFinne(initialRole: Role = "arbiter") {
     window.scrollTo({ top: 0, behavior: "auto" });
   }, []);
 
+  /** Open the final receipt for a specific payment (shows the outcome section). */
+  const viewFinalReceipt = useCallback((paymentId: string) => {
+    setState((s) => ({ ...s, selectedPaymentId: paymentId, screen: "final", payoutVersion: s.payoutVersion + 1 }));
+    window.scrollTo({ top: 0, behavior: "auto" });
+  }, []);
+
   /** Open a specific case by case number (e.g. from search). */
   const viewCase = useCallback((caseNumber: string) => {
     setState((s) => ({ ...s, selectedCaseId: caseNumber, screen: "case" }));
@@ -435,6 +441,7 @@ export function useFinne(initialRole: Role = "arbiter") {
     () => ({
       go,
       viewReceipt,
+      viewFinalReceipt,
       viewCase,
       asRole,
       setRoleProp,
@@ -608,7 +615,7 @@ export function useFinne(initialRole: Role = "arbiter") {
         }
       },
     }),
-    [go, viewReceipt, viewCase, asRole, setRoleProp, setCaseStage, setLedgerState, setWalletSim, setDemoMode, patch]
+    [go, viewReceipt, viewFinalReceipt, viewCase, asRole, setRoleProp, setCaseStage, setLedgerState, setWalletSim, setDemoMode, patch]
   );
 
   return { v, actions, state };
