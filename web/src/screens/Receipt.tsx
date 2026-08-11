@@ -352,9 +352,44 @@ export function Receipt({ v, actions, apiData }: { v: ViewModel; actions: FinneA
             <div style={{ fontSize: 17, fontWeight: 600, marginBottom: 4 }}>
               {decision.outcome === "refund" ? "Refund approved" : decision.outcome === "release" ? "Refund rejected — payout released" : "Closed with no action"} · {payout?.amount} USDC
             </div>
-            <div style={{ fontSize: 13, color: "var(--color-fg-muted)", marginBottom: 18 }}>
+            <div style={{ fontSize: 13, color: "var(--color-fg-muted)", marginBottom: 14 }}>
               Decided by <strong style={{ color: "var(--color-fg)" }}>{decision.decidedByName}</strong> · wallet <TechChip short={shortHex(decision.decidedByWallet)} full={decision.decidedByWallet} onCopy={actions.copyTech} explorer={explorerAddr(explorerBase, decision.decidedByWallet)} /> · {new Date(decision.decidedAt).toUTCString()}
             </div>
+            {/* Refund transaction details — fund movement from escrow to customer */}
+            {decision.outcome === "refund" && payout && (
+              <div style={{ background: "var(--ok-soft)", border: "1px solid var(--ok-border)", borderRadius: "var(--radius-md)", padding: "14px 16px", marginBottom: 16 }}>
+                <div style={{ fontSize: 12, fontWeight: 600, letterSpacing: ".04em", textTransform: "uppercase", color: "var(--ok-600)", marginBottom: 10 }}>Refund executed</div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px 20px", fontSize: 13 }}>
+                  <div>
+                    <span style={{ color: "var(--color-fg-subtle)" }}>From (escrow)</span>
+                    <br />
+                    <TechChip short={shortHex(refundProtocolAddress)} full={refundProtocolAddress} onCopy={actions.copyTech} explorer={explorerAddr(explorerBase, refundProtocolAddress)} />
+                  </div>
+                  <div>
+                    <span style={{ color: "var(--color-fg-subtle)" }}>To (customer)</span>
+                    <br />
+                    <TechChip short={shortHex(payout.refundTo)} full={payout.refundTo} onCopy={actions.copyTech} explorer={explorerAddr(explorerBase, payout.refundTo)} />
+                  </div>
+                  <div>
+                    <span style={{ color: "var(--color-fg-subtle)" }}>Amount</span>
+                    <br />
+                    <span style={{ fontWeight: 600 }}>{payout.amount} USDC</span>
+                  </div>
+                  <div>
+                    <span style={{ color: "var(--color-fg-subtle)" }}>Status</span>
+                    <br />
+                    <span style={{ fontWeight: 600, color: decision.refundTxHash ? "var(--ok-600)" : "var(--warn-600)" }}>{decision.refundTxHash ? "✓ Confirmed" : "Pending confirmation"}</span>
+                  </div>
+                  {decision.refundTxHash && (
+                    <div style={{ gridColumn: "1 / -1" }}>
+                      <span style={{ color: "var(--color-fg-subtle)" }}>Transaction</span>
+                      <br />
+                      <TechChip short={shortHex(decision.refundTxHash)} full={decision.refundTxHash} onCopy={actions.copyTech} explorer={explorerTx(explorerBase, decision.refundTxHash)} />
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
             <div style={{ background: "var(--color-surface-2)", border: "1px solid var(--color-border)", borderRadius: "var(--radius-md)", padding: "16px 18px", fontSize: 14, lineHeight: 1.65, marginBottom: 18 }}>
               <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: ".04em", textTransform: "uppercase", color: "var(--color-fg-subtle)", marginBottom: 8 }}>Written reasons</div>
               {decision.reason}

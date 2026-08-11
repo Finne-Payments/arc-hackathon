@@ -6,7 +6,7 @@ import { BackLink, Card, PrimaryButton, SecondaryButton, TechChip, Spinner } fro
 import { FramePanel } from "../components/FramePanel";
 import { explorerTx, shortHex } from "../mappers";
 import { api } from "../api";
-import { detectWallet, connectWallet, isUserRejection, readArbiter } from "../wallet";
+import { connectWallet, isUserRejection, readArbiter } from "../wallet";
 
 export function Decision({ v, actions, apiData }: { v: ViewModel; actions: FinneActions; apiData?: ApiData }) {
   const c = apiData?.activeCase ?? null;
@@ -200,39 +200,28 @@ function IdlePhase({ v, refundTo, caseNumber, actions, contested, total, recipie
             if (v.recordDisabled) return;
             setWalletError(null);
             if (v.approveSelected) {
-              // Signature-based refund: the arbiter signs an EIP-712
-              // RefundAuthorization (no gas, no chain switch), then the backend
-              // relays it via refundByArbiterWithSig. The connected wallet MUST
-              // be the arbiter's (the contract recovers the signer via ecrecover
-              // and reverts if it isn't the arbiter).
+              // APPROVE (refund): record the decision, then ALWAYS try the
+              // on-chain refund via the wallet. Never silently simulate — if
+              // the wallet isn't available, surface a clear error.
               try {
-                const ws = detectWallet();
-                if (ws.available) {
-                  // 1. Connect the wallet FIRST. If the user rejects the connect/
-                  //    chain-switch prompt here, the decision has NOT been recorded
-                  //    yet — the case stays un-decided and the reviewer can retry.
-                  //    (Earlier this happened AFTER api.decide, which left a
-                  //    decided-but-not-refunded case dangling on a wallet rejection.)
-                  await connectWallet();
-                  // 2. Record the decision via the API → records IMMEDIATELY,
-                  //    returns the EIP-712 typed-data payload to sign.
-                  const result = await api.decide(caseNumber, { outcome: "refund", reason: v.decReason });
-                  if (result.refundTypedData) {
-                    // 3. Sign the authorization + relay it. The backend submits
-                    //    refundByArbiterWithSig with the operator key.
-                    await actions.authorizeAndRelayRefund(caseNumber, result.refundTypedData);
-                    return;
-                  }
+                // 1. Record the decision via the API → records IMMEDIATELY,
+                //    returns the typed-data payload with the paymentId.
+                const result = await api.decide(caseNumber, { outcome: "refund", reason: v.decReason });
+                // 2. Connect the wallet + submit the on-chain refund. The
+                //    connected wallet MUST be the arbiter (the contract checks).
+                //    directRefundByArbiter does a pre-flight check.
+                await connectWallet();
+                if (result.refundTypedData) {
+                  await actions.authorizeAndRelayRefund(caseNumber, result.refundTypedData);
+                  return;
                 }
+                // If no refundTypedData (shouldn't happen), still record.
+                v.recordDecision();
               } catch (e) {
                 if (isUserRejection(e)) return; // user declined — stay on the decision
-                // Any other wallet/relay error → surface a clear message, do NOT
-                // fall through to the simulation (which would pretend it happened).
-                setWalletError(e instanceof Error ? e.message : "The refund signature or relay failed.");
+                setWalletError(e instanceof Error ? e.message : "The refund transaction failed.");
                 return;
               }
-              // No wallet detected → fall back to the labeled simulation.
-              v.recordDecision();
             } else {
               // Non-refund decisions (reject/no_action): persist to the backend,
               // which closes the case server-side. Previously this only flipped
