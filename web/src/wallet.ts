@@ -421,13 +421,28 @@ export async function approveAndPay(
   });
 
   // 4. Done — the wallet has broadcast pay(). Return immediately with the tx
-  //    hash + the pre-read nonce (the paymentId). Do NOT wait for the receipt
-  //    — that can take 30-90s on Arc's rate-limited RPC. The frontend passes
-  //    the hash + known payment details to /payouts/confirm, which creates the
-  //    payout row optimistically. The indexer reconciles the authoritative
-  //    on-chain data when it detects the PaymentCreated event.
+  //    hash + the paymentId. If the pre-read nonce failed (RPC rate-limited
+  //    earlier), try reading it again NOW — the RPC often recovers during the
+  //    wallet confirmation delay. As a last resort, read nonce() - 1 (the
+  //    payment that was just created).
   onProgress?.("confirming");
-  return { hash: payHash, paymentId: nonceBefore };
+  let resolvedPaymentId = nonceBefore;
+  if (resolvedPaymentId === null) {
+    for (let attempt = 0; attempt < 3 && resolvedPaymentId === null; attempt++) {
+      try {
+        const reader = getPublicReader();
+        const nonceAfter = await reader.readContract({
+          address: refundProtocolAddress,
+          abi: [{ type: "function", name: "nonce", stateMutability: "view", inputs: [], outputs: [{ name: "", type: "uint256" }] }],
+          functionName: "nonce",
+        }) as bigint;
+        if (nonceAfter > 0n) resolvedPaymentId = nonceAfter - 1n;
+      } catch {
+        if (attempt < 2) await new Promise((r) => setTimeout(r, 1500));
+      }
+    }
+  }
+  return { hash: payHash, paymentId: resolvedPaymentId };
 }
 
 /** Read-only public client for awaiting receipts + reading nonce(). */

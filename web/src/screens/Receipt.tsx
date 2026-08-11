@@ -162,10 +162,10 @@ export function Receipt({ v, actions, apiData }: { v: ViewModel; actions: FinneA
             <div style={{ fontFamily: "var(--font-mono)", fontWeight: 500, fontSize: 28, fontVariantNumeric: "tabular-nums", marginBottom: 2 }}>{payout.amount} USDC</div>
             <div style={{ fontSize: 12, color: "var(--ink-400)", marginBottom: 20 }}>on {chainName} · via Circle Refund Protocol</div>
             <div style={{ display: "flex", flexDirection: "column", gap: 13 }}>
-              <ChainRow label="From wallet · refund address (fixed at payment time)">
+              <ChainRow label="Customer (payer · refunds return here)">
                 <TechChip short={shortHex(payout.refundTo)} full={payout.refundTo} onCopy={actions.copyTech} explorer={explorerAddr(explorerBase, payout.refundTo)} />
               </ChainRow>
-              <ChainRow label="To wallet">
+              <ChainRow label="Merchant (payment recipient)">
                 <TechChip short={shortHex(payout.recipientWallet)} full={payout.recipientWallet} onCopy={actions.copyTech} explorer={explorerAddr(explorerBase, payout.recipientWallet)} />
               </ChainRow>
               <ChainRow label="Transaction ID">
