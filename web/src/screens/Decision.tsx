@@ -55,7 +55,7 @@ export function Decision({ v, actions, apiData }: { v: ViewModel; actions: Finne
       case "approve":
         return `The contested ${contested} USDC is returned to ${customerLabel} — the funds move from the escrow contract to the customer's refund address (${refundTo ? shortHex(refundTo) : "fixed at payment time"}). The remaining ${remaining} USDC stays protected for ${merchantLabel}.`;
       case "reject":
-        return `No refund. The full ${total} USDC stays with ${merchantLabel} — the customer's refund claim is rejected and the merchant can withdraw when the protection window ends.`;
+        return `No refund. The full ${total} USDC is released immediately to ${merchantLabel} — the customer's refund claim is rejected and the merchant can withdraw right away.`;
       default:
         return "";
     }
@@ -165,7 +165,7 @@ function IdlePhase({ v, refundTo, caseNumber, actions, contested, total, recipie
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, margin: "18px 0", opacity: v.optionsOpacity, pointerEvents: v.optionsPointer as React.CSSProperties["pointerEvents"] }}>
         <OptionCard onClick={v.selectApprove} border={v.approveBorder} bg={v.approveBg} title="Approve refund" desc={`The contested ${contested} USDC is returned to the customer (${refundTo ? shortHex(refundTo) : "their refund address"}). Funds move from escrow to the customer.`} />
-        <OptionCard onClick={v.selectReject} border={v.rejectBorder} bg={v.rejectBg} title="Reject refund and release" desc={`No refund. The full ${total} USDC stays with the merchant (${recipientWallet ? shortHex(recipientWallet) : "the recipient"}), who can withdraw when the protection window ends.`} />
+        <OptionCard onClick={v.selectReject} border={v.rejectBorder} bg={v.rejectBg} title="Reject refund and release" desc={`No refund. The full ${total} USDC is released immediately to the merchant (${recipientWallet ? shortHex(recipientWallet) : "the recipient"}), who can withdraw right away.`} />
       </div>
 
       {v.showPreview && (
