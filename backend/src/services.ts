@@ -1153,7 +1153,11 @@ export async function getSharedReceipt(paymentId: string): Promise<SharedReceipt
   // name-matching against seeded recipient records (which stamped hardcoded
   // demo descriptions onto real payouts).
   const workOrder = await WorkOrder.findOne({ paymentId }).lean();
-  const caseDoc = await Case.findOne({ payoutRef: paymentId, status: { $ne: "CLOSED" } }).lean();
+  // Find the case for this payout — include CLOSED cases so the final receipt
+  // (after a refund/release decision) still shows the case + decision. Without
+  // this, stampRefundTx closes the case and the receipt can no longer find it,
+  // so the refund transaction details disappear.
+  const caseDoc = await Case.findOne({ payoutRef: paymentId }).sort({ createdAt: -1 }).lean();
   const decision = caseDoc ? await Decision.findOne({ caseRef: (caseDoc as { caseNumber: string }).caseNumber }).lean() : null;
   const evidence = await Evidence.find({ payoutRef: paymentId }).lean();
   return {
