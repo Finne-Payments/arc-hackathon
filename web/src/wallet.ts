@@ -276,6 +276,67 @@ export async function directRefundByArbiter(
   return hash;
 }
 
+/**
+ * Direct release: the arbiter's browser wallet calls releaseByArbiter(paymentId)
+ * on the RefundProtocol. This is the REJECT counterpart to directRefundByArbiter
+ * (APPROVE). The arbiter releases funds from escrow to the merchant. Same
+ * pre-flight checks: wallet must be the arbiter, payment must not be refunded.
+ */
+export async function directReleaseByArbiter(
+  refundProtocolAddress: Address,
+  paymentId: string,
+): Promise<Hash> {
+  const client = _walletClient ?? (await connectWallet());
+  await ensureArcChain();
+  const connected = client.account?.address;
+
+  const reader = getPublicReader();
+  const paymentAbi = [
+    { type: "function", name: "arbiter", stateMutability: "view", inputs: [], outputs: [{ name: "", type: "address" }] },
+    { type: "function", name: "payments", stateMutability: "view", inputs: [{ name: "", type: "uint256" }], outputs: [
+      { name: "to", type: "address" }, { name: "amount", type: "uint256" }, { name: "releaseTimestamp", type: "uint256" },
+      { name: "refundTo", type: "address" }, { name: "withdrawnAmount", type: "uint256" }, { name: "refunded", type: "bool" },
+    ] },
+  ];
+
+  // Pre-flight: verify the connected wallet is the arbiter.
+  try {
+    const arbiter = await reader.readContract({
+      address: refundProtocolAddress, abi: paymentAbi, functionName: "arbiter",
+    }) as Address;
+    if (connected && arbiter && connected.toLowerCase() !== arbiter.toLowerCase()) {
+      throw new WrongWalletError(connected, arbiter);
+    }
+  } catch (e) {
+    if (e instanceof WrongWalletError) throw e;
+  }
+
+  // Pre-flight: skip if already withdrawn or refunded.
+  try {
+    const payment = await reader.readContract({
+      address: refundProtocolAddress, abi: paymentAbi, functionName: "payments",
+      args: [BigInt(paymentId)],
+    }) as readonly [Address, bigint, bigint, Address, bigint, boolean];
+    if (payment[5]) return `0xalready-refunded-${paymentId}` as Hash;
+    if (payment[4] >= payment[1]) return `0xalready-released-${paymentId}` as Hash;
+  } catch {
+    // RPC read failed — try the tx.
+  }
+
+  const hash = await client.writeContract({
+    address: refundProtocolAddress,
+    abi: [
+      { type: "function", name: "releaseByArbiter", stateMutability: "nonpayable",
+        inputs: [{ name: "paymentID", type: "uint256" }], outputs: [] },
+    ],
+    functionName: "releaseByArbiter",
+    args: [BigInt(paymentId)],
+    account: client.account!,
+    chain: arcTestnet,
+  });
+  return hash;
+}
+
 export async function awaitRefundReceipt(hash: Hash): Promise<void> {
   const publicClient = getPublicReader();
   try {

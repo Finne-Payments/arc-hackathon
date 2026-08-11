@@ -390,6 +390,51 @@ export function Receipt({ v, actions, apiData }: { v: ViewModel; actions: FinneA
                 </div>
               </div>
             )}
+            {/* Funds released — for reject/release outcomes. Shows the merchant
+                can withdraw (or has withdrawn) the full amount. */}
+            {decision.outcome === "release" && payout && (
+              <div style={{ background: "var(--brand-50)", border: "1px solid var(--brand-200)", borderRadius: "var(--radius-md)", padding: "14px 16px", marginBottom: 16 }}>
+                <div style={{ fontSize: 12, fontWeight: 600, letterSpacing: ".04em", textTransform: "uppercase", color: "var(--brand-700)", marginBottom: 10 }}>Funds released to merchant</div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px 20px", fontSize: 13 }}>
+                  <div>
+                    <span style={{ color: "var(--color-fg-subtle)" }}>From (escrow)</span>
+                    <br />
+                    <TechChip short={shortHex(refundProtocolAddress)} full={refundProtocolAddress} onCopy={actions.copyTech} explorer={explorerAddr(explorerBase, refundProtocolAddress)} />
+                  </div>
+                  <div>
+                    <span style={{ color: "var(--color-fg-subtle)" }}>To (merchant)</span>
+                    <br />
+                    <TechChip short={shortHex(payout.recipientWallet)} full={payout.recipientWallet} onCopy={actions.copyTech} explorer={explorerAddr(explorerBase, payout.recipientWallet)} />
+                  </div>
+                  <div>
+                    <span style={{ color: "var(--color-fg-subtle)" }}>Amount</span>
+                    <br />
+                    <span style={{ fontWeight: 600 }}>{payout.amount} USDC</span>
+                  </div>
+                  <div>
+                    <span style={{ color: "var(--color-fg-subtle)" }}>Status</span>
+                    <br />
+                    <span style={{ fontWeight: 600, color: payout.withdrawTxHash ? "var(--ok-600)" : "var(--brand-700)" }}>
+                      {payout.withdrawTxHash ? "✓ Withdrawn" : "Ready to withdraw"}
+                    </span>
+                  </div>
+                  {payout.withdrawTxHash && (
+                    <div style={{ gridColumn: "1 / -1" }}>
+                      <span style={{ color: "var(--color-fg-subtle)" }}>Withdrawal transaction</span>
+                      <br />
+                      <TechChip short={shortHex(payout.withdrawTxHash)} full={payout.withdrawTxHash} onCopy={actions.copyTech} explorer={explorerTx(explorerBase, payout.withdrawTxHash)} />
+                    </div>
+                  )}
+                  {decision.refundTxHash && !payout.withdrawTxHash && (
+                    <div style={{ gridColumn: "1 / -1" }}>
+                      <span style={{ color: "var(--color-fg-subtle)" }}>Release transaction</span>
+                      <br />
+                      <TechChip short={shortHex(decision.refundTxHash)} full={decision.refundTxHash} onCopy={actions.copyTech} explorer={explorerTx(explorerBase, decision.refundTxHash)} />
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
             <div style={{ background: "var(--color-surface-2)", border: "1px solid var(--color-border)", borderRadius: "var(--radius-md)", padding: "16px 18px", fontSize: 14, lineHeight: 1.65, marginBottom: 18 }}>
               <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: ".04em", textTransform: "uppercase", color: "var(--color-fg-subtle)", marginBottom: 8 }}>Written reasons</div>
               {decision.reason}

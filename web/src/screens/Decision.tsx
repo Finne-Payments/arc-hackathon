@@ -6,7 +6,7 @@ import { BackLink, Card, PrimaryButton, SecondaryButton, TechChip, Spinner } fro
 import { FramePanel } from "../components/FramePanel";
 import { explorerTx, shortHex } from "../mappers";
 import { api } from "../api";
-import { connectWallet, isUserRejection, readArbiter } from "../wallet";
+import { connectWallet, isUserRejection, readArbiter, directReleaseByArbiter } from "../wallet";
 
 export function Decision({ v, actions, apiData }: { v: ViewModel; actions: FinneActions; apiData?: ApiData }) {
   const c = apiData?.activeCase ?? null;
@@ -22,6 +22,7 @@ export function Decision({ v, actions, apiData }: { v: ViewModel; actions: Finne
     ? `${c.brief.latest.checks.filter((ch: { result: string }) => ch.result === "pass").length} of ${c.brief.latest.checks.length} checks passed`
     : "Brief pending.";
   const refundTo = (c?.payout as { refundTo?: string })?.refundTo ?? "";
+  const paymentId = (c?.payout as { paymentId?: string })?.paymentId ?? "";
   const explorerBase = apiData?.config?.explorerUrl ?? null;
 
   // Arbiter name from config (display only; the arbiter ADDRESS is read from
@@ -104,7 +105,7 @@ export function Decision({ v, actions, apiData }: { v: ViewModel; actions: Finne
       <PhaseRouter
         phase={v.decPhase} v={v} actions={actions}
         refundTo={refundTo} caseNumber={caseNumber} explorerBase={explorerBase}
-        contested={contested} total={total}
+        contested={contested} total={total} paymentId={paymentId}
         recipientWallet={recipientWallet} rpAddress={rpAddress}
         arbiterName={arbiterName} arbiterWallet={arbiterWallet}
         previewText={previewText}
@@ -117,15 +118,15 @@ export function Decision({ v, actions, apiData }: { v: ViewModel; actions: Finne
   );
 }
 
-function PhaseRouter({ phase, v, actions, refundTo, caseNumber, explorerBase, contested, total, recipientWallet, rpAddress, arbiterName, arbiterWallet, previewText, txHash, frame, onAcceptLine, onEditLine }: {
+function PhaseRouter({ phase, v, actions, refundTo, caseNumber, explorerBase, contested, total, paymentId, recipientWallet, rpAddress, arbiterName, arbiterWallet, previewText, txHash, frame, onAcceptLine, onEditLine }: {
   phase: DecPhase; v: ViewModel; actions: FinneActions; refundTo: string; caseNumber: string; explorerBase: string | null;
-  contested: string; total: string; recipientWallet: string; rpAddress: string; arbiterName: string; arbiterWallet: string; previewText: string;
+  contested: string; total: string; paymentId: string; recipientWallet: string; rpAddress: string; arbiterName: string; arbiterWallet: string; previewText: string;
   txHash: string | null;
   frame: import("../api").AgentFrame | null;
   onAcceptLine: (text: string) => void;
   onEditLine: (originalText: string, editedText: string) => void;
 }) {
-  if (phase === "idle") return <IdlePhase v={v} refundTo={refundTo} caseNumber={caseNumber} actions={actions} contested={contested} total={total} recipientWallet={recipientWallet} rpAddress={rpAddress} previewText={previewText} frame={frame} onAcceptLine={onAcceptLine} onEditLine={onEditLine} arbiterWallet={arbiterWallet} />;
+  if (phase === "idle") return <IdlePhase v={v} refundTo={refundTo} caseNumber={caseNumber} actions={actions} contested={contested} total={total} paymentId={paymentId} recipientWallet={recipientWallet} rpAddress={rpAddress} previewText={previewText} frame={frame} onAcceptLine={onAcceptLine} onEditLine={onEditLine} arbiterWallet={arbiterWallet} />;
   if (phase === "awaiting") return <AwaitingPhase onCancel={v.cancelSignature} contested={contested} refundTo={refundTo} />;
   if (phase === "sig_rejected") return <SigRejectedPhase onRetry={v.retrySign} onCancel={v.cancelSignature} />;
   if (phase === "pending") return <PendingPhase onCopy={actions.copyTech} refundTo={refundTo} explorerBase={explorerBase} txHash={txHash} />;
@@ -134,9 +135,9 @@ function PhaseRouter({ phase, v, actions, refundTo, caseNumber, explorerBase, co
   return <RecordedPhase onBack={() => actions.go("case")} arbiterName={arbiterName} arbiterWallet={arbiterWallet} />;
 }
 
-function IdlePhase({ v, refundTo, caseNumber, actions, contested, total, recipientWallet, rpAddress, previewText, frame, onAcceptLine, onEditLine, arbiterWallet }: {
+function IdlePhase({ v, refundTo, caseNumber, actions, contested, total, paymentId, recipientWallet, rpAddress, previewText, frame, onAcceptLine, onEditLine, arbiterWallet }: {
   v: ViewModel; refundTo: string; caseNumber: string; actions: FinneActions;
-  contested: string; total: string; recipientWallet: string; rpAddress: string; previewText: string;
+  contested: string; total: string; paymentId: string; recipientWallet: string; rpAddress: string; previewText: string;
   frame: import("../api").AgentFrame | null;
   onAcceptLine: (text: string) => void;
   onEditLine: (originalText: string, editedText: string) => void;
@@ -233,20 +234,30 @@ function IdlePhase({ v, refundTo, caseNumber, actions, contested, total, recipie
                 return;
               }
             } else {
-              // Non-refund decisions (reject/no_action): persist to the backend,
-              // which closes the case server-side. Previously this only flipped
-              // local phase state (a pure simulation), so the decision was never
-              // recorded and the CaseRoom stayed "Under review" with the decide
-              // button still visible.
+              // REJECT (release): record the decision, then the arbiter signs
+              // an on-chain releaseByArbiter tx to move funds from escrow to
+              // the merchant. Same MetaMask popup flow as approve.
               try {
                 await api.decide(caseNumber, { outcome: "release", reason: v.decReason });
-                // Reload the case so the CaseRoom reflects DECIDED/CLOSED and the
-                // decide affordance disappears (gated on decision presence).
-                actions.reloadCase();
-                actions.reloadPayouts();
-                v.recordDecision(); // flips local phase to "recorded"
+                // Connect the wallet + submit the on-chain release.
+                await connectWallet();
+                if (rpAddress && paymentId) {
+                  const hash = await directReleaseByArbiter(rpAddress as `0x${string}`, paymentId);
+                  // Stamp the release tx hash on the decision + payout.
+                  if (!hash.startsWith("0xalready-")) {
+                    await api.stampRefundTx(caseNumber, hash).catch(() => {});
+                  }
+                  if (paymentId) {
+                    actions.viewFinalReceipt(paymentId);
+                  }
+                } else {
+                  actions.reloadCase();
+                  actions.reloadPayouts();
+                  v.recordDecision();
+                }
               } catch (e) {
-                setWalletError(e instanceof Error ? e.message : "Could not record the decision. Try again.");
+                if (isUserRejection(e)) return;
+                setWalletError(e instanceof Error ? e.message : "The release transaction failed.");
               }
             }
           }}
