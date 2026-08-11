@@ -171,7 +171,7 @@ const PAYOUT_IMMUTABLE = [
 ];
 const payoutSchema = new Schema<PayoutDoc>(
   {
-    paymentId: { type: String, required: true, unique: true, index: true },
+    paymentId: { type: String, required: true, index: true },
     chain: String,
     contractAddress: String,
     txHash: String,
@@ -625,6 +625,10 @@ function register<T>(name: string, schema: Schema<T>): Model<T> {
 export const Platform = register<PlatformDoc>("Platform", platformSchema);
 export const Recipient = register<RecipientDoc>("Recipient", recipientSchema);
 export const WorkOrder = register<WorkOrderDoc>("WorkOrder", workOrderSchema);
+// Compound unique index so payouts from different contracts (same paymentId)
+// don't collide. Without this, deploying a new RefundProtocol (which resets
+// the nonce to 0) makes new payouts fail with E11000 duplicate key.
+payoutSchema.index({ paymentId: 1, contractAddress: 1 }, { unique: true });
 export const Payout = register<PayoutDoc>("Payout", payoutSchema);
 export const Evidence = register<EvidenceDoc>("Evidence", evidenceSchema);
 export const Case = register<CaseDoc>("Case", caseSchema);
