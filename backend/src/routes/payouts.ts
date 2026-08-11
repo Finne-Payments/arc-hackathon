@@ -87,6 +87,10 @@ payoutRoutes.post("/payouts/confirm", requirePermission("payout:create"), requir
 
     const rpAddr = loadEnv().arc.refundProtocolAddress ?? "";
 
+    // Look up the caller's wallet + platformKey once — used for txSender fallback
+    // and to ensure the payout is visible in their scoped ledger.
+    const caller = req.session.userId ? await User.findById(req.session.userId).lean() : null;
+
     // Try to fetch the receipt (authoritative). If the tx isn't mined yet,
     // fall back to the optimistic details from the request body.
     let det;
@@ -162,7 +166,6 @@ payoutRoutes.post("/payouts/confirm", requirePermission("payout:create"), requir
       }
       // The caller (authenticated user) IS the payer — use their wallet address
       // as txSender so registerReceipt can anchor a valid payer address.
-      const caller = req.session.userId ? await User.findById(req.session.userId).lean() : null;
       det = {
         paymentId: derivedPaymentId,
         chain: "arc",
