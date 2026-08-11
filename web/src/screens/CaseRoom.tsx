@@ -515,7 +515,7 @@ export function CaseRoom({ v, actions, apiData }: { v: ViewModel; actions: Finne
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
           <Eyebrow style={{ marginBottom: 0 }}>The agent's brief</Eyebrow>
           <button
-            onClick={() => { setRefreshing(true); api.refreshCase(caseNumber).then(() => actions.reloadCase()).finally(() => setRefreshing(false)); }}
+            onClick={() => { setRefreshing(true); api.refreshCase(caseNumber).catch(() => {}).then(() => actions.reloadCase()).finally(() => setRefreshing(false)); }}
             disabled={refreshing}
             style={{ fontSize: 11, fontWeight: 600, padding: "4px 12px", border: "1px solid var(--color-border)", borderRadius: "var(--radius-sm)", background: "var(--color-surface)", color: "var(--color-fg)", cursor: refreshing ? "default" : "pointer", opacity: refreshing ? 0.6 : 1 }}
           >
@@ -662,7 +662,7 @@ export function CaseRoom({ v, actions, apiData }: { v: ViewModel; actions: Finne
       {caseContext && (
         <CaseContextCard
           ctx={caseContext}
-          onRefresh={() => { setRefreshing(true); api.refreshCase(caseNumber).then(() => actions.reloadCase()).finally(() => setRefreshing(false)); }}
+          onRefresh={() => { setRefreshing(true); api.refreshCase(caseNumber).catch(() => {}).then(() => actions.reloadCase()).finally(() => setRefreshing(false)); }}
         />
       )}
 
@@ -886,14 +886,6 @@ function CaseContextCard({ ctx, onRefresh }: { ctx: CaseContextRow; onRefresh: (
       ) : (
         <div style={{ fontSize: 11, color: "var(--warn-600)", marginBottom: 12 }}>
           {ctx.onChainUnavailable ? "On-chain state unavailable (RPC unreachable or payment not indexed)." : "No on-chain payment link."}
-        </div>
-      )}
-
-      {ctx.chainFigures && (
-        <div style={{ marginBottom: 12 }}>
-          <div style={{ fontSize: 11, fontWeight: 600, marginBottom: 4 }}>Reserves<span style={CTX_SRC}>on-chain</span></div>
-          <div style={CTX_ROW}>Arbiter reserve: {ctx.chainFigures.arbiterReserve} USDC</div>
-          <div style={CTX_ROW}>Recipient debt: {ctx.chainFigures.recipientDebt} USDC</div>
         </div>
       )}
 
