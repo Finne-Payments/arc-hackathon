@@ -30,11 +30,11 @@
     "_note": "Verified on-chain 2026-08-08: the operator (0xf0D99646...) holds PLATFORM_ROLE, REVIEWER_ROLE, and AGENT_ROLE (confirmed via hasRole). The deployer (0x8e56...) is DEFAULT_ADMIN. The construction-time platform/reviewer addresses were superseded by explicit grantRole calls; the values above reflect the live on-chain truth, not the constructor args."
   },
   "refundProtocol": {
-    "address": "0xEa59160B2Cdc26f1D56772094804641a1032AF90",
+    "address": "0x66e3F1B6667C7f5E2FECDE70db9BeE9F2f47209d",
     "deploymentTx": "0x11d28fce865af136ed471edfddad307dc8123ecfb95d6524539515e87dea0a0e",
     "deploymentBlock": 56274238,
     "deployer": "0x8e5618d427335F865A1E693162417D991f3d8030",
-    "arbiter": "0x18a01318e1f99F2B8393980091Ec7992Cb80f500",
+    "arbiter": "0x88294CCbb96A9bC9E6bA1b7B04Ce0751b3aabd91",
     "compilerVersion": "0.8.24",
     "eip712Domain": { "name": "RefundProtocol", "version": "1" },
     "arbiterReserve": "9000000 (9 USDC — see note)",

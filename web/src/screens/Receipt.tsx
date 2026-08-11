@@ -12,7 +12,7 @@ import { connectWallet, signWithdraw, isUserRejection } from "../wallet";
 // fallback so the withdraw/refund path works on first render even before
 // /api/config resolves; the live config value wins when present. Mirrors the
 // same fallback in NewPayout.tsx. See deployments/arc-testnet.json.
-const FALLBACK_REFUND_PROTOCOL = "0xEa59160B2Cdc26f1D56772094804641a1032AF90";
+const FALLBACK_REFUND_PROTOCOL = "0x66e3F1B6667C7f5E2FECDE70db9BeE9F2f47209d";
 
 function ChainRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (

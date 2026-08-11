@@ -35,7 +35,7 @@ const NEW_ID = "__new__";
 // redeploy to new addresses keeps working; this just guarantees the gate can
 // never falsely show "Payouts are disabled" for the deployed testnet. See
 // deployments/arc-testnet.json (the source of truth for these addresses).
-const FALLBACK_REFUND_PROTOCOL = "0xEa59160B2Cdc26f1D56772094804641a1032AF90";
+const FALLBACK_REFUND_PROTOCOL = "0x66e3F1B6667C7f5E2FECDE70db9BeE9F2f47209d";
 const FALLBACK_USDC = "0x3600000000000000000000000000000000000000";
 const ZERO_ADDR = "0x0000000000000000000000000000000000000000";
 
