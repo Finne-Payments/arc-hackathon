@@ -7,7 +7,9 @@ import {
   attachEvidence,
   requestInfo,
   recordDecision,
+  submitRefundSignature,
 } from "../services.ts";
+import { Payout, Decision as DecisionModel, Case as CaseModel } from "../models/index.ts";
 import {
   attachEvidenceDocument,
   attachEvidenceLink,
@@ -130,7 +132,13 @@ caseRoutes.post("/cases/:id/refresh", requirePermission("case:read"), async (req
 caseRoutes.post("/cases/:id/responses", requirePermission("case:respond"), async (req, res, next) => {
   try {
     const { text, evidence } = req.body ?? {};
-    await submitResponse(req.params.id, "recipient", "Maya Santos", {
+    // All three parties (customer, merchant, arbiter) can send messages.
+    // Derive the author side from the caller's role so the conversation thread
+    // correctly attributes each message.
+    const role = currentRole(req);
+    const author = role === "merchant" ? "merchant" : role === "arbiter" ? "arbiter" : "customer";
+    const authorName = req.session?.displayName ?? (role === "merchant" ? "Merchant" : role === "arbiter" ? "Arbiter" : "Customer");
+    await submitResponse(req.params.id, author, authorName, {
       text: String(text ?? ""),
       evidence: Array.isArray(evidence) ? evidence : [],
     });
@@ -155,7 +163,8 @@ caseRoutes.post("/cases/:id/responses", requirePermission("case:respond"), async
 caseRoutes.post("/cases/:id/evidence", requirePermission("case:add_evidence"), async (req, res, next) => {
   try {
     const role = currentRole(req);
-    const submittedBy = role === "recipient" ? "recipient" : "platform";
+    // The merchant IS the payment recipient; every other party is the customer side.
+    const submittedBy = role === "merchant" ? "merchant" : "customer";
     const { type, title, fileOrText } = req.body ?? {};
     if (!title?.trim() || !fileOrText?.trim()) {
       throw new HttpError(400, "Evidence needs a title and content (text or a file reference).");
@@ -288,15 +297,15 @@ caseRoutes.get("/cases/:id/annotations", requirePermission("case:read"), async (
  *     summary: Reviewer requests more information (max 2 per case)
  *     security: [{ bearerAuth: [] }]
  *     parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
- *     requestBody: { required: true, content: { application/json: { schema: { type: object, required: [target, text], properties: { target: {type: string, enum: [platform, recipient]}, text: {type: string} } } } } }
+ *     requestBody: { required: true, content: { application/json: { schema: { type: object, required: [target, text], properties: { target: {type: string, enum: [customer, merchant]}, text: {type: string} } } } } }
  *     responses: { 201: { description: "{ caseNumber, status, infoRequestCount }" }, 409: { description: "Max requests used or not under review" } }
  *     notes: Requires `case:request_info` (reviewer only).
  */
 caseRoutes.post("/cases/:id/requests", requirePermission("case:request_info"), async (req, res, next) => {
   try {
     const { target, text } = req.body ?? {};
-    if (target !== "platform" && target !== "recipient") {
-      throw new HttpError(400, "Target must be 'platform' or 'recipient'.");
+    if (target !== "customer" && target !== "merchant") {
+      throw new HttpError(400, "Target must be 'customer' or 'merchant'.");
     }
     const { caseDoc } = await requestInfo(req.params.id, target, String(text ?? ""));
     res.status(201).json({
@@ -314,16 +323,16 @@ caseRoutes.post("/cases/:id/requests", requirePermission("case:request_info"), a
  * /cases/{id}/decisions:
  *   post:
  *     tags: [Cases]
- *     summary: Reviewer decision (refund returns unsigned tx for wallet signing)
- *     description: "Refund outcome requires a linked wallet; returns { unsignedTx } for the browser wallet to sign refundByArbiter. Release/no-action close the case directly (no wallet needed)."
+ *     summary: Reviewer decision (refund returns EIP-712 typed-data for the arbiter to sign)
+ *     description: "Records the decision immediately. Refund outcome returns { refundTypedData } — the arbiter signs this EIP-712 payload in their wallet (no gas, no chain switch). The signed authorization is then submitted via /cases/{id}/decisions/refund-tx, which the backend relays to refundByArbiterWithSig. Release/no-action close the case directly."
  *     security: [{ bearerAuth: [] }]
  *     parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
  *     requestBody: { required: true, content: { application/json: { schema: { type: object, required: [outcome, reason], properties: { outcome: {type: string, enum: [refund, release, no_action]}, reason: {type: string, minLength: 20} } } } } }
  *     responses:
- *       201: { description: "{ decision, unsignedTx } — unsignedTx is null for non-refund outcomes" }
- *       400: { description: "Reason too short or no wallet linked for refund" }
+ *       201: { description: "{ decision, refundTypedData } — refundTypedData is null for non-refund outcomes" }
+ *       400: { description: "Reason too short" }
  *       409: { description: "Case not under review" }
- *     notes: Requires `case:decide` (reviewer only). Refund additionally requires a connected wallet.
+ *     notes: Requires `case:decide` (reviewer only). The decision records immediately; the refund signature + submission is a separate step.
  */
 caseRoutes.post("/cases/:id/decisions", requirePermission("case:decide"), async (req, res, next) => {
   try {
@@ -332,18 +341,93 @@ caseRoutes.post("/cases/:id/decisions", requirePermission("case:decide"), async 
       throw new HttpError(400, "Outcome must be refund, release or no_action.");
     }
     const decidedByName = req.session.displayName ?? "Reviewer";
-    // Look up the reviewer's linked wallet address from the User doc.
+    // Look up the reviewer's linked wallet address from the User doc (recorded
+    // for attribution; the refund no longer requires it to match the arbiter key).
     const { User } = await import("../models/index.ts");
     const user = req.session.userId ? await User.findById(req.session.userId) : null;
     const decidedByWallet = user?.walletAddress ?? req.session.walletAddress ?? "";
-    if (outcome === "refund" && !decidedByWallet) {
-      throw new HttpError(400, "Connect your wallet before approving a refund — the wallet signs the on-chain transaction.");
-    }
-    const { decision, unsignedTx } = await recordDecision(req.params.id, decidedByName, decidedByWallet, {
+    const { decision, refundTypedData } = await recordDecision(req.params.id, decidedByName, decidedByWallet, {
       outcome: outcome as DecisionOutcome,
       reason: String(reason ?? ""),
     });
-    res.status(201).json({ decision, unsignedTx });
+    res.status(201).json({ decision, refundTypedData });
+  } catch (e) {
+    next(e);
+  }
+});
+
+/**
+ * @openapi
+ * /cases/{id}/decisions/refund-tx:
+ *   post:
+ *     tags: [Cases]
+ *     summary: Submit the arbiter's signed refund authorization (relayer)
+ *     description: "Takes the (v,r,s) signature the arbiter produced over the refundTypedData payload and submits refundByArbiterWithSig on chain using the backend's operator key. The submitter and the authorizer are decoupled — the arbiter signs, the backend relays."
+ *     security: [{ bearerAuth: [] }]
+ *     parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+ *     requestBody: { required: true, content: { application/json: { schema: { type: object, required: [paymentID, expiry, salt, v, r, s], properties: { paymentID: {type: string}, expiry: {type: integer}, salt: {type: integer}, v: {type: integer}, r: {type: string}, s: {type: string} } } } } }
+ *     responses:
+ *       200: { description: "{ txHash } — the refund transaction hash" }
+ *       503: { description: "Relayer unavailable (no operator key or contract address)" }
+ *     notes: Requires `case:decide` (reviewer only).
+ */
+caseRoutes.post("/cases/:id/decisions/refund-tx", requirePermission("case:decide"), async (req, res, next) => {
+  try {
+    const { paymentID, expiry, salt, v, r, s } = req.body ?? {};
+    if (!paymentID || expiry === undefined || salt === undefined || v === undefined || !r || !s) {
+      throw new HttpError(400, "paymentID, expiry, salt, v, r, s are all required.");
+    }
+    const { txHash } = await submitRefundSignature(req.params.id, {
+      paymentID: String(paymentID), expiry: Number(expiry), salt: Number(salt),
+      v: Number(v), r: String(r), s: String(s),
+    });
+    res.status(200).json({ txHash });
+  } catch (e) {
+    next(e);
+  }
+});
+
+/**
+ * POST /cases/:id/refund-tx — stamp the refund tx hash on the decision +
+ * transition the payout to REFUNDED. Called by the frontend right after the
+ * arbiter's direct refundByArbiter tx is broadcast (not the signature+relay
+ * path). This makes the refund tx visible on the receipt immediately, without
+ * waiting for the indexer's 30s tick.
+ */
+caseRoutes.post("/cases/:id/refund-tx", requirePermission("case:decide"), async (req, res, next) => {
+  try {
+    const { txHash } = req.body ?? {};
+    if (!txHash || !String(txHash).startsWith("0x")) {
+      throw new HttpError(400, "txHash is required (0x…).");
+    }
+    const caseDoc = await CaseModel.findOne({ caseNumber: req.params.id }).lean();
+    if (!caseDoc) throw new HttpError(404, `No case ${req.params.id} found.`);
+    // Stamp the refund tx hash on the decision.
+    await DecisionModel.updateOne(
+      { caseRef: req.params.id },
+      { $set: { refundTxHash: String(txHash), executedAt: new Date().toISOString() } },
+    );
+    // Transition the payout to REFUNDED so the receipt/status reflect it.
+    const payout = await Payout.findOne({ paymentId: caseDoc.payoutRef });
+    if (payout && payout.status === "DISPUTED") {
+      try {
+        const { applyPaymentEvent } = await import("../stateMachines.ts");
+        payout.status = applyPaymentEvent(payout.status as never, "refund_confirmed");
+        await payout.save();
+      } catch {
+        // Already past DISPUTED — no-op.
+      }
+    }
+    // Close the case.
+    try {
+      await CaseModel.findOneAndUpdate(
+        { caseNumber: req.params.id },
+        { $set: { status: "CLOSED" } },
+      );
+    } catch {
+      // Status transition failed — the indexer will reconcile.
+    }
+    res.status(200).json({ ok: true, txHash: String(txHash) });
   } catch (e) {
     next(e);
   }

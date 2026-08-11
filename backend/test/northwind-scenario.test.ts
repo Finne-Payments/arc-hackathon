@@ -133,7 +133,7 @@ describe("WorkOrder deliverable timestamps — backward compatibility", () => {
     // Run the frame pipeline for a case on this legacy work order.
     const caseNumber = "CASE-LEGACY01";
     await Case.create({
-      caseNumber, payoutRef: paymentId, openedBy: "platform",
+      caseNumber, payoutRef: paymentId, openedBy: "customer",
       allegationClaimType: "non_delivery", allegationFreeText: "legacy",
       allegationAmountContested: "100", status: "UNDER_REVIEW", infoRequestCount: 0,
       infoRequests: [], responseDeadline: new Date(Date.now() + 86_400_000).toISOString(),

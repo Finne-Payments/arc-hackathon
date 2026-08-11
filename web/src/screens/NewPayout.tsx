@@ -24,8 +24,7 @@ import { approveAndPay, isUserRejection } from "../wallet";
    values — nothing is fabricated.
    ========================================================================== */
 
-const CONFIG_FROM_ID = "__config_refund__";
-const CONFIG_TO_ID = "__config_recipient__";
+const CONFIG_TO_ID = "__config_merchant__";
 const NEW_ID = "__new__";
 
 // Deployed Arc testnet contracts (verified bytecode 2026-08-08). These are the
@@ -36,11 +35,11 @@ const NEW_ID = "__new__";
 // redeploy to new addresses keeps working; this just guarantees the gate can
 // never falsely show "Payouts are disabled" for the deployed testnet. See
 // deployments/arc-testnet.json (the source of truth for these addresses).
-const FALLBACK_REFUND_PROTOCOL = "0x6EE86fEE126C94CD3bE0d2a5187F69368965f989";
+const FALLBACK_REFUND_PROTOCOL = "0xEa59160B2Cdc26f1D56772094804641a1032AF90";
 const FALLBACK_USDC = "0x3600000000000000000000000000000000000000";
 const ZERO_ADDR = "0x0000000000000000000000000000000000000000";
 
-export function NewPayout({ actions, apiData }: { actions: FinneActions; apiData?: ApiData }) {
+export function NewPayout({ actions, apiData, userWallet }: { actions: FinneActions; apiData?: ApiData; userWallet?: string | null }) {
   const platform = apiData?.config?.platform ?? null;
   const recipient = apiData?.config?.recipient ?? null;
   // Hardcoded Arc testnet fallbacks guarantee the gate is satisfied on first
@@ -52,21 +51,47 @@ export function NewPayout({ actions, apiData }: { actions: FinneActions; apiData
 
   const { from: fromBook, to: toBook, addEntry, removeEntry } = useAddressBook();
 
+  // A unique id for the connected-wallet entry in the refund dropdown.
+  const CONNECTED_WALLET_ID = "__connected_wallet__";
+
   const fromOptions = useMemo<AddressEntry[]>(() => {
-    const list = [...fromBook];
-    if (configRefund && !list.some((e) => sameAddress(e.address, configRefund))) {
-      list.unshift({ id: CONFIG_FROM_ID, label: platform ? `${platform.name} treasury` : "Treasury", address: configRefund });
+    const list: AddressEntry[] = [];
+    // The refund wallet is the CUSTOMER's own connected wallet — the wallet
+    // that calls pay() (msg.sender). Refunds return here. This is the ONLY
+    // default; the platform treasury is NOT offered here (it's the merchant's
+    // address, shown in the merchant dropdown below).
+    if (userWallet && !list.some((e) => sameAddress(e.address, userWallet))) {
+      list.push({ id: CONNECTED_WALLET_ID, label: "Your connected wallet (customer · refunds return here)", address: userWallet });
     }
-    return list;
-  }, [fromBook, configRefund, platform]);
+    return [...list, ...fromBook];
+  }, [fromBook, userWallet]);
 
   const toOptions = useMemo<AddressEntry[]>(() => {
-    const list = [...toBook];
-    if (configRecipientAddr && recipient && !list.some((e) => sameAddress(e.address, configRecipientAddr))) {
-      list.unshift({ id: CONFIG_TO_ID, label: recipient.displayName, address: configRecipientAddr });
+    const list: AddressEntry[] = [];
+    // The merchant wallet is who the customer is PAYING. The configured platform
+    // (e.g. Northbeam Studios) IS the merchant in the demo — its address is the
+    // default merchant. Never offer the customer's OWN wallet as the merchant.
+    const merchantAddr = configRefund || configRecipientAddr;
+    const merchantName = platform?.name ?? recipient?.displayName ?? "Merchant";
+    if (
+      merchantAddr &&
+      !(userWallet && sameAddress(merchantAddr, userWallet)) &&
+      !list.some((e) => sameAddress(e.address, merchantAddr))
+    ) {
+      list.push({ id: CONFIG_TO_ID, label: `${merchantName} (merchant)`, address: merchantAddr });
     }
-    return list;
-  }, [toBook, configRecipientAddr, recipient]);
+    // Fall back to the recipient record if it's a different address.
+    if (
+      configRecipientAddr &&
+      recipient &&
+      configRecipientAddr !== merchantAddr &&
+      !(userWallet && sameAddress(configRecipientAddr, userWallet)) &&
+      !list.some((e) => sameAddress(e.address, configRecipientAddr))
+    ) {
+      list.push({ id: "__config_recipient__", label: `${recipient.displayName} (merchant)`, address: configRecipientAddr });
+    }
+    return [...list, ...toBook];
+  }, [toBook, configRefund, configRecipientAddr, platform, recipient, userWallet]);
 
   const [fromId, setFromId] = useState<string>(fromOptions[0]?.id ?? "");
   const [toId, setToId] = useState<string>(toOptions[0]?.id ?? "");
@@ -78,7 +103,8 @@ export function NewPayout({ actions, apiData }: { actions: FinneActions; apiData
   const [amount, setAmount] = useState("");
   const [description, setDescription] = useState("");
   const [deliverables, setDeliverables] = useState<{ id: string; name: string; due: string }[]>([]);
-  const [settleImmediately, setSettleImmediately] = useState(false);
+  // settleImmediately removed — funds are always protected during the lockup.
+
   const [status, setStatus] = useState<{ kind: "working" | "ok" | "err"; text: string } | null>(null);
   const [paying, setPaying] = useState(false);
   // Payment-time contracts: collected as files here, uploaded to S3 AFTER the
@@ -123,7 +149,7 @@ export function NewPayout({ actions, apiData }: { actions: FinneActions; apiData
     try {
       // ---- 1. The contract side acts FIRST. ----
       const amountBase = BigInt(Math.round(numericAmount * 1_000_000));
-      const { paymentId } = await approveAndPay(
+      const { hash, paymentId } = await approveAndPay(
         rpAddress as `0x${string}`,
         usdcAddress as `0x${string}`,
         recipientAddress as `0x${string}`,
@@ -132,11 +158,29 @@ export function NewPayout({ actions, apiData }: { actions: FinneActions; apiData
         (phase) => setStatus({ kind: "working", text: phaseText[phase] ?? "Working…" }),
       );
 
-      // ---- 2. Chain confirmed. Save the off-chain metadata (non-blocking). ----
-      // The indexer may take a moment to create the payout row; the backend
-      // metadata endpoint 404s until it exists, so we retry a few times. This
-      // runs in the background — the user proceeds to the receipt immediately.
-      const id = paymentId !== null ? String(paymentId) : "";
+      // ---- 2. Confirm the payment server-side immediately. ----
+      // The backend creates the payout row RIGHT NOW. It tries the receipt
+      // first (authoritative); if the tx isn't mined yet, it derives the
+      // paymentId from the contract nonce. Retry up to 3 times — by the 2nd
+      // or 3rd attempt the tx is usually mined and the receipt is available.
+      let id = paymentId !== null ? String(paymentId) : "";
+      for (let attempt = 0; attempt < 3 && !id; attempt++) {
+        try {
+          const confirmed = await api.confirmPayment({
+            txHash: hash,
+            paymentId: id,
+            to: recipientAddress,
+            amount: String(numericAmount),
+            refundTo: refundAddress,
+          });
+          id = confirmed.paymentId;
+        } catch {
+          if (attempt < 2) await new Promise((r) => setTimeout(r, 2000));
+        }
+      }
+
+      // ---- 3. Save the off-chain metadata (non-blocking). ----
+      // The payout row now exists (confirm created it), so metadata won't 404.
       const desc = description.trim();
       const deliv = deliverables.filter((d) => d.name.trim()).map((d) => ({ name: d.name.trim(), due: d.due.trim() }));
       if (id) {
@@ -147,7 +191,7 @@ export function NewPayout({ actions, apiData }: { actions: FinneActions; apiData
           let saved = false;
           for (let attempt = 0; attempt < 8; attempt++) {
             try {
-              await api.savePayoutMetadata(id, { description: desc || undefined, deliverables: deliv, settleImmediately });
+              await api.savePayoutMetadata(id, { description: desc || undefined, deliverables: deliv });
               saved = true;
               break; // saved
             } catch (err) {
@@ -186,13 +230,13 @@ export function NewPayout({ actions, apiData }: { actions: FinneActions; apiData
         kind: "ok",
         text: id
           ? `Payment submitted on Arc · payment #${id}. Opening the receipt.`
-          : "Payment submitted on Arc. Opening the ledger.",
+          : "Payment submitted on Arc. Opening the receipt.",
       });
-      // Signal that a new payout is landing: the indexer writes the DB row
-      // async (within ~30s of the on-chain PaymentCreated event), so App.tsx
-      // watches payoutVersion and re-fetches the payouts list on a short retry
-      // schedule until the row appears — no manual refresh needed.
       actions.reloadPayouts();
+      // Go to the receipt (not the ledger) so the user sees the full receipt
+      // with transaction details. The confirm endpoint + retries above should
+      // always yield a paymentId. If somehow we still don't have one, fall back
+      // to the ledger.
       setTimeout(() => (id ? actions.viewReceipt(id) : actions.go("ledger")), 800);
     } catch (e) {
       if (isUserRejection(e)) {
@@ -212,8 +256,7 @@ export function NewPayout({ actions, apiData }: { actions: FinneActions; apiData
         New protected payout
       </h1>
       <p style={{ margin: "0 0 24px", fontSize: 14, color: "var(--color-fg-muted)", lineHeight: 1.6 }}>
-        Funds stay protected for 30 days unless a dispute is open. If the work goes wrong, an arbiter decides — money can only return to the
-        refund wallet you pick here.
+        You (the customer) pay the merchant. Funds stay protected for 30 days unless a dispute is open. If the work goes wrong, an arbiter decides — the money can only return to <strong>your refund wallet</strong>, not the merchant.
       </p>
 
       {!hasChain && (
@@ -236,7 +279,7 @@ export function NewPayout({ actions, apiData }: { actions: FinneActions; apiData
 
       <div style={{ background: "var(--color-surface)", border: "1px solid var(--color-border)", borderRadius: "var(--radius-lg)", boxShadow: "var(--shadow-xs)", padding: 28, display: "flex", flexDirection: "column", gap: 20 }}>
         {/* England & Wales contract template picker — pre-fills description +
-            deliverables so the merchant can start fast, then edit. */}
+            deliverables so the customer can start fast, then edit. */}
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           <label style={{ fontSize: 13, fontWeight: 600 }}>Start from a template (England & Wales)</label>
           <select
@@ -263,30 +306,31 @@ export function NewPayout({ actions, apiData }: { actions: FinneActions; apiData
           )}
         </div>
 
-        {/* from (refund / treasury) — refunds return here */}
+        {/* from (refund / customer's wallet) — the CUSTOMER pays from here and
+            refunds return here. This is NOT the merchant. */}
         <AddressField
-          fieldLabel="Refund wallet (your treasury)"
+          fieldLabel="Your refund wallet (customer · you pay from here, refunds return here)"
           entries={fromOptions}
           selectedId={fromEntry?.id ?? ""}
-          nonRemovableIds={[CONFIG_FROM_ID]}
-          addTitle="Add a treasury wallet"
+          nonRemovableIds={[CONNECTED_WALLET_ID]}
+          addTitle="Add your wallet"
           nameLabel="Wallet label"
-          addrPlaceholder="0x… your refund address"
+          addrPlaceholder="0x… your wallet (refunds come back here)"
           onSelect={setFromId}
           onAdd={async (label, address) => (await addEntry("from", label, address)).id}
           onRemove={(id) => void removeEntry(id)}
           onCopy={actions.copyTech}
         />
 
-        {/* to (recipient) */}
+        {/* to (merchant / payment recipient) — the MERCHANT receives the payout. */}
         <AddressField
-          fieldLabel="Recipient wallet"
+          fieldLabel="Merchant wallet (who you're paying)"
           entries={toOptions}
           selectedId={toEntry?.id ?? ""}
           nonRemovableIds={[CONFIG_TO_ID]}
-          addTitle="Add a recipient"
-          nameLabel="Recipient name"
-          addrPlaceholder="0x… recipient address"
+          addTitle="Add a merchant"
+          nameLabel="Merchant name"
+          addrPlaceholder="0x… merchant address (they receive the payout)"
           onSelect={setToId}
           onAdd={async (label, address) => (await addEntry("to", label, address)).id}
           onRemove={(id) => void removeEntry(id)}
@@ -367,17 +411,19 @@ export function NewPayout({ actions, apiData }: { actions: FinneActions; apiData
           )}
         </div>
 
-        {/* settle immediately */}
-        <label style={{ display: "flex", gap: 10, alignItems: "flex-start", border: settleImmediately ? "1.5px solid var(--brand-600)" : "1.5px solid var(--ink-200)", background: settleImmediately ? "var(--brand-50)" : "var(--color-surface)", borderRadius: "var(--radius-md)", padding: "12px 14px", cursor: "pointer" }}>
-          <input type="checkbox" checked={settleImmediately} onChange={(e) => setSettleImmediately(e.target.checked)} style={{ marginTop: 2, accentColor: "var(--brand-600)" }} />
+        {/* Settlement window info — replaces the old "Settle immediately" toggle.
+            The on-chain lockup determines when the merchant can withdraw. Until
+            then the customer can open a dispute and the arbiter can decide. */}
+        <div style={{ display: "flex", gap: 10, alignItems: "flex-start", border: "1.5px solid var(--ink-200)", background: "var(--color-surface)", borderRadius: "var(--radius-md)", padding: "12px 14px" }}>
+          <span style={{ fontSize: 20, lineHeight: 1 }}>⏳</span>
           <span>
-            <span style={{ fontSize: 14, fontWeight: 600 }}>Settle immediately</span>
+            <span style={{ fontSize: 14, fontWeight: 600 }}>Protected settlement window</span>
             <br />
             <span style={{ fontSize: 13, color: "var(--color-fg-muted)" }}>
-              The deliverables are already delivered. The recipient can withdraw the funds right away — no 30-day protection window.
+              Funds are protected during the lockup period. The merchant can withdraw once it ends
             </span>
           </span>
-        </label>
+        </div>
 
         {/* status */}
         {status && (

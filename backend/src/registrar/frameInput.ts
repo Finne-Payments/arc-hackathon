@@ -80,8 +80,8 @@ export async function buildFrameInput(
   const unresolvedInput = {
     hasResponse: !!detail.response,
     evidenceBySide: {
-      platform: detail.evidence.filter((e) => e.submittedBy !== "recipient").length,
-      recipient: detail.evidence.filter((e) => e.submittedBy === "recipient").length,
+      customer: detail.evidence.filter((e) => e.submittedBy !== "merchant").length,
+      merchant: detail.evidence.filter((e) => e.submittedBy === "merchant").length,
     },
     contestedAmountMicroUsdc: c.challengedAmountMicroUsdc,
     deliverableAmountsMicroUsdc: overrides.deliverableAmountsMicroUsdc ?? [],

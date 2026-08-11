@@ -66,6 +66,19 @@
   },
   {
     "type": "function",
+    "name": "REFUND_BY_ARBITER_TYPEHASH",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "arbiter",
     "inputs": [],
     "outputs": [
@@ -278,6 +291,35 @@
   },
   {
     "type": "function",
+    "name": "hashRefundAuthorization",
+    "inputs": [
+      {
+        "name": "paymentID",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "expiry",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "salt",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "lockupSeconds",
     "inputs": [
       {
@@ -390,12 +432,63 @@
   },
   {
     "type": "function",
+    "name": "refundByArbiterWithSig",
+    "inputs": [
+      {
+        "name": "paymentID",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "expiry",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "salt",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "v",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "r",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "s",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "refundByRecipient",
     "inputs": [
       {
         "name": "paymentID",
         "type": "uint256",
         "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setArbiter",
+    "inputs": [
+      {
+        "name": "newArbiter",
+        "type": "address",
+        "internalType": "address"
       }
     ],
     "outputs": [],
@@ -728,6 +821,21 @@
   {
     "type": "error",
     "name": "WithdrawalHashExpired",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ZeroAmount",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ZeroArbiter",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ZeroRecipient",
     "inputs": []
   }
 ]

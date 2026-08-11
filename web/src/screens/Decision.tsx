@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import type { FinneActions, ViewModel } from "../useFinne";
 import type { ApiData } from "../useApi";
 import type { DecPhase } from "../types";
@@ -6,7 +6,7 @@ import { BackLink, Card, PrimaryButton, SecondaryButton, TechChip, Spinner } fro
 import { FramePanel } from "../components/FramePanel";
 import { explorerTx, shortHex } from "../mappers";
 import { api } from "../api";
-import { detectWallet, connectWallet, isUserRejection, WrongWalletError } from "../wallet";
+import { detectWallet, connectWallet, isUserRejection, readArbiter } from "../wallet";
 
 export function Decision({ v, actions, apiData }: { v: ViewModel; actions: FinneActions; apiData?: ApiData }) {
   const c = apiData?.activeCase ?? null;
@@ -14,7 +14,10 @@ export function Decision({ v, actions, apiData }: { v: ViewModel; actions: Finne
   const contested = (c?.case as { allegationAmountContested?: string })?.allegationAmountContested ?? "0";
   const total = (c?.payout as { amount?: string })?.amount ?? "0";
   const claim = (c?.case as { allegationFreeText?: string })?.allegationFreeText ?? "—";
-  const reply = (c?.responses as { text: string }[] | undefined)?.[0]?.text ?? "No reply yet.";
+  // The arbiter decides against the LATEST reply — show the most recent response,
+  // not the first. (Earlier the index [0] always showed the oldest reply.)
+  const responses = (c?.responses as { text: string }[] | undefined) ?? [];
+  const reply = responses.length > 0 ? responses[responses.length - 1].text : "No reply yet.";
   const briefSummary = c?.brief?.latest
     ? `${c.brief.latest.checks.filter((ch: { result: string }) => ch.result === "pass").length} of ${c.brief.latest.checks.length} checks passed`
     : "Brief pending.";
@@ -25,7 +28,18 @@ export function Decision({ v, actions, apiData }: { v: ViewModel; actions: Finne
   const platformName = apiData?.config?.platform?.name ?? "the platform";
   const recipientName = apiData?.config?.recipient?.displayName ?? "the recipient";
   const arbiterName = apiData?.config?.platform?.arbiterName ?? "the reviewer";
-  const arbiterWallet = apiData?.config?.platform?.arbiterAddress ?? "";
+  // Read the arbiter from the CONTRACT (source of truth), not the Platform DB
+  // record which can be stale. Falls back to the config value if the RPC fails.
+  const rpAddress = apiData?.config?.refundProtocolAddress ?? "";
+  const [arbiterWallet, setArbiterWallet] = useState(apiData?.config?.platform?.arbiterAddress ?? "");
+  useEffect(() => {
+    if (!rpAddress) return;
+    let cancelled = false;
+    void readArbiter(rpAddress).then((addr) => {
+      if (!cancelled && addr) setArbiterWallet(addr);
+    });
+    return () => { cancelled = true; };
+  }, [rpAddress]);
   const remaining = (() => {
     const t = Number(total), ch = Number(contested);
     return Number.isFinite(t) && Number.isFinite(ch) ? String(Math.max(0, t - ch)) : "0";
@@ -171,10 +185,10 @@ function IdlePhase({ v, refundTo, caseNumber, actions, contested, total, recipie
 
         {walletError && (
           <div style={{ background: "rgba(192, 42, 42, 0.08)", border: "1px solid rgba(192, 42, 42, 0.4)", borderRadius: "var(--radius-md)", padding: "12px 14px", marginBottom: 14, fontSize: 13, lineHeight: 1.55, color: "var(--color-fg)" }}>
-            <strong>Can&apos;t sign yet.</strong> {walletError}
+            <strong>Couldn&apos;t complete the refund.</strong> {walletError}
             {arbiterWallet && (
               <div style={{ marginTop: 6, fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--color-fg-muted)" }}>
-                Required wallet: {arbiterWallet}
+                Sign with the arbiter wallet: {arbiterWallet}
               </div>
             )}
           </div>
@@ -186,35 +200,38 @@ function IdlePhase({ v, refundTo, caseNumber, actions, contested, total, recipie
             if (v.recordDisabled) return;
             setWalletError(null);
             if (v.approveSelected) {
-              // Refund requires a wallet signature. Try the real wallet path first;
-              // fall back to the labeled simulation if no wallet is detected.
+              // Signature-based refund: the arbiter signs an EIP-712
+              // RefundAuthorization (no gas, no chain switch), then the backend
+              // relays it via refundByArbiterWithSig. The connected wallet MUST
+              // be the arbiter's (the contract recovers the signer via ecrecover
+              // and reverts if it isn't the arbiter).
               try {
                 const ws = detectWallet();
                 if (ws.available) {
-                  // First, record the decision via the API to get the unsigned tx.
+                  // 1. Connect the wallet FIRST. If the user rejects the connect/
+                  //    chain-switch prompt here, the decision has NOT been recorded
+                  //    yet — the case stays un-decided and the reviewer can retry.
+                  //    (Earlier this happened AFTER api.decide, which left a
+                  //    decided-but-not-refunded case dangling on a wallet rejection.)
+                  await connectWallet();
+                  // 2. Record the decision via the API → records IMMEDIATELY,
+                  //    returns the EIP-712 typed-data payload to sign.
                   const result = await api.decide(caseNumber, { outcome: "refund", reason: v.decReason });
-                  if (result.unsignedTx) {
-                    // Connect the wallet and sign the real transaction. Pass the
-                    // arbiter address so signRefund can pre-flight: refundByArbiter
-                    // has onlyArbiter, so a non-arbiter wallet reverts on chain
-                    // with no readable reason. WrongWalletError is thrown BEFORE
-                    // broadcasting and surfaced below — not swallowed into the sim.
-                    await connectWallet();
-                    await actions.signRefundWithWallet(result.unsignedTx, arbiterWallet || undefined);
+                  if (result.refundTypedData) {
+                    // 3. Sign the authorization + relay it. The backend submits
+                    //    refundByArbiterWithSig with the operator key.
+                    await actions.authorizeAndRelayRefund(caseNumber, result.refundTypedData);
                     return;
                   }
                 }
               } catch (e) {
                 if (isUserRejection(e)) return; // user declined — stay on the decision
-                // Wrong wallet → show a clear message, do NOT fall through to the
-                // simulation (which would silently pretend the refund happened).
-                if (e instanceof WrongWalletError) {
-                  setWalletError(e.message);
-                  return;
-                }
-                // other wallet error → fall through to simulation
+                // Any other wallet/relay error → surface a clear message, do NOT
+                // fall through to the simulation (which would pretend it happened).
+                setWalletError(e instanceof Error ? e.message : "The refund signature or relay failed.");
+                return;
               }
-              // No wallet or fallback → simulation
+              // No wallet detected → fall back to the labeled simulation.
               v.recordDecision();
             } else {
               // Non-refund decisions (reject/no_action): persist to the backend,
@@ -299,9 +316,9 @@ function PendingPhase({ onCopy, refundTo, explorerBase, txHash }: { onCopy: (v: 
       <div style={{ display: "flex", justifyContent: "center", marginBottom: 18 }}>
         <Spinner size={44} color="var(--brand-600)" />
       </div>
-      <div style={{ fontFamily: "var(--font-sans)", fontWeight: 700, fontSize: 17, marginBottom: 6 }}>Signed · waiting for the block to confirm</div>
+      <div style={{ fontFamily: "var(--font-sans)", fontWeight: 700, fontSize: 17, marginBottom: 6 }}>Refund submitted</div>
       <div style={{ fontSize: 13, color: "var(--color-fg-muted)", maxWidth: 420, margin: "0 auto 14px", lineHeight: 1.6 }}>
-        Your refund to <span style={{ fontFamily: "var(--font-mono)", fontSize: 12 }}>{shortHex(refundTo)}</span> is mined on the next Arc block. This page advances the moment the chain confirms — no timer.
+        The refund transaction is on its way to <span style={{ fontFamily: "var(--font-mono)", fontSize: 12 }}>{shortHex(refundTo)}</span>. The case will close automatically once the chain confirms.
       </div>
       {txHash && (
         <div style={{ fontSize: 13, color: "var(--color-fg-muted)", maxWidth: 420, margin: "0 auto", lineHeight: 1.6 }}>

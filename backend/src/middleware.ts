@@ -1,5 +1,5 @@
 import type { Request, Response, NextFunction, RequestHandler } from "express";
-import { can, type Permission, type SessionSeat, type Role } from "./rbac.ts";
+import { can, seatToRole, type Permission, type SessionSeat, type Role } from "./rbac.ts";
 import { HttpError } from "./errors.ts";
 import { verifyToken } from "./auth.ts";
 import { loadEnv } from "./env.ts";
@@ -23,27 +23,65 @@ export interface SessionContext {
   walletAddress: string | null;
 }
 
-/** Attach a SessionContext to the request from the Authorization Bearer token. */
-export function resolveSession(req: Request, _res: Response, next: NextFunction): void {
+/** Attach a SessionContext to the request from the Authorization Bearer token.
+ * Self-heals stale JWTs: a token issued before the role split carries a legacy
+ * role ("reviewer"/"recipient"). Rather than 401 every request (which traps the
+ * user until they re-login), this looks up the user's CURRENT role from the DB
+ * and uses it. The wallet-login handler also re-stamps the role on the next
+ * login, so stale tokens disappear naturally as users return. */
+export async function resolveSession(req: Request, _res: Response, next: NextFunction): Promise<void> {
   const auth = req.header("authorization");
   const token = auth?.startsWith("Bearer ") ? auth.slice(7) : null;
 
   if (token) {
     const payload = verifyToken(token);
     if (payload) {
-      req.session = {
-        userId: payload.userId,
-        sessionId: roleToSeat(payload.role),
-        role: payload.role,
-        displayName: payload.displayName,
-        walletAddress: null, // populated on demand from the User doc by routes that need it
-      };
-      next();
-      return;
+      const VALID_ROLES: Role[] = ["arbiter", "customer", "merchant", "platform_viewer", "agent_service", "registry_operator"];
+      if (VALID_ROLES.includes(payload.role)) {
+        // Fresh token — role is current.
+        req.session = {
+          userId: payload.userId,
+          sessionId: roleToSeat(payload.role),
+          role: payload.role,
+          displayName: payload.displayName,
+          walletAddress: null,
+        };
+        next();
+        return;
+      }
+      // Stale token (legacy role) — self-heal from the DB so the user isn't
+      // trapped in a 401 loop. The user's `seat` (arbiter/customer/merchant/
+      // platform) is the durable identifier; if the stored `role` is also
+      // legacy, derive the role from the seat. If the user no longer exists,
+      // fall through to anonymous.
+      try {
+        const { User } = await import("./models/index.ts");
+        const user = await User.findById(payload.userId).lean();
+        if (user) {
+          let role = user.role as Role;
+          if (!VALID_ROLES.includes(role) && user.seat) {
+            // Legacy role in the DB too — derive from the seat.
+            role = seatToRole(user.seat as SessionSeat);
+          }
+          if (VALID_ROLES.includes(role)) {
+            req.session = {
+              userId: payload.userId,
+              sessionId: roleToSeat(role),
+              role,
+              displayName: user.displayName ?? payload.displayName,
+              walletAddress: null,
+            };
+            next();
+            return;
+          }
+        }
+      } catch {
+        // DB lookup failed — fall through to anonymous (safer than guessing).
+      }
     }
   }
 
-  // No valid token — anonymous (requirePermission will 401).
+  // No valid token, or stale token that couldn't be healed — anonymous.
   req.session = { userId: null, sessionId: null, role: null, displayName: null, walletAddress: null };
   next();
 }
@@ -128,14 +166,18 @@ export function currentSeat(req: Request): SessionSeat | null {
 /** Map a Role back to a transport seat (for session context). */
 function roleToSeat(role: Role): SessionSeat | null {
   switch (role) {
-    case "reviewer":
-      return "reviewer";
-    case "recipient":
-      return "recipient";
+    case "arbiter":
+      return "arbiter";
+    case "customer":
+      return "customer";
+    case "merchant":
+      return "merchant";
     case "platform_viewer":
       return "platform";
     case "agent_service":
       return "agent";
+    case "registry_operator":
+      return null;
     default:
       return null;
   }

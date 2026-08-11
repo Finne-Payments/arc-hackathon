@@ -29,9 +29,11 @@ export function isYouTubeUrl(url: string): boolean {
   return isValidVideoLink(url);
 }
 
-/** Who the caller is, in the legacy evidence vocabulary (platform | recipient). */
-function submittedByForRole(role: string | null): "platform" | "recipient" {
-  return role === "recipient" ? "recipient" : "platform";
+/** Who the caller is, in the side vocabulary (customer | merchant). The merchant
+ * IS the payment recipient; every other case party (customer = payer, arbiter)
+ * is the customer (payer) side. */
+function submittedByForRole(role: string | null): "customer" | "merchant" {
+  return role === "merchant" ? "merchant" : "customer";
 }
 
 /** Persist a finalized uploaded file as case evidence (arbiter-only visibility). */

@@ -31,8 +31,12 @@ export const NORTHWIND_PAYMENT_ID = "nw-m3-tranche";
 
 // Scenario wallet addresses (deterministic placeholders — this is a fixture,
 // not real keys; the agent is keyless and never signs).
+// Scenario wallet addresses (deterministic placeholders — this is a fixture,
+// not real keys; the agent is keyless and never signs). MUST be valid 40-hex-char
+// addresses: these flow into payout rows and address-normalization paths that
+// throw on non-hex input.
 const NORTHWIND_TREASURY = "0x000000000000000000000000000000000000b1b0"; // Northwind payer
-const KESTREL_WALLET = "0x000000000000000000000000000000000000ke5t"; // Studio Kestrel
+const KESTREL_WALLET = "0x000000000000000000000000000000008e5e1000"; // Studio Kestrel
 
 /**
  * Seed the runnable Northwind × Kestrel scenario if it isn't already present.
@@ -120,7 +124,7 @@ export async function seedNorthwindScenario(): Promise<void> {
     // paidAt (17 Jun) against deemed acceptance (22 Jun) → FAIL.
     const caseBody = {
       payoutRef: NORTHWIND_PAYMENT_ID,
-      openedBy: "platform",
+      openedBy: "customer",
       allegation: {
         claimType: "non_delivery",
         freeText: "Payment for M3 (UI motion assets) was released before the milestone was accepted; the work was then rejected for non-conformance. Northwind disputes the 500 USDC and seeks its return — the payment was made in the wrong order (clause 4.1).",
@@ -132,7 +136,7 @@ export async function seedNorthwindScenario(): Promise<void> {
       caseNumber: NORTHWIND_CASE_NUMBER,
       caseCode: "NORT-KEST-001",
       payoutRef: NORTHWIND_PAYMENT_ID,
-      openedBy: "platform",
+      openedBy: "customer",
       allegationClaimType: "non_delivery",
       allegationFreeText: caseBody.allegation.freeText,
       allegationAmountContested: "500",

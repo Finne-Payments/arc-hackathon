@@ -16,7 +16,7 @@ import {
 import { Timeline, type TimelineEntry } from "../components/Timeline";
 import { FileUpload } from "../components/FileUpload";
 import { DocumentPreview } from "../components/DocumentPreview";
-import { shortHex } from "../mappers";
+import { shortHex, SIDE_LABEL } from "../mappers";
 import { claimLabel } from "../domain/statusVocabulary";
 
 function FileIcon({ kind }: { kind: "doc" | "video" }) {
@@ -104,12 +104,12 @@ export function CaseRoom({ v, actions, apiData }: { v: ViewModel; actions: Finne
   const hasBrief = !!brief;
 
   // Response composer state — shown when there are unanswered info requests
-  // directed at the current user's side (merchant=platform, customer=recipient).
+  // directed at the current user's side (customer=platform/payer, merchant=recipient).
   // Only show requests since the LAST response from this user — not all
   // historical unanswered ones (those were already addressed).
   const [responseText, setResponseText] = useState("");
   const [responseSending, setResponseSending] = useState(false);
-  const myTarget = v.isClaimant ? "platform" : v.isRecipient ? "recipient" : null;
+  const myTarget = v.isClaimant ? "customer" : v.isRecipient ? "merchant" : null;
   // Open requests directed at the current user that haven't been answered.
   // A request is "answered" only when the backend stamps answeredAt — NOT based
   // on response timestamps, which caused legitimate new requests to be hidden
@@ -215,7 +215,7 @@ export function CaseRoom({ v, actions, apiData }: { v: ViewModel; actions: Finne
       <Card shadow="var(--shadow-xs)" padding="22px 24px" style={{ marginBottom: 16 }}>
         <Eyebrow style={{ marginBottom: 12 }}>The claim</Eyebrow>
         <div style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 13, color: "var(--color-fg-muted)", marginBottom: 12, flexWrap: "wrap" }}>
-          Opened by <strong style={{ color: "var(--color-fg)" }}>{caseDoc?.openedBy === "recipient" ? "Recipient" : "Platform"}</strong>
+          Opened by <strong style={{ color: "var(--color-fg)" }}>{caseDoc?.openedBy === "merchant" ? "Merchant" : "Customer"}</strong>
           <span style={{ border: "1px solid var(--color-border)", borderRadius: "var(--radius-pill)", padding: "2px 10px", fontSize: 12, fontWeight: 500, color: "var(--color-fg)" }}>{claimLabelText}</span>
         </div>
         <p style={{ margin: "0 0 12px", fontSize: 14, lineHeight: 1.65 }}>
@@ -236,14 +236,16 @@ export function CaseRoom({ v, actions, apiData }: { v: ViewModel; actions: Finne
               ...(caseDoc?.infoRequests ?? []).map((r) => ({
                 kind: "request" as const,
                 time: r.requestedAt,
-                author: `Arbiter → ${r.target === "recipient" ? "Customer" : "Merchant"}`,
+                author: `Arbiter → ${r.target === "merchant" ? "Merchant" : "Customer"}`,
+                subAuthor: undefined as string | undefined,
                 text: r.text,
                 role: "arbiter",
               })),
               ...responses.map((r) => ({
                 kind: "response" as const,
                 time: r.submittedAt,
-                author: r.authorName ?? (r.author === "recipient" ? "Customer" : "Merchant"),
+                author: r.author === "merchant" ? "Merchant" : r.author === "arbiter" ? "Arbiter" : "Customer",
+                subAuthor: r.authorName && r.authorName !== (r.author === "merchant" ? "Merchant" : r.author === "arbiter" ? "Arbiter" : "Customer") ? r.authorName : undefined,
                 text: r.text,
                 role: r.author,
               })),
@@ -269,6 +271,9 @@ export function CaseRoom({ v, actions, apiData }: { v: ViewModel; actions: Finne
                   >
                     <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
                       <span style={{ fontSize: 12, fontWeight: 600, color: msg.role === "arbiter" ? "var(--brand-800)" : "var(--color-fg)" }}>{msg.author}</span>
+                      {msg.subAuthor && (
+                        <span style={{ fontSize: 10, color: "var(--color-fg-subtle)", fontFamily: "var(--font-mono)" }}>{msg.subAuthor}</span>
+                      )}
                       <span style={{ fontSize: 11, color: "var(--color-fg-subtle)" }}>{new Date(msg.time).toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</span>
                     </div>
                     <div style={{ fontSize: 13, lineHeight: 1.55, color: "var(--color-fg)" }}>{msg.text}</div>
@@ -373,7 +378,7 @@ export function CaseRoom({ v, actions, apiData }: { v: ViewModel; actions: Finne
                     </div>
                     <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", fontSize: 12, color: "var(--color-fg-subtle)" }}>
                       <span style={{ border: `1px solid ${e.submittedBy === "agent" ? "var(--brand-200)" : "var(--color-border)"}`, borderRadius: "var(--radius-pill)", padding: "1px 8px", color: e.submittedBy === "agent" ? "var(--brand-800)" : "var(--color-fg-muted)" }}>
-                        {e.submittedBy === "platform" ? "Merchant" : e.submittedBy === "recipient" ? "Customer" : e.submittedBy}
+                        {e.submittedBy === "customer" ? "Customer" : e.submittedBy === "merchant" ? "Merchant" : e.submittedBy}
                       </span>
                       <span>{new Date(e.submittedAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</span>
                       {e.sha256 && <span style={{ fontFamily: "var(--font-mono)" }}>sha: {shortHex(e.sha256)}</span>}
@@ -695,10 +700,10 @@ export function CaseRoom({ v, actions, apiData }: { v: ViewModel; actions: Finne
               <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
                 <span style={{ fontSize: 12, fontWeight: 600, color: "var(--color-fg-muted)" }}>From</span>
                 <button onClick={v.reqToMerchant} style={{ cursor: "pointer", border: `1.5px solid ${v.reqMerBorder}`, background: v.reqMerBg, borderRadius: "var(--radius-pill)", padding: "3px 12px", fontSize: 12, fontWeight: 600, fontFamily: "var(--font-sans)" }}>
-                  Merchant · {apiData?.config?.platform?.name ?? "Platform"}
+                  Merchant · {apiData?.config?.recipient?.displayName ?? "Recipient"}
                 </button>
                 <button onClick={v.reqToCustomer} style={{ cursor: "pointer", border: `1.5px solid ${v.reqCusBorder}`, background: v.reqCusBg, borderRadius: "var(--radius-pill)", padding: "3px 12px", fontSize: 12, fontWeight: 600, fontFamily: "var(--font-sans)" }}>
-                  Customer · {apiData?.config?.recipient?.displayName ?? "Recipient"}
+                  Customer · {apiData?.config?.platform?.name ?? "Platform"}
                 </button>
               </div>
               <textarea className="finne-textarea" value={v.reqText} onChange={(e) => v.onReqText(e.target.value)} placeholder="e.g. Attach the original transfer-link email for Video 3, including the send date." style={{ minHeight: 72 }} />
@@ -908,7 +913,7 @@ function CaseContextCard({ ctx, onRefresh }: { ctx: CaseContextRow; onRefresh: (
           {ctx.evidence.map((e) => (
             <div key={e.evidenceId} style={CTX_ROW}>
               <span style={{ flex: 1 }}>{e.title}</span>
-              <span style={{ fontSize: 10, color: "var(--color-fg-subtle)" }}>by {shortHex(e.submittedBy)}</span>
+              <span style={{ fontSize: 10, color: "var(--color-fg-subtle)" }}>by {SIDE_LABEL[e.submittedBy] ?? e.submittedBy}</span>
             </div>
           ))}
         </div>

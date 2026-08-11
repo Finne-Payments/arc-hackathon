@@ -72,7 +72,7 @@ export function payoutToLedgerView(p: PayoutRow, workOrderDesc: string | null): 
     deadline: disputed
       ? ""
       : p.status === "ESCROWED"
-        ? `Unlocks ${formatShortDate(p.lockupEnd)}`
+        ? `Settles ${formatShortDate(p.lockupEnd)}`
         : "—",
     paymentId: p.paymentId,
   };
@@ -94,18 +94,19 @@ export interface RecipientLedgerView {
   withdrawable: boolean;
 }
 
-/** Human label for how long until lockup ends: "2h 14m", "now", "in 3 days". */
+/** Human label for how long until the settlement window ends (lockup):
+ *  "Settles in 3 days", "Ready to withdraw". */
 export function lockupCountdown(lockupEndIso: string): { label: string; ready: boolean } {
   try {
     const ms = new Date(lockupEndIso).getTime() - Date.now();
     if (ms <= 0) return { label: "Ready to withdraw", ready: true };
     const mins = Math.round(ms / 60000);
-    if (mins < 60) return { label: `Unlocks in ${mins}m`, ready: false };
+    if (mins < 60) return { label: `Settles in ${mins}m`, ready: false };
     const h = Math.floor(mins / 60);
     const m = mins % 60;
-    if (h < 48) return { label: `Unlocks in ${h}h ${String(m).padStart(2, "0")}m`, ready: false };
+    if (h < 48) return { label: `Settles in ${h}h ${String(m).padStart(2, "0")}m`, ready: false };
     const days = Math.round(mins / (60 * 24));
-    return { label: `Unlocks in ${days} day${days === 1 ? "" : "s"}`, ready: false };
+    return { label: `Settles in ${days} day${days === 1 ? "" : "s"}`, ready: false };
   } catch {
     return { label: "—", ready: false };
   }
@@ -175,8 +176,10 @@ export function caseToListView(c: CaseRow, payout: PayoutRow | undefined): CaseL
       : c.infoRequestCount > 0 && stage !== "decided"
         ? "More information requested"
         : "Under review";
-  const merchant = payout ? platformName(payout.platformKey) : "Northstar Creators";
-  const customer = payout ? RECIPIENT_LABEL[payout.recipientKey] ?? "Maya Santos" : "Maya Santos";
+  // Standard-commerce nomenclature: the CUSTOMER is the payer (the platform,
+  // e.g. Northstar); the MERCHANT is the payment recipient (e.g. Maya).
+  const customer = payout ? platformName(payout.platformKey) : "Northstar Creators";
+  const merchant = payout ? RECIPIENT_LABEL[payout.recipientKey] ?? "Maya Santos" : "Maya Santos";
   return {
     caseId: c.caseNumber,
     parties: `${merchant} ↔ ${customer}`,
@@ -197,9 +200,11 @@ export interface EvidenceView {
   showOnlyAfterReply?: boolean;
 }
 
-const SIDE_LABEL: Record<string, "Merchant" | "Customer" | "Agent"> = {
-  platform: "Merchant",
-  recipient: "Customer",
+// Side labels — keys now match the backend's side vocabulary directly
+// (customer = payer, merchant = payment recipient).
+export const SIDE_LABEL: Record<string, "Merchant" | "Customer" | "Agent"> = {
+  customer: "Customer",
+  merchant: "Merchant",
   agent: "Agent",
 };
 
@@ -365,17 +370,19 @@ export function stageFromCase(c: SharedCase | null): CaseStage {
   return caseStatusToStage(c.case.status);
 }
 
-/** Role label helpers for the session switcher + top bar (kept in sync with backend). */
+/** Role label helpers for the session switcher + top bar (kept in sync with backend).
+ * Standard-commerce nomenclature: customer = payer (Northstar), merchant =
+ * payment recipient (Maya). */
 export function roleBadge(role: Role): { label: string; dot: string } {
   switch (role) {
     case "arbiter":
       return { label: "Arbiter · Dana Whitfield · Northstar Creators", dot: "var(--brand-500)" };
     case "merchant":
-      return { label: "Merchant · Northstar Creators", dot: "var(--warn-500)" };
+      return { label: "Merchant · Maya Santos", dot: "var(--warn-500)" };
     case "platform":
       return { label: "Platform · Parkline Market · view access", dot: "var(--brand-400)" };
     default:
-      return { label: "Customer · Maya Santos", dot: "var(--ok-500)" };
+      return { label: "Customer · Northstar Creators", dot: "var(--ok-500)" };
   }
 }
 

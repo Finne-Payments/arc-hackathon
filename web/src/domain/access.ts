@@ -7,17 +7,21 @@ import type { Role, Screen } from "../types";
    definition, not three divergent copies.
    ========================================================================== */
 
+// Standard-commerce nomenclature: customer = payer (creates payouts, opens
+// disputes), merchant = payment recipient (responds, withdraws). The customer's
+// home is the ledger (it creates payouts); the merchant's home is the recipient
+// home (it receives payouts).
 export const ROLE_HOME: Record<Role, Screen> = {
   arbiter: "disputes",
-  merchant: "ledger",
-  customer: "home",
+  merchant: "home",
+  customer: "ledger",
   platform: "platform",
 };
 
 export const ROLE_ALLOWED: Record<Role, Screen[]> = {
   arbiter: ["disputes", "case", "decision", "receipt", "final"],
-  merchant: ["ledger", "newpayout", "disputes", "case", "receipt", "final"],
-  customer: ["home", "disputes", "case", "receipt", "final"],
+  merchant: ["home", "disputes", "case", "receipt", "final"],
+  customer: ["ledger", "newpayout", "disputes", "case", "receipt", "final"],
   platform: ["platform", "disputes", "case", "receipt", "final"],
 };
 

@@ -21,22 +21,32 @@ let app: ReturnType<typeof createApp>;
 // Distinct identities for each seat, with wallets/platformKey set so scoping
 // (GAP-B1) can be exercised too. Created as real User docs so _id is a valid
 // ObjectId (the JWT carries that ObjectId as userId, matching the real flow).
-const reviewerWallet = "0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+// Standard-commerce nomenclature: customer = payer (owns refundTo wallet, the
+// ONLY dispute opener), merchant = payment recipient (owns recipientWallet),
+// arbiter = decides. The customer's wallet equals the seeded payout's refundTo
+// so the party-verification check passes.
+const customerWallet = "0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 const recipientWallet = "0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB";
 
-let reviewerId = "";
-let recipientId = "";
+let arbiterId = "";
+let customerId = "";
+let merchantId = "";
 let platformViewerId = "";
 
 async function ensureUsers(): Promise<void> {
-  const reviewer = await User.findOneAndUpdate(
-    { email: "reviewer@test" },
-    { $set: { email: "reviewer@test", passwordHash: "x", role: "reviewer", displayName: "Dana", platformKey: "northbeam", walletAddress: null } },
+  const arbiter = await User.findOneAndUpdate(
+    { email: "arbiter@test" },
+    { $set: { email: "arbiter@test", passwordHash: "x", role: "arbiter", displayName: "Dana", platformKey: "northbeam", walletAddress: null } },
     { upsert: true, new: true },
   );
-  const recipient = await User.findOneAndUpdate(
-    { email: "recipient@test" },
-    { $set: { email: "recipient@test", passwordHash: "x", role: "recipient", displayName: "Maya", platformKey: "northbeam", walletAddress: recipientWallet } },
+  const customer = await User.findOneAndUpdate(
+    { email: "customer@test" },
+    { $set: { email: "customer@test", passwordHash: "x", role: "customer", displayName: "Northstar", platformKey: "northbeam", walletAddress: customerWallet } },
+    { upsert: true, new: true },
+  );
+  const merchant = await User.findOneAndUpdate(
+    { email: "merchant@test" },
+    { $set: { email: "merchant@test", passwordHash: "x", role: "merchant", displayName: "Maya", platformKey: "northbeam", walletAddress: recipientWallet } },
     { upsert: true, new: true },
   );
   const viewer = await User.findOneAndUpdate(
@@ -44,8 +54,9 @@ async function ensureUsers(): Promise<void> {
     { $set: { email: "viewer@test", passwordHash: "x", role: "platform_viewer", displayName: "Park", platformKey: "northbeam", walletAddress: null } },
     { upsert: true, new: true },
   );
-  reviewerId = String(reviewer._id);
-  recipientId = String(recipient._id);
+  arbiterId = String(arbiter._id);
+  customerId = String(customer._id);
+  merchantId = String(merchant._id);
   platformViewerId = String(viewer._id);
 }
 
@@ -53,8 +64,9 @@ function authAs(userId: string, role: Role, displayName: string): string {
   return createToken({ userId, role, displayName });
 }
 
-const reviewerToken = () => authAs(reviewerId, "reviewer", "Dana Reviewer");
-const recipientToken = () => authAs(recipientId, "recipient", "Maya Recipient");
+const arbiterToken = () => authAs(arbiterId, "arbiter", "Dana Arbiter");
+const customerToken = () => authAs(customerId, "customer", "Northstar Customer");
+const merchantToken = () => authAs(merchantId, "merchant", "Maya Merchant");
 const viewerToken = () => authAs(platformViewerId, "platform_viewer", "Park Viewer");
 
 beforeAll(async () => {
@@ -99,13 +111,13 @@ describe("health + auth", () => {
     expect(res.status).toBe(401);
   });
 
-  it("recipient cannot decide a case → 403 (needs case:decide)", async () => {
+  it("merchant cannot decide a case → 403 (needs case:decide)", async () => {
     // Seed a case to point the route at; the guard fires before the handler logic.
     await seedDisputedPayout();
     const c = await Case.findOne({});
     const res = await request(app)
       .post(`/cases/${c!.caseNumber}/decisions`)
-      .set("Authorization", `Bearer ${recipientToken()}`)
+      .set("Authorization", `Bearer ${merchantToken()}`)
       .send({ outcome: "release", reason: "This reason is long enough to pass." });
     expect(res.status).toBe(403);
   });
@@ -118,6 +130,52 @@ describe("health + auth", () => {
       .send({ claimType: "work_not_delivered_in_full", freeText: "short", amountContested: "33" });
     expect(res.status).toBe(403);
   });
+
+  it("arbiter cannot open a dispute → 403 (only customer can)", async () => {
+    const p = await seedEscrowedPayout();
+    const res = await request(app)
+      .post(`/payouts/${p.paymentId}/disputes`)
+      .set("Authorization", `Bearer ${arbiterToken()}`)
+      .send({ claimType: "work_not_delivered_in_full", freeText: "Arbiter trying to open.", amountContested: "10" });
+    expect(res.status).toBe(403);
+  });
+
+  it("merchant cannot open a dispute → 403 (only customer can)", async () => {
+    const p = await seedEscrowedPayout();
+    const res = await request(app)
+      .post(`/payouts/${p.paymentId}/disputes`)
+      .set("Authorization", `Bearer ${merchantToken()}`)
+      .send({ claimType: "work_not_delivered_in_full", freeText: "Merchant trying to open.", amountContested: "10" });
+    expect(res.status).toBe(403);
+  });
+
+  it("customer cannot open a dispute on a payout they did NOT pay for → 403", async () => {
+    // Seed a payout whose payer (refundTo) is a different wallet than the
+    // customer's. The party-verification check must reject it.
+    const p = await seedEscrowedPayout({ refundTo: "0xDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD" });
+    const res = await request(app)
+      .post(`/payouts/${p.paymentId}/disputes`)
+      .set("Authorization", `Bearer ${customerToken()}`)
+      .send({ claimType: "work_not_delivered_in_full", freeText: "Not my payment.", amountContested: "10" });
+    expect(res.status).toBe(403);
+  });
+
+  it("self-heals a stale legacy-role JWT so the user isn't trapped in 401s", async () => {
+    // Simulate a user who registered BEFORE the role split: their DB record
+    // carries the legacy "reviewer" role but a valid seat. A JWT minted with
+    // the legacy role must still resolve to a working session via self-heal.
+    const user = await User.findOneAndUpdate(
+      { email: "legacy@test" },
+      { $set: { email: "legacy@test", passwordHash: "x", role: "reviewer", seat: "customer", displayName: "Legacy", platformKey: "northbeam", walletAddress: null } },
+      { upsert: true, new: true },
+    );
+    // JWT carries the STALE role (as it would have been issued pre-flip).
+    const staleToken = createToken({ userId: String(user._id), role: "reviewer" as never, displayName: "Legacy" });
+    // The payouts list (requires payout:read) must succeed — the middleware
+    // self-heals the role from the DB seat.
+    const res = await request(app).get("/payouts").set("Authorization", `Bearer ${staleToken}`);
+    expect(res.status).toBe(200);
+  });
 });
 
 describe("dispute flow", () => {
@@ -125,7 +183,7 @@ describe("dispute flow", () => {
     const p = await seedEscrowedPayout();
     const open = await request(app)
       .post(`/payouts/${p.paymentId}/disputes`)
-      .set("Authorization", `Bearer ${reviewerToken()}`)
+      .set("Authorization", `Bearer ${customerToken()}`)
       .send({ claimType: "work_not_delivered_in_full", freeText: "The third video never arrived.", amountContested: "33.34" });
     expect(open.status).toBe(201);
     expect(open.body.status).toBe("AWAITING_RESPONSE");
@@ -133,30 +191,30 @@ describe("dispute flow", () => {
     const caseNumber = open.body.caseNumber;
     const reply = await request(app)
       .post(`/cases/${caseNumber}/responses`)
-      .set("Authorization", `Bearer ${recipientToken()}`)
+      .set("Authorization", `Bearer ${merchantToken()}`)
       .send({ text: "The link expired; here is a fresh one." });
     expect(reply.status).toBe(201);
     expect(reply.body.status).toBe("UNDER_REVIEW");
 
-    // Release needs a wallet? No — only refund does.
+    // Release needs a wallet? No — refund returns typed-data, release closes directly.
     const decide = await request(app)
       .post(`/cases/${caseNumber}/decisions`)
-      .set("Authorization", `Bearer ${reviewerToken()}`)
+      .set("Authorization", `Bearer ${arbiterToken()}`)
       .send({ outcome: "release", reason: "The work was delivered; the claim does not hold up." });
     expect(decide.status).toBe(201);
-    expect(decide.body.unsignedTx).toBeNull();
+    expect(decide.body.refundTypedData).toBeNull();
   });
 
   it("rejects a decision with a short reason → 400", async () => {
     const p = await seedEscrowedPayout();
     const open = await request(app)
       .post(`/payouts/${p.paymentId}/disputes`)
-      .set("Authorization", `Bearer ${reviewerToken()}`)
+      .set("Authorization", `Bearer ${customerToken()}`)
       .send({ claimType: "x", freeText: "long enough reason here", amountContested: "1" });
     const caseNumber = open.body.caseNumber;
     const decide = await request(app)
       .post(`/cases/${caseNumber}/decisions`)
-      .set("Authorization", `Bearer ${reviewerToken()}`)
+      .set("Authorization", `Bearer ${arbiterToken()}`)
       .send({ outcome: "release", reason: "too short" });
     expect(decide.status).toBe(400);
   });
@@ -167,45 +225,47 @@ describe("dispute flow", () => {
     // The cap is generous (20) to allow a real back-and-forth conversation.
     const r1 = await request(app)
       .post(`/cases/${c.caseNumber}/requests`)
-      .set("Authorization", `Bearer ${reviewerToken()}`)
-      .send({ target: "recipient", text: "Please share the file." });
+      .set("Authorization", `Bearer ${arbiterToken()}`)
+      .send({ target: "merchant", text: "Please share the file." });
     expect(r1.status).toBe(201);
     expect(r1.body.infoRequestCount).toBe(1);
 
     const r2 = await request(app)
       .post(`/cases/${c.caseNumber}/requests`)
-      .set("Authorization", `Bearer ${reviewerToken()}`)
-      .send({ target: "platform", text: "And the invoice from the merchant." });
+      .set("Authorization", `Bearer ${arbiterToken()}`)
+      .send({ target: "customer", text: "And the invoice from the customer." });
     expect(r2.status).toBe(201); // arbiter can act at any stage
     expect(r2.body.infoRequestCount).toBe(2);
 
     // A third request also succeeds — no artificial 2-request cap.
     const r3 = await request(app)
       .post(`/cases/${c.caseNumber}/requests`)
-      .set("Authorization", `Bearer ${reviewerToken()}`)
-      .send({ target: "recipient", text: "One more thing." });
+      .set("Authorization", `Bearer ${arbiterToken()}`)
+      .send({ target: "merchant", text: "One more thing." });
     expect(r3.status).toBe(201);
     expect(r3.body.infoRequestCount).toBe(3);
   });
 
-  it("refund decision requires a linked wallet and returns an unsignedTx", async () => {
+  it("refund decision returns EIP-712 typed-data for the arbiter to sign (no pre-linked wallet required)", async () => {
     const c = await seedDisputedPayout();
-    // No wallet on the reviewer yet → 400.
-    const noWallet = await request(app)
-      .post(`/cases/${c.caseNumber}/decisions`)
-      .set("Authorization", `Bearer ${reviewerToken()}`)
-      .send({ outcome: "refund", reason: "Refund is warranted because work was not delivered in full." });
-    expect(noWallet.status).toBe(400);
-
-    // Link the wallet, then refund.
-    await User.updateOne({ _id: reviewerId }, { $set: { walletAddress: reviewerWallet } });
+    // A refund no longer requires a pre-linked wallet — the arbiter signs the
+    // EIP-712 RefundAuthorization in their browser wallet, and the backend
+    // relays it via refundByArbiterWithSig. The decision records immediately.
     const refund = await request(app)
       .post(`/cases/${c.caseNumber}/decisions`)
-      .set("Authorization", `Bearer ${reviewerToken()}`)
+      .set("Authorization", `Bearer ${arbiterToken()}`)
       .send({ outcome: "refund", reason: "Refund is warranted because work was not delivered in full." });
     expect(refund.status).toBe(201);
-    expect(refund.body.unsignedTx).toBeTruthy();
-    expect(refund.body.unsignedTx.functionName).toBe("refundByArbiter");
+    // The response carries the typed-data payload (not an unsigned tx anymore).
+    expect(refund.body.refundTypedData).toBeTruthy();
+    expect(refund.body.refundTypedData.primaryType).toBe("RefundAuthorization");
+    expect(refund.body.refundTypedData.types.RefundAuthorization).toEqual([
+      { name: "paymentID", type: "uint256" },
+      { name: "expiry", type: "uint256" },
+      { name: "salt", type: "uint256" },
+    ]);
+    expect(refund.body.refundTypedData.message.paymentID).toBeTruthy();
+    expect(refund.body.refundTypedData.domain.name).toBe("RefundProtocol");
   });
 });
 
@@ -224,10 +284,10 @@ describe("append-only enforcement (P5)", () => {
 });
 
 describe("byte-identical shared case (P3)", () => {
-  it("GET /cases/:id is byte-identical across reviewer, recipient, viewer", async () => {
+  it("GET /cases/:id is byte-identical across arbiter, merchant, viewer", async () => {
     const c = await seedDisputedPayout();
-    const a = await request(app).get(`/cases/${c.caseNumber}`).set("Authorization", `Bearer ${reviewerToken()}`);
-    const b = await request(app).get(`/cases/${c.caseNumber}`).set("Authorization", `Bearer ${recipientToken()}`);
+    const a = await request(app).get(`/cases/${c.caseNumber}`).set("Authorization", `Bearer ${arbiterToken()}`);
+    const b = await request(app).get(`/cases/${c.caseNumber}`).set("Authorization", `Bearer ${merchantToken()}`);
     const v = await request(app).get(`/cases/${c.caseNumber}`).set("Authorization", `Bearer ${viewerToken()}`);
     expect(a.status).toBe(200);
     expect(a.text).toBe(b.text);
@@ -249,20 +309,22 @@ describe("receipt idempotency (FIN-33)", () => {
 });
 
 describe("per-seat scoping (GAP-B1)", () => {
-  it("recipient sees only their own payouts", async () => {
-    await seedEscrowedPayout({ recipientWallet, paymentId: "mine" });
-    await seedEscrowedPayout({ recipientWallet: "0xCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC", paymentId: "theirs" });
-    const res = await request(app).get("/payouts").set("Authorization", `Bearer ${recipientToken()}`);
+  it("all platform parties see all platform payouts (merchant, customer, arbiter)", async () => {
+    await seedEscrowedPayout({ recipientWallet, paymentId: "pay-a" });
+    await seedEscrowedPayout({ recipientWallet: "0xCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC", paymentId: "pay-b" });
+    // The merchant sees both payouts (platform-scoped, not wallet-scoped) —
+    // this keeps the demo end-to-end visible.
+    const res = await request(app).get("/payouts").set("Authorization", `Bearer ${merchantToken()}`);
     expect(res.status).toBe(200);
     const ids = res.body.payouts.map((p: { paymentId: string }) => p.paymentId);
-    expect(ids).toContain("mine");
-    expect(ids).not.toContain("theirs");
+    expect(ids).toContain("pay-a");
+    expect(ids).toContain("pay-b");
   });
 });
 
 /* ---------- seed helpers ---------- */
 
-async function seedEscrowedPayout(overrides: { recipientWallet?: string; paymentId?: string } = {}): Promise<{ paymentId: string }> {
+async function seedEscrowedPayout(overrides: { recipientWallet?: string; paymentId?: string; refundTo?: string } = {}): Promise<{ paymentId: string }> {
   const paymentId = overrides.paymentId ?? Math.random().toString(36).slice(2, 8);
   await Payout.create({
     paymentId,
@@ -270,7 +332,7 @@ async function seedEscrowedPayout(overrides: { recipientWallet?: string; payment
     contractAddress: "0x1",
     txHash: "0xT" + paymentId,
     amount: "100",
-    refundTo: reviewerWallet,
+    refundTo: overrides.refundTo ?? customerWallet,
     platformKey: "northbeam",
     recipientKey: "maya",
     recipientWallet: overrides.recipientWallet ?? recipientWallet,
@@ -292,7 +354,7 @@ async function seedDisputedPayout(): Promise<{ caseNumber: string }> {
   await Case.create({
     caseNumber,
     payoutRef: paymentId,
-    openedBy: "platform",
+    openedBy: "customer",
     allegationClaimType: "work_not_delivered_in_full",
     allegationFreeText: "Missing deliverable.",
     allegationAmountContested: "33.34",

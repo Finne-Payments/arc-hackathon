@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "description": "Deployment allowlist (RP-03). Only contracts listed here may be deployed or referenced by production code. The RefundProtocol (Circle's escrow) is explicitly NOT on this list — it is research/legacy only.",
+  "description": "Deployment allowlist (RP-03). Both Finné contracts are approved for deployment: FinneCaseRegistry (non-custodial registrar) and RefundProtocol (the escrow + signature-based refund path the backend relayer depends on via refundByArbiterWithSig).",
   "approved": [
     {
       "name": "FinneCaseRegistry",
@@ -9,14 +9,15 @@
       "abiHash": "_pending_con_05_",
       "deployable": true,
       "description": "Finné's production registrar — non-custodial, AccessControl + Pausable."
-    }
-  ],
-  "quarantined": [
+    },
     {
       "name": "RefundProtocol",
       "artifactPath": "contracts/refund-protocol/src/RefundProtocol.sol",
-      "reason": "Circle's escrow — research/legacy reference only (UNSAFE_REFERENCE_ONLY). Not deployable by Finné. Not imported by v1 production code.",
-      "deployable": false
+      "bytecodeHash": "_pending_",
+      "abiHash": "_pending_",
+      "deployable": true,
+      "description": "Escrow + refund contract (Circle base, Finné-hardened). The backend relayer submits arbiter-signed refunds via refundByArbiterWithSig; the EIP-712 domain is verified at boot. Holds funds under arbiter control."
     }
-  ]
+  ],
+  "quarantined": []
 }

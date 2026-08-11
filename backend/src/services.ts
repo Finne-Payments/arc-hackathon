@@ -1,7 +1,7 @@
 import { canonicalHash, sha256Hex } from "./canonical.ts";
 import { applyCaseEvent, applyPaymentEvent, IllegalTransitionError } from "./stateMachines.ts";
 import { HttpError } from "./errors.ts";
-import { outcomeCode, type DecisionOutcome, type CaseStatus } from "./statusVocabulary.ts";
+import { type DecisionOutcome, type CaseStatus } from "./statusVocabulary.ts";
 import type { Role } from "./rbac.ts";
 import { notify } from "./notify.ts";
 import {
@@ -28,6 +28,7 @@ import { keccak256, stringToBytes } from "viem";
 import type { Address } from "viem";
 import type { StructuredCaseContext } from "./registrar/caseContext.ts";
 import { readPayment, readChainFigures } from "./chain/reads.ts";
+import { REFUND_PROTOCOL_ABI } from "./chain/abis.ts";
 import { arbiterAddress } from "./chain/client.ts";
 import { toBaseUnits, fromBaseUnitsDisplay } from "./usdc.ts";
 
@@ -107,7 +108,7 @@ export async function buildLegacyCaseContext(body: SharedCaseBody): Promise<Stru
   if (onChainPaymentId) {
     const [onChain, figures] = await Promise.all([
       readPayment(onChainPaymentId),
-      readChainFigures(arbiterAddress(), (recipient || null) as Address | null),
+      readChainFigures(await arbiterAddress(), (recipient || null) as Address | null),
     ]);
     if (onChain) {
       paymentOnChain = {
@@ -285,14 +286,20 @@ export async function recordDetectedPayment(det: DetectedPayment): Promise<{ pay
   // A payout belongs to the PLATFORM that operates it (see derivePlatformKey).
   const platformKey = await derivePlatformKey(det.txSender);
 
-  // lockupEnd = the REAL on-chain release timestamp when the indexer provides it
-  // (from the PaymentCreated event). Falls back to paidAt + 30 days only when the
-  // release timestamp isn't available — never silently invents a window that
-  // contradicts the contract. disputeDeadline tracks lockupEnd (the dispute window
-  // closes when the lockup ends).
-  const lockupEnd = det.releaseTimestamp
-    ? new Date(Number(BigInt(det.releaseTimestamp)) * 1000).toISOString()
-    : new Date(new Date(det.blockTimestamp).getTime() + 30 * 86400 * 1000).toISOString();
+  // Settlement window: when the merchant can withdraw. The on-chain release
+  // timestamp is the source of truth, but for the demo we enforce a MINIMUM of
+  // T+3 days from payment so the settlement window is visible. If the contract's
+  // lockupSeconds is 0 (instant), the off-chain lockupEnd still shows 3 days —
+  // the UI gates the withdraw button on this. The indexer reconciles the
+  // authoritative on-chain value, and savePayoutMetadata extends lockupEnd when
+  // deliverable due dates are provided.
+  const SETTLEMENT_MIN_DAYS = 3;
+  const minLockup = new Date(new Date(det.blockTimestamp).getTime() + SETTLEMENT_MIN_DAYS * 86400 * 1000);
+  const onChainRelease = det.releaseTimestamp
+    ? new Date(Number(BigInt(det.releaseTimestamp)) * 1000)
+    : null;
+  // Use whichever is LATER: the on-chain release or the minimum T+3 window.
+  const lockupEnd = (onChainRelease && onChainRelease > minLockup ? onChainRelease : minLockup).toISOString();
   const disputeDeadline = lockupEnd;
 
   const receiptBody = {
@@ -341,8 +348,10 @@ export async function recordDetectedPayment(det: DetectedPayment): Promise<{ pay
     body: `${det.amount} USDC escrowed. Receipt anchored.`,
     paymentId: payout.paymentId,
     audience: [
-      { role: "recipient", recipientWallet: det.to },
-      { role: "reviewer", platformKey: payout.platformKey },
+      // Merchant = payment recipient (gets paid).
+      { role: "merchant", recipientWallet: det.to },
+      // Customer = payer (made the payment).
+      { role: "customer", platformKey: payout.platformKey },
     ],
   });
 
@@ -354,7 +363,7 @@ type PayoutTypes = import("mongoose").HydratedDocument<PayoutDoc>;
 /* ---- dispute opening (PRD §11.2 /payouts/:id/disputes) ---- */
 export async function openDispute(
   paymentId: string,
-  openedBy: "platform" | "recipient",
+  openedBy: "customer" | "merchant",
   body: { claimType: string; freeText: string; amountContested: string },
   env = loadEnv(),
 ): Promise<{ caseDoc: CaseDocType; paymentId: string }> {
@@ -430,10 +439,20 @@ export async function openDispute(
     caseNumber: caseDoc.caseNumber,
     paymentId,
     audience: [
-      { role: "recipient", recipientWallet: payout.recipientWallet },
-      { role: "reviewer", platformKey: payout.platformKey },
+      // Merchant = payment recipient — must respond to the dispute.
+      { role: "merchant", recipientWallet: payout.recipientWallet },
+      // Arbiter — reviews and decides the case.
+      { role: "arbiter", platformKey: payout.platformKey },
     ],
   });
+
+  // Auto-assemble the agent frame so the brief (requirements, unresolved items,
+  // deterministic checks) is available immediately when the case opens — not
+  // only after the first response. Fire-and-forget: the frame enriches on the
+  // next response, but the initial rung-1 brief should be ready right away.
+  void import("./registrar/frameOrchestrator.ts")
+    .then(({ assembleForCaseByNumber }) => assembleForCaseByNumber(caseDoc.caseNumber))
+    .catch((e) => console.error(`[openDispute] auto frame-assembly failed for ${caseDoc.caseNumber}:`, e instanceof Error ? e.message : e));
 
   return { caseDoc, paymentId };
 }
@@ -443,7 +462,7 @@ type CaseDocType = import("mongoose").HydratedDocument<CaseDoc>;
 /* ---- recipient reply (PRD §11.2 /cases/:id/responses) ---- */
 export async function submitResponse(
   caseNumber: string,
-  author: "recipient" | "platform",
+  author: "merchant" | "customer" | "arbiter",
   authorName: string,
   body: { text: string; evidence: { type: string; title: string; fileOrText: string }[] },
 ): Promise<{ caseDoc: CaseDocType }> {
@@ -451,6 +470,11 @@ export async function submitResponse(
 
   const caseDoc = await Case.findOne({ caseNumber });
   if (!caseDoc) throw new HttpError(404, `No case ${caseNumber} found.`);
+
+  // Track whether this is the FIRST formal response (case was AWAITING_RESPONSE).
+  // The contract accepts only one submitResponse per case (OPEN → RESPONDED).
+  // Subsequent messages are recorded off-chain only — no on-chain anchor.
+  const isFirstResponse = caseDoc.status === "AWAITING_RESPONSE";
 
   // A reply is accepted from any open case stage (AWAITING_RESPONSE or
   // UNDER_REVIEW). The state machine allows reply_received from both — so the
@@ -467,7 +491,7 @@ export async function submitResponse(
   }
 
   // Stamp ALL open info requests directed at the responder as answered.
-  const responderTarget = author === "recipient" ? "recipient" : "platform";
+  const responderTarget = author === "merchant" ? "merchant" : "customer";
   for (const req of caseDoc.infoRequests) {
     if (!req.answeredAt && req.target === responderTarget) {
       req.answeredAt = new Date().toISOString();
@@ -491,23 +515,29 @@ export async function submitResponse(
     registryAnchorTx: null,
   });
 
-  // Attach any evidence submitted with the reply.
+  // Attach any evidence submitted with the reply. Attribute to the actual author
+  // (the function param), not a hardcoded "merchant" — a future customer-reply
+  // path would otherwise mis-attribute every attached evidence item.
+  // Map the arbiter to the "customer" side for evidence attribution (the
+  // arbiter's evidence supports the payer's position).
+  const evSide: "customer" | "merchant" | "agent" = author === "merchant" ? "merchant" : author === "arbiter" ? "agent" : "customer";
   for (const ev of body.evidence ?? []) {
-    await attachEvidence(caseNumber, "recipient", ev.type, ev.title, ev.fileOrText);
+    await attachEvidence(caseNumber, evSide, ev.type, ev.title, ev.fileOrText);
   }
   await caseDoc.save();
 
   const payoutForNotify = await Payout.findOne({ paymentId: caseDoc.payoutRef }).lean();
 
-  // Anchor the recipient response on chain (submitResponse). The contract
-  // requires the case be on-chain OPEN for this, which it is: openCase landed
-  // OPEN and nothing has moved it yet (markUnderReview is enqueued only at the
-  // decision point). submittedBy is the responder's wallet when known; the
+  // Anchor the FIRST response on chain (submitResponse). The contract accepts
+  // only one submitResponse per case (OPEN → RESPONDED); subsequent messages
+  // are off-chain only. submittedBy is the responder's wallet when known; the
   // operator key holds PLATFORM_ROLE so it may relay a verified response.
-  await enqueueAnchor("response", idToUint256(caseNumber), caseDoc.payoutRef, responseHash, 0, {
-    caseNumber,
-    submittedBy: author === "recipient" ? (payoutForNotify?.recipientWallet ?? undefined) : undefined,
-  });
+  if (isFirstResponse) {
+    await enqueueAnchor("response", idToUint256(caseNumber), caseDoc.payoutRef, responseHash, 0, {
+      caseNumber,
+      submittedBy: author === "merchant" ? (payoutForNotify?.recipientWallet ?? undefined) : undefined,
+    });
+  }
 
   await notify({
     type: "reply",
@@ -515,7 +545,7 @@ export async function submitResponse(
     body: `${authorName} submitted a response. The case is ready for your review.`,
     caseNumber,
     paymentId: caseDoc.payoutRef,
-    audience: [{ role: "reviewer", platformKey: payoutForNotify?.platformKey ?? null }],
+    audience: [{ role: "arbiter", platformKey: payoutForNotify?.platformKey ?? null }],
   });
 
   // Re-run the agent frame so the narrative + turning questions reflect the new
@@ -530,7 +560,7 @@ export async function submitResponse(
 /* ---- evidence attachment (PRD §11.2 /cases/:id/evidence) ---- */
 export async function attachEvidence(
   caseNumber: string,
-  submittedBy: "platform" | "recipient" | "agent",
+  submittedBy: "customer" | "merchant" | "agent",
   type: string,
   title: string,
   fileOrText: string,
@@ -556,7 +586,7 @@ export async function attachEvidence(
 /* ---- info request (PRD §11.2 /cases/:id/requests) ---- */
 export async function requestInfo(
   caseNumber: string,
-  target: "platform" | "recipient",
+  target: "customer" | "merchant",
   text: string,
 ): Promise<{ caseDoc: CaseDocType }> {
   if (!text?.trim()) throw new HttpError(400, "Say what information you need.");
@@ -597,10 +627,10 @@ export async function requestInfo(
     body: `Reviewer needs: ${text}`,
     caseNumber,
     paymentId: caseDoc.payoutRef,
-    audience: target === "recipient"
-      ? [{ role: "recipient", recipientWallet: payoutForReq?.recipientWallet }]
+    audience: target === "merchant"
+      ? [{ role: "merchant", recipientWallet: payoutForReq?.recipientWallet }]
       : [
-          { role: "reviewer", platformKey: payoutForReq?.platformKey ?? null },
+          { role: "customer", platformKey: payoutForReq?.platformKey ?? null },
           { role: "platform_viewer", platformKey: payoutForReq?.platformKey ?? null },
         ],
   });
@@ -614,7 +644,7 @@ export async function recordDecision(
   decidedByName: string,
   decidedByWallet: string,
   body: { outcome: DecisionOutcome; reason: string },
-): Promise<{ decision: DecisionType; unsignedTx: UnsignedTx | null }> {
+): Promise<{ decision: DecisionType; refundTypedData: RefundTypedData | null }> {
   if (!body.reason || body.reason.trim().length < 20) {
     throw new HttpError(400, "Write at least 20 characters of reasons — both sides will read this.");
   }
@@ -651,6 +681,17 @@ export async function recordDecision(
   if (paymentEvent && payout) {
     try {
       payout.status = applyPaymentEvent(payout.status as never, paymentEvent as never);
+      // For release/no-action: the arbiter has decided the funds stay with the
+      // merchant. Transition CLEARED → WITHDRAWABLE immediately so the merchant
+      // can withdraw right away (the on-chain lockup is typically 0 for the
+      // demo; the off-chain T+3 display was informational only).
+      if (payout.status === "CLEARED") {
+        try {
+          payout.status = applyPaymentEvent(payout.status as never, "lockup_end_after_clear");
+        } catch {
+          // Already past CLEARED — no-op.
+        }
+      }
       await payout.save();
     } catch (e) {
       asStateError(e, "payment");
@@ -676,12 +717,28 @@ export async function recordDecision(
     registryAnchorTx: null,
   });
 
-  let unsignedTx: UnsignedTx | null = null;
+  let refundTypedData: RefundTypedData | null = null;
 
   if (body.outcome === "refund") {
-    // Refund decisions anchor only AFTER on-chain confirmation (PRD §9.4, §15.3).
-    // Return an unsigned tx the reviewer's browser wallet signs.
-    unsignedTx = buildUnsignedRefundTx(caseDoc.payoutRef);
+    // Build the EIP-712 typed-data payload for the arbiter to sign.
+    refundTypedData = buildRefundTypedData(caseDoc.payoutRef);
+
+    // Anchor the decision on-chain NOW (don't wait for the refund tx to execute).
+    // The correction_outstanding + correction anchors fire later when the
+    // indexer confirms the Refund event (confirmRefundExecuted).
+    const payoutForRefund = await Payout.findOne({ paymentId: caseDoc.payoutRef }).lean();
+    const correctionAmountMicroUsdc = payoutForRefund
+      ? BigInt(Math.round(Number(payoutForRefund.amount) * 1_000_000)).toString()
+      : "0";
+    await enqueueAnchor("under_review", idToUint256(caseDoc.caseNumber), caseDoc.payoutRef, decisionHash, 0, {
+      caseNumber: caseDoc.caseNumber,
+    });
+    await enqueueAnchor("decision", idToUint256(caseDoc.caseNumber), caseDoc.payoutRef, decisionHash, 0, {
+      decisionId: decision._id.toString(),
+      caseNumber: caseDoc.caseNumber,
+      outcome: 2, // PLATFORM_UPHELD — the customer's refund claim is upheld
+      correctionAmountMicroUsdc,
+    });
   } else {
     // Release / no-action: close the case now, anchor the decision.
     const afterClose = applyCaseEvent({ status: caseDoc.status as never, infoRequestCount: caseDoc.infoRequestCount }, "close");
@@ -694,11 +751,13 @@ export async function recordDecision(
     await enqueueAnchor("under_review", idToUint256(caseDoc.caseNumber), caseDoc.payoutRef, decisionHash, 0, {
       caseNumber: caseDoc.caseNumber,
     });
-    await enqueueAnchor("decision", idToUint256(caseDoc.caseNumber), caseDoc.payoutRef, decisionHash, outcomeCode(body.outcome), {
+    await enqueueAnchor("decision", idToUint256(caseDoc.caseNumber), caseDoc.payoutRef, decisionHash, 0, {
       // Legacy outcomes {release,no_action} are no-correction → contract Outcome.DISMISSED (4)
       // with zero correction. (refund decisions anchor after on-chain confirmation.)
       // entityId is the on-chain caseId (= idToUint256(caseNumber)) so recordDecision
       // matches the case that openCase created; decisionId is the Mongo backfill key.
+      // The worker reads args.outcome ?? job.outcome ?? 0, so outcome:4 (DISMISSED)
+      // in args is the value that reaches the chain; the positional 0 above is unused.
       decisionId: decision._id.toString(),
       caseNumber: caseDoc.caseNumber,
       outcome: 4,
@@ -722,43 +781,155 @@ export async function recordDecision(
     caseNumber: caseDoc.caseNumber,
     paymentId: caseDoc.payoutRef,
     audience: [
-      { role: "recipient", recipientWallet: payout?.recipientWallet },
-      { role: "platform_viewer", platformKey: payout?.platformKey ?? null },
+      { role: "merchant", recipientWallet: payout?.recipientWallet },
+      { role: "customer", platformKey: payout?.platformKey ?? null },
     ],
   });
 
-  return { decision, unsignedTx };
+  return { decision, refundTypedData };
 }
 
 type DecisionType = import("mongoose").HydratedDocument<DecisionDoc>;
 
-interface UnsignedTx {
-  to: string;
-  chainId: number;
-  functionName: string;
-  args: (string | number)[];
-  abi: unknown[]; // the ABI fragment the browser wallet needs for writeContract
-  abiName: string;
+/**
+ * The EIP-712 typed-data payload the arbiter signs to authorize a refund.
+ * Mirrors the contract's REFUND_BY_ARBITER_TYPEHASH:
+ *   RefundAuthorization(uint256 paymentID, uint256 expiry, uint256 salt)
+ *
+ * The arbiter signs this in their browser wallet (no gas, no chain switch, no
+ * onlyArbiter address match). ANY account may then submit the signed
+ * authorization to refundByArbiterWithSig — the backend relayer does that.
+ */
+export interface RefundTypedData {
+  domain: {
+    name: string;
+    version: string;
+    chainId: number;
+    verifyingContract: string;
+  };
+  types: {
+    RefundAuthorization: Array<{ name: string; type: string }>;
+  };
+  primaryType: "RefundAuthorization";
+  message: {
+    paymentID: string; // uint256 as decimal string
+    expiry: number;
+    salt: number;
+  };
+  /** The on-chain paymentID the relayer submits. */
+  paymentId: string;
 }
 
-function buildUnsignedRefundTx(paymentId: string): UnsignedTx {
+/**
+ * Build a collision-resistant salt for a RefundAuthorization. The contract's
+ * replay guard hashes (paymentID, expiry, salt); paymentID is fixed per dispute
+ * and a 24h expiry is effectively constant across retries, so the salt carries
+ * all the uniqueness. Date.now() alone can collide if two retries land in the
+ * same millisecond — folding in 128 bits of CSPRNG makes a collision
+ * astronomically unlikely and keeps the value a safe JS safe-integer.
+ */
+function _refundSalt(): number {
+  // crypto.webcrypto.getRandomValues is available in Node 18+ (global crypto).
+  // Take 48 bits of randomness (within JS safe-integer range) XOR'd with the
+  // ms timestamp so the salt is both random and monotonic-ish per process.
+  const buf = new Uint8Array(8);
+  crypto.getRandomValues(buf);
+  const view = new DataView(buf.buffer);
+  const rand = view.getUint32(0) * 0x100000000 + view.getUint32(4);
+  return Number((BigInt(rand) & 0xffffffffffffn) ^ BigInt(Date.now()));
+}
+
+function buildRefundTypedData(paymentId: string): RefundTypedData {
   const env = loadEnv();
   return {
-    to: env.arc.refundProtocolAddress ?? "0x0000000000000000000000000000000000000000",
-    chainId: env.arc.chainId,
-    functionName: "refundByArbiter",
-    args: [paymentId],
-    abi: [
-      {
-        type: "function",
-        name: "refundByArbiter",
-        stateMutability: "nonpayable",
-        inputs: [{ name: "paymentID", type: "uint256" }],
-        outputs: [],
-      },
-    ],
-    abiName: "refundByArbiter(uint256)",
+    domain: {
+      name: "RefundProtocol",
+      version: "1",
+      chainId: env.arc.chainId,
+      verifyingContract: env.arc.refundProtocolAddress ?? "0x0000000000000000000000000000000000000000",
+    },
+    types: {
+      RefundAuthorization: [
+        { name: "paymentID", type: "uint256" },
+        { name: "expiry", type: "uint256" },
+        { name: "salt", type: "uint256" },
+      ],
+    },
+    primaryType: "RefundAuthorization",
+    // Expiry: 24h window.
+    // Salt: the contract's replay guard keys the authorization hash on
+    // (paymentID, expiry, salt); since paymentID and a 24h expiry are constant
+    // across retries of the same decision, uniqueness rests ENTIRELY on salt.
+    // Date.now() (ms) alone can collide under retry/load within the same
+    // millisecond, so mix in 128 bits of CSPRNG randomness.
+    message: {
+      paymentID: paymentId,
+      expiry: Math.floor(Date.now() / 1000) + 60 * 60 * 24,
+      salt: _refundSalt(),
+    },
+    paymentId,
   };
+}
+
+/**
+ * Submit the arbiter's signed refund authorization to the chain. This is the
+ * RELAYER half of the signature-based refund: the arbiter signs the EIP-712
+ * RefundAuthorization off-chain (in their browser wallet), then this function
+ * submits refundByArbiterWithSig using the backend's walletClient (the registry
+ * operator key). The submitter and the authorizer are now decoupled — the
+ * arbiter no longer needs to hold the onlyArbiter key in MetaMask.
+ *
+ * Returns the tx hash on success. Throws on revert / no walletClient / no
+ * contract address — the route handler surfaces the error to the reviewer.
+ *
+ * The indexer's confirmRefundExecuted hook handles the rest (stamps
+ * refundTxHash, advances the case to CLOSED) exactly as before — the only thing
+ * that changed is WHO submits the tx.
+ */
+export async function submitRefundSignature(
+  caseNumber: string,
+  sig: { paymentID: string; expiry: number; salt: number; v: number; r: string; s: string },
+): Promise<{ txHash: string }> {
+  const caseDoc = await Case.findOne({ caseNumber });
+  if (!caseDoc) throw new HttpError(404, `No case ${caseNumber} found.`);
+
+  // The signature authorizes a refund for a SPECIFIC paymentID. The URL path
+  // names the case (and thus its payout); the client-supplied sig.paymentID must
+  // match that case's payoutRef. Without this check, a caller with case:decide
+  // could relay a signature that refunds a DIFFERENT payment than the one in the
+  // path. The on-chain signature is the real authority, but the backend must not
+  // relay a path/body mismatch.
+  if (String(sig.paymentID) !== String(caseDoc.payoutRef)) {
+    throw new HttpError(
+      400,
+      `paymentID mismatch: signature is for "${sig.paymentID}" but case ${caseNumber} is for payout "${caseDoc.payoutRef}".`,
+    );
+  }
+
+  // Lazy-import the chain client to avoid pulling viem into the module top-level
+  // (keeps the services module testable without a chain config).
+  const { getWalletClient, refundProtocolAddress } = await import("./chain/client.ts");
+  const walletClient = getWalletClient();
+  const contractAddress = refundProtocolAddress();
+  if (!walletClient || !walletClient.account || !contractAddress) {
+    throw new HttpError(503, "Refund relayer unavailable — backend has no operator key or contract address.");
+  }
+
+  const txHash = await walletClient.writeContract({
+    address: contractAddress,
+    // REFUND_PROTOCOL_ABI now carries refundByArbiterWithSig (regenerated from
+    // the compiled artifact), so the relayer uses the canonical ABI instead of
+    // a hand-maintained inline fragment. Cast as never for the same reason
+    // CASE_REGISTRY_ABI uses `as never` in anchorWorker — viem's writeContract
+    // accepts the args without over-strict inference.
+    abi: REFUND_PROTOCOL_ABI as never,
+    functionName: "refundByArbiterWithSig",
+    args: [BigInt(sig.paymentID), BigInt(sig.expiry), BigInt(sig.salt), sig.v, sig.r as `0x${string}`, sig.s as `0x${string}`],
+    account: walletClient.account,
+    chain: walletClient.chain,
+  });
+
+  return { txHash };
 }
 
 /* ---- refund execution confirmation (internal hook, PRD §11.2) ---- */
@@ -819,15 +990,8 @@ export async function confirmRefundExecuted(
         recipient: payout.recipientWallet,
         decidedAt: decision.decidedAt,
       });
-      await enqueueAnchor("under_review", caseId, paymentId, decision.decisionHash, 0, {
-        caseNumber: caseDoc.caseNumber,
-      });
-      await enqueueAnchor("decision", caseId, paymentId, decision.decisionHash, 1, {
-        decisionId: decision._id.toString(),
-        caseNumber: caseDoc.caseNumber,
-        outcome: 2, // PLATFORM_UPHELD
-        correctionAmountMicroUsdc,
-      });
+      // under_review + decision were already anchored at decision time
+      // (recordDecision). Only enqueue the correction sequence here.
       await enqueueAnchor("correction_outstanding", caseId, paymentId, correctionHash, 0, {
         caseNumber: caseDoc.caseNumber,
       });
@@ -845,8 +1009,8 @@ export async function confirmRefundExecuted(
     caseNumber: caseDoc?.caseNumber ?? null,
     paymentId,
     audience: [
-      { role: "recipient", recipientWallet: payout.recipientWallet },
-      { role: "platform_viewer", platformKey: payout.platformKey ?? null },
+      { role: "merchant", recipientWallet: payout.recipientWallet },
+      { role: "customer", platformKey: payout.platformKey ?? null },
     ],
   });
 }
@@ -879,8 +1043,8 @@ export async function confirmWithdrawn(paymentId: string, withdrawTxHash: string
     body: `${payout.amount} USDC withdrawn. Transaction: ${withdrawTxHash.slice(0, 10)}…`,
     paymentId,
     audience: [
-      { role: "recipient", recipientWallet: payout.recipientWallet },
-      { role: "reviewer", platformKey: payout.platformKey ?? null },
+      { role: "merchant", recipientWallet: payout.recipientWallet },
+      { role: "arbiter", platformKey: payout.platformKey ?? null },
     ],
   });
 }
@@ -895,11 +1059,11 @@ export async function confirmWithdrawn(paymentId: string, withdrawTxHash: string
  * a Mongo ObjectId hex throws `Cannot convert ... to a BigInt` and dead-letters
  * the anchor after 8 attempts. Mirrors `registrar/services.ts:idToUint256`.
  */
-function idToUint256(id: string): string {
+export function idToUint256(id: string): string {
   return BigInt(keccak256(stringToBytes(id))).toString();
 }
 
-async function enqueueAnchor(
+export async function enqueueAnchor(
   kind: AnchorJobKind,
   entityId: string,
   paymentId: string,
@@ -1022,7 +1186,11 @@ export interface SharedReceiptBody {
   evidence: unknown[];
 }
 
-/** Map a request seat to the platform's "openedBy" perspective for disputes. */
-export function openedByForRole(role: Role | null): "platform" | "recipient" {
-  return role === "recipient" ? "recipient" : "platform";
+/** Map a request role to the "openedBy" side for disputes. With unified
+ * nomenclature the side values match the role names directly: a customer (payer)
+ * opening a dispute stamps "customer"; a merchant (payment recipient) stamps
+ * "merchant". Only the customer role holds case:open, so the merchant branch is
+ * defensive. */
+export function openedByForRole(role: Role | null): "customer" | "merchant" {
+  return role === "merchant" ? "merchant" : "customer";
 }

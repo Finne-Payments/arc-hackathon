@@ -8,13 +8,9 @@ import type { Role } from "./rbac.ts";
 
    Previously GET /payouts and GET /cases returned everything to every seat — a
    deliberate demo simplification. This narrows what each role sees:
-     - recipient        → payouts to their wallet; cases on those payouts
-     - reviewer         → payouts + cases for their platform (platformKey)
-     - platform_viewer  → same as reviewer (read-only platform scope)
-
-   Scoping degrades gracefully: a user with no wallet (recipients) or no
-   platformKey (reviewers) sees nothing rather than everything — safer default.
-   The shared receipt/case bodies (P3) are unchanged; this only filters lists.
+     - All seats → payouts + cases for their platform (platformKey match).
+   This keeps the demo end-to-end visible: every party on the same platform
+   sees the same payouts and cases.
    ========================================================================== */
 
 export interface ScopeFilter {
@@ -45,22 +41,11 @@ export async function scopeFor(req: Request): Promise<ScopeFilter | null> {
   const caller = await loadCaller(req);
   if (!caller) return null;
 
-  if (caller.role === "recipient") {
-    // Recipient sees payouts to their own wallet. Case-insensitive match — the
-    // chain stores checksummed addresses (e.g. 0x18a0...Cb80f500) but the user's
-    // wallet from MetaMask is all-lowercase. An exact match misses both.
-    if (!caller.wallet) {
-      return { payout: { _id: null }, case: { _id: null } };
-    }
-    const payout: FilterQuery<PayoutDoc> = {
-      recipientWallet: { $regex: new RegExp(`^${caller.wallet.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i") },
-    };
-    const payoutIds = (await Payout.find(payout).select("paymentId").lean()).map((p) => p.paymentId);
-    const caseFilter = payoutIds.length ? { payoutRef: { $in: payoutIds } } : { _id: null };
-    return { payout, case: caseFilter };
-  }
-
-  // reviewer / platform_viewer: platform scope.
+  // All seats (customer / merchant / arbiter / platform_viewer) see payouts on
+  // their platform. This keeps the demo end-to-end visible: the merchant sees
+  // the payment the customer just made, the arbiter sees cases to decide, etc.
+  // The wallet-based scoping was too strict — a merchant connecting with a
+  // different wallet than the exact recipientAddress saw nothing.
   if (caller.platformKey) {
     const payout: FilterQuery<PayoutDoc> = { platformKey: caller.platformKey };
     const payoutIds = (await Payout.find(payout).select("paymentId").lean()).map((p) => p.paymentId);

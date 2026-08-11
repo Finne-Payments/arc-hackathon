@@ -6,7 +6,8 @@ import { Notification } from "./models/index.ts";
    ========================================================================== */
 
 export interface AudienceMember {
-  role: "reviewer" | "recipient" | "platform_viewer";
+  // Audience role matches a stored User.role (arbiter/customer/merchant/platform_viewer).
+  role: "arbiter" | "customer" | "merchant" | "platform_viewer";
   platformKey?: string | null;
   recipientWallet?: string | null;
 }

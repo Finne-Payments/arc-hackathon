@@ -21,25 +21,28 @@ import type { Role } from "../rbac.ts";
 
 export const authRoutes = Router();
 
-const VALID_ROLES: Role[] = ["reviewer", "recipient", "platform_viewer"];
+const VALID_ROLES: Role[] = ["arbiter", "customer", "merchant", "platform_viewer"];
 
-// Frontend seats. These are finer-grained than backend roles: arbiter and
-// merchant both map to `reviewer`, so binding is enforced at the seat level to
-// keep one wallet locked to exactly one seat.
+// Frontend seats map 1:1 to backend roles (standard-commerce nomenclature):
+//   arbiter  → arbiter   (decides refunds, signs on-chain)
+//   customer → customer  (payer; creates payouts; the ONLY dispute opener)
+//   merchant → merchant  (payment recipient; responds to disputes)
+//   platform → platform_viewer (read-only)
 const VALID_SEATS = ["arbiter", "merchant", "customer", "platform"] as const;
 type Seat = (typeof VALID_SEATS)[number];
 
-function seatToBackendRole(seat: string): "reviewer" | "recipient" | "platform_viewer" {
+function seatToBackendRole(seat: string): "arbiter" | "customer" | "merchant" | "platform_viewer" {
   switch (seat) {
     case "arbiter":
-    case "merchant":
-      return "reviewer";
+      return "arbiter";
     case "customer":
-      return "recipient";
+      return "customer";
+    case "merchant":
+      return "merchant";
     case "platform":
       return "platform_viewer";
     default:
-      return "recipient";
+      return "customer";
   }
 }
 
@@ -72,7 +75,7 @@ function toPublic(u: any): PublicUser {
  *             properties:
  *               email: { type: string, example: "dana@northstar.com" }
  *               password: { type: string, example: "password123" }
- *               role: { type: string, enum: [reviewer, recipient, platform_viewer] }
+ *               role: { type: string, enum: [arbiter, customer, merchant, platform_viewer] }
  *               displayName: { type: string, example: "Dana Whitfield" }
  *               platformKey: { type: string, example: "northstar" }
  *     responses:
@@ -85,7 +88,7 @@ authRoutes.post("/auth/register", async (req, res, next) => {
   try {
     const { email, password, role, displayName, platformKey } = req.body ?? {};
     if (!email || !password) throw new HttpError(400, "Email and password are required.");
-    if (!VALID_ROLES.includes(role)) throw new HttpError(400, "Role must be reviewer, recipient, or platform_viewer.");
+    if (!VALID_ROLES.includes(role)) throw new HttpError(400, "Role must be arbiter, customer, merchant, or platform_viewer.");
 
     const existing = await User.findOne({ email });
     if (existing) throw new HttpError(409, "An account with that email already exists.");
@@ -241,8 +244,7 @@ authRoutes.post("/auth/link-wallet", requireAuthenticated, async (req, res, next
 // POST /auth/wallet — wallet-address login (no password, no external service).
 // One wallet is bound to exactly one frontend seat: on first sign-in the
 // requested seat sticks; thereafter the same wallet may only sign in with that
-// seat. A mismatch is refused (409) — including across arbiter/merchant, which
-// share the backend `reviewer` role but are distinct seats here.
+// seat. A mismatch is refused (409).
 authRoutes.post("/auth/wallet", async (req, res, next) => {
   try {
     const { walletAddress, seat } = req.body ?? {};
@@ -271,6 +273,17 @@ authRoutes.post("/auth/wallet", async (req, res, next) => {
       if (!user.seat) {
         user.seat = desiredSeat;
         user.role = seatToBackendRole(desiredSeat);
+        await user.save();
+      }
+      // Migration: a user created before the role split (arbiter/customer/
+      // merchant) carries a legacy role name ("reviewer"/"recipient") that is
+      // no longer valid. Re-stamp the role from the bound seat so the JWT
+      // carries a role the RBAC matrix + middleware recognize. Without this,
+      // the middleware's stale-role guard treats the session as anonymous and
+      // every authenticated call returns 401.
+      const LEGACY_ROLES = ["reviewer", "recipient"];
+      if (LEGACY_ROLES.includes(user.role)) {
+        user.role = seatToBackendRole(user.seat);
         await user.save();
       }
     } else {

@@ -11,6 +11,24 @@ import { can } from "../rbac.ts";
 
 export const publicRoutes = Router();
 
+/** Read the arbiter address from the RefundProtocol contract (source of truth). */
+async function readChainArbiter(env: ReturnType<typeof loadEnv>): Promise<string | null> {
+  if (!env.arc.refundProtocolAddress) return null;
+  try {
+    const { getPublicClient } = await import("../chain/client.ts");
+    const client = getPublicClient();
+    if (!client) return null;
+    const arbiter = await client.readContract({
+      address: env.arc.refundProtocolAddress as `0x${string}`,
+      abi: [{ type: "function", name: "arbiter", stateMutability: "view", inputs: [], outputs: [{ name: "", type: "address" }] }],
+      functionName: "arbiter",
+    });
+    return String(arbiter);
+  } catch {
+    return null;
+  }
+}
+
 /**
  * @openapi
  * /healthz:
@@ -73,7 +91,10 @@ publicRoutes.get("/config", async (_req, res, next) => {
       platform: firstPlatform
         ? {
             name: firstPlatform.name,
-            arbiterAddress: firstPlatform.arbiterAddress,
+            // Read the arbiter from the CONTRACT (source of truth) when the chain
+            // is available — the Platform DB record can be stale (e.g. if the
+            // arbiter was rotated via setArbiter). Falls back to the DB record.
+            arbiterAddress: await readChainArbiter(env).catch(() => null) ?? firstPlatform.arbiterAddress,
             arbiterName: firstPlatform.arbiterName,
             refundAddress: firstPlatform.refundAddress,
             policy: {

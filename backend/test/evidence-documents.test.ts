@@ -10,30 +10,37 @@ import type { Role } from "../src/rbac.ts";
 import { resetLocalStore } from "../src/integrations/storage/localStore.ts";
 
 /* ============================================================================
-   Evidence documents — upload/link/download flow + arbiter-only RBAC.
-   Proves: allocate → complete records an ARBITER_ONLY evidence doc; a recipient
-   CANNOT download (403, evidence:download is reviewer-only); a link is SHARED;
-   a work-order contract attaches to the work order.
+   Evidence documents — upload/link/download flow + case-party RBAC.
+   Proves: allocate → complete records an ARBITER_ONLY evidence doc; a non-party
+   (platform_viewer) CANNOT download (403); a link is SHARED; a work-order
+   contract attaches to the work order.
    ========================================================================== */
 
 let mongo: MongoMemoryServer;
 let app: ReturnType<typeof createApp>;
 
-const reviewerWallet = "0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+const arbiterWallet = "0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+const customerWallet = "0xCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC";
 const recipientWallet = "0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB";
-let reviewerId = "";
-let recipientId = "";
+let arbiterId = "";
+let customerId = "";
+let merchantId = "";
 let viewerId = "";
 
 async function ensureUsers(): Promise<void> {
-  const reviewer = await User.findOneAndUpdate(
-    { email: "reviewer@test" },
-    { $set: { email: "reviewer@test", passwordHash: "x", role: "reviewer", displayName: "Dana", platformKey: "northbeam" } },
+  const arbiter = await User.findOneAndUpdate(
+    { email: "arbiter@test" },
+    { $set: { email: "arbiter@test", passwordHash: "x", role: "arbiter", displayName: "Dana", platformKey: "northbeam" } },
     { upsert: true, new: true },
   );
-  const recipient = await User.findOneAndUpdate(
-    { email: "recipient@test" },
-    { $set: { email: "recipient@test", passwordHash: "x", role: "recipient", displayName: "Maya", platformKey: "northbeam", walletAddress: recipientWallet } },
+  const customer = await User.findOneAndUpdate(
+    { email: "customer@test" },
+    { $set: { email: "customer@test", passwordHash: "x", role: "customer", displayName: "Northstar", platformKey: "northbeam", walletAddress: customerWallet } },
+    { upsert: true, new: true },
+  );
+  const merchant = await User.findOneAndUpdate(
+    { email: "merchant@test" },
+    { $set: { email: "merchant@test", passwordHash: "x", role: "merchant", displayName: "Maya", platformKey: "northbeam", walletAddress: recipientWallet } },
     { upsert: true, new: true },
   );
   const viewer = await User.findOneAndUpdate(
@@ -41,16 +48,18 @@ async function ensureUsers(): Promise<void> {
     { $set: { email: "viewer@test", passwordHash: "x", role: "platform_viewer", displayName: "Park", platformKey: "northbeam" } },
     { upsert: true, new: true },
   );
-  reviewerId = String(reviewer._id);
-  recipientId = String(recipient._id);
+  arbiterId = String(arbiter._id);
+  customerId = String(customer._id);
+  merchantId = String(merchant._id);
   viewerId = String(viewer._id);
 }
 
 function authAs(userId: string, role: Role, displayName: string): string {
   return createToken({ userId, role, displayName });
 }
-const reviewerToken = () => authAs(reviewerId, "reviewer", "Dana");
-const recipientToken = () => authAs(recipientId, "recipient", "Maya");
+const arbiterToken = () => authAs(arbiterId, "arbiter", "Dana");
+const customerToken = () => authAs(customerId, "customer", "Northstar");
+const merchantToken = () => authAs(merchantId, "merchant", "Maya");
 const viewerToken = () => authAs(viewerId, "platform_viewer", "Park");
 
 async function seedEscrowedPayout(paymentId: string): Promise<void> {
@@ -60,7 +69,7 @@ async function seedEscrowedPayout(paymentId: string): Promise<void> {
     contractAddress: "0x1",
     txHash: "0xT" + paymentId,
     amount: "100",
-    refundTo: reviewerWallet,
+    refundTo: arbiterWallet,
     platformKey: "northbeam",
     recipientKey: "maya",
     recipientWallet,
@@ -79,7 +88,7 @@ async function seedDisputedCase(caseNumber: string, paymentId: string): Promise<
   await Case.create({
     caseNumber,
     payoutRef: paymentId,
-    openedBy: "platform",
+    openedBy: "customer",
     allegationClaimType: "work_not_delivered_in_full",
     allegationFreeText: "Missing deliverable.",
     allegationAmountContested: "33",
@@ -117,11 +126,11 @@ beforeEach(async () => {
 });
 
 describe("evidence document upload + RBAC", () => {
-  it("allocates a presigned upload for case evidence (recipient can add evidence)", async () => {
+  it("allocates a presigned upload for case evidence (merchant can add evidence)", async () => {
     await seedDisputedCase("CASE-001", "PAY-1");
     const res = await request(app)
       .post("/cases/CASE-001/evidence/uploads")
-      .set("Authorization", `Bearer ${recipientToken()}`)
+      .set("Authorization", `Bearer ${merchantToken()}`)
       .send({ filename: "proof.pdf", mimeType: "application/pdf", declaredSizeBytes: 2048 });
     expect(res.status).toBe(201);
     expect(res.body.uploadId).toBeTruthy();
@@ -133,11 +142,11 @@ describe("evidence document upload + RBAC", () => {
     await seedDisputedCase("CASE-002", "PAY-2");
     const alloc = await request(app)
       .post("/cases/CASE-002/evidence/uploads")
-      .set("Authorization", `Bearer ${recipientToken()}`)
+      .set("Authorization", `Bearer ${merchantToken()}`)
       .send({ filename: "contract.md", mimeType: "text/markdown", declaredSizeBytes: 30 });
     const complete = await request(app)
       .post(`/cases/CASE-002/evidence/uploads/${alloc.body.uploadId}/complete`)
-      .set("Authorization", `Bearer ${recipientToken()}`)
+      .set("Authorization", `Bearer ${merchantToken()}`)
       .send({ title: "The contract", filename: "contract.md" });
     expect(complete.status).toBe(201);
     expect(complete.body.sha256).toHaveLength(64);
@@ -155,25 +164,25 @@ describe("evidence document upload + RBAC", () => {
     await seedDisputedCase("CASE-003", "PAY-3");
     const res = await request(app)
       .post("/cases/CASE-003/evidence/uploads")
-      .set("Authorization", `Bearer ${recipientToken()}`)
+      .set("Authorization", `Bearer ${merchantToken()}`)
       .send({ mimeType: "application/pdf", declaredSizeBytes: 100 });
     expect(res.status).toBe(400);
   });
 
-  it("allows the reviewer (arbiter) to download an evidence file", async () => {
+  it("allows the arbiter to download an evidence file", async () => {
     await seedDisputedCase("CASE-004", "PAY-4");
     const alloc = await request(app)
       .post("/cases/CASE-004/evidence/uploads")
-      .set("Authorization", `Bearer ${recipientToken()}`)
+      .set("Authorization", `Bearer ${merchantToken()}`)
       .send({ filename: "doc.txt", mimeType: "text/plain", declaredSizeBytes: 11 });
     await request(app)
       .post(`/cases/CASE-004/evidence/uploads/${alloc.body.uploadId}/complete`)
-      .set("Authorization", `Bearer ${recipientToken()}`)
+      .set("Authorization", `Bearer ${merchantToken()}`)
       .send({ title: "Doc", filename: "doc.txt" });
     const ev = await Evidence.findOne({ caseRef: "CASE-004" }).lean();
     const res = await request(app)
       .get(`/cases/CASE-004/evidence/${ev!._id}/download`)
-      .set("Authorization", `Bearer ${reviewerToken()}`);
+      .set("Authorization", `Bearer ${arbiterToken()}`);
     expect(res.status).toBe(200);
     expect(res.body.url).toBeTruthy();
     expect(res.body.expiresAt).toBeTruthy();
@@ -183,11 +192,11 @@ describe("evidence document upload + RBAC", () => {
     await seedDisputedCase("CASE-005", "PAY-5");
     const alloc = await request(app)
       .post("/cases/CASE-005/evidence/uploads")
-      .set("Authorization", `Bearer ${recipientToken()}`)
+      .set("Authorization", `Bearer ${merchantToken()}`)
       .send({ filename: "doc.txt", mimeType: "text/plain", declaredSizeBytes: 11 });
     await request(app)
       .post(`/cases/CASE-005/evidence/uploads/${alloc.body.uploadId}/complete`)
-      .set("Authorization", `Bearer ${recipientToken()}`)
+      .set("Authorization", `Bearer ${merchantToken()}`)
       .send({ title: "Doc", filename: "doc.txt" });
     const ev = await Evidence.findOne({ caseRef: "CASE-005" }).lean();
     // A platform_viewer is NOT a case party → evidence:download is denied.
@@ -201,7 +210,7 @@ describe("evidence document upload + RBAC", () => {
     await seedDisputedCase("CASE-006", "PAY-6");
     const res = await request(app)
       .post("/cases/CASE-006/evidence/links")
-      .set("Authorization", `Bearer ${recipientToken()}`)
+      .set("Authorization", `Bearer ${merchantToken()}`)
       .send({ title: "Demo recording", linkUrl: "https://www.youtube.com/watch?v=dQw4w9WgXcQ" });
     expect(res.status).toBe(201);
     const ev = await Evidence.findOne({ caseRef: "CASE-006" }).lean();
@@ -216,7 +225,7 @@ describe("evidence document upload + RBAC", () => {
     await seedDisputedCase("CASE-007", "PAY-7");
     const res = await request(app)
       .post("/cases/CASE-007/evidence/links")
-      .set("Authorization", `Bearer ${recipientToken()}`)
+      .set("Authorization", `Bearer ${merchantToken()}`)
       .send({ title: "Bad link", linkUrl: "javascript:alert(1)" });
     expect(res.status).toBe(400);
   });
@@ -239,13 +248,13 @@ describe("work order documents (payment-time contracts)", () => {
     });
     const alloc = await request(app)
       .post("/payouts/PAY-8/documents/uploads")
-      .set("Authorization", `Bearer ${reviewerToken()}`)
+      .set("Authorization", `Bearer ${customerToken()}`)
       .send({ filename: "master-agreement.pdf", mimeType: "application/pdf", declaredSizeBytes: 5000 });
     expect(alloc.status).toBe(201);
 
     const complete = await request(app)
       .post(`/payouts/PAY-8/documents/uploads/${alloc.body.uploadId}/complete`)
-      .set("Authorization", `Bearer ${reviewerToken()}`)
+      .set("Authorization", `Bearer ${customerToken()}`)
       .send({ filename: "master-agreement.pdf" });
     expect(complete.status).toBe(201);
     expect(complete.body.documentId).toBeTruthy();
@@ -262,7 +271,7 @@ describe("upload policy enforcement (routes)", () => {
     await seedDisputedCase("CASE-010", "PAY-10");
     const res = await request(app)
       .post("/cases/CASE-010/evidence/uploads")
-      .set("Authorization", `Bearer ${recipientToken()}`)
+      .set("Authorization", `Bearer ${merchantToken()}`)
       .send({ filename: "malware.exe", mimeType: "application/x-msdownload", declaredSizeBytes: 100 });
     expect(res.status).toBe(400);
   });
@@ -271,7 +280,7 @@ describe("upload policy enforcement (routes)", () => {
     await seedDisputedCase("CASE-011", "PAY-11");
     const res = await request(app)
       .post("/cases/CASE-011/evidence/uploads")
-      .set("Authorization", `Bearer ${recipientToken()}`)
+      .set("Authorization", `Bearer ${merchantToken()}`)
       .send({ filename: "huge.mp4", mimeType: "video/mp4", declaredSizeBytes: 26 * 1024 * 1024 });
     expect(res.status).toBe(400);
   });
@@ -280,7 +289,7 @@ describe("upload policy enforcement (routes)", () => {
     await seedDisputedCase("CASE-012", "PAY-12");
     const res = await request(app)
       .post("/cases/CASE-012/evidence/uploads")
-      .set("Authorization", `Bearer ${recipientToken()}`)
+      .set("Authorization", `Bearer ${merchantToken()}`)
       .send({ filename: "../../etc/passwd.pdf", mimeType: "application/pdf", declaredSizeBytes: 100 });
     expect(res.status).toBe(201);
     expect(res.body.objectKey).not.toContain("../");
@@ -291,12 +300,12 @@ describe("upload policy enforcement (routes)", () => {
     await seedDisputedCase("CASE-013", "PAY-13");
     const alloc = await request(app)
       .post("/cases/CASE-013/evidence/uploads")
-      .set("Authorization", `Bearer ${recipientToken()}`)
+      .set("Authorization", `Bearer ${merchantToken()}`)
       .send({ filename: "demo.mp4", mimeType: "video/mp4", declaredSizeBytes: 2000 });
     expect(alloc.status).toBe(201);
     const complete = await request(app)
       .post(`/cases/CASE-013/evidence/uploads/${alloc.body.uploadId}/complete`)
-      .set("Authorization", `Bearer ${recipientToken()}`)
+      .set("Authorization", `Bearer ${merchantToken()}`)
       .send({ title: "Product demo", filename: "demo.mp4" });
     expect(complete.status).toBe(201);
     expect(complete.body.mimeType).toBe("video/mp4");
@@ -315,7 +324,7 @@ describe("link evidence — multi-provider", () => {
     for (const url of links) {
       const res = await request(app)
         .post("/cases/CASE-020/evidence/links")
-        .set("Authorization", `Bearer ${recipientToken()}`)
+        .set("Authorization", `Bearer ${merchantToken()}`)
         .send({ title: `Link to ${url}`, linkUrl: url });
       expect(res.status).toBe(201);
     }
@@ -328,7 +337,7 @@ describe("link evidence — multi-provider", () => {
     await seedDisputedCase("CASE-021", "PAY-21");
     const res = await request(app)
       .post("/cases/CASE-021/evidence/links")
-      .set("Authorization", `Bearer ${recipientToken()}`)
+      .set("Authorization", `Bearer ${merchantToken()}`)
       .send({ title: "Bad", linkUrl: "javascript:alert(1)" });
     expect(res.status).toBe(400);
   });
@@ -337,7 +346,7 @@ describe("link evidence — multi-provider", () => {
     await seedDisputedCase("CASE-022", "PAY-22");
     const res = await request(app)
       .post("/cases/CASE-022/evidence/links")
-      .set("Authorization", `Bearer ${recipientToken()}`)
+      .set("Authorization", `Bearer ${merchantToken()}`)
       .send({ title: "Bad", linkUrl: "http://127.0.0.1/admin" });
     expect(res.status).toBe(400);
   });
@@ -348,17 +357,17 @@ describe("storage path isolation (objectKey never reaches clients)", () => {
     await seedDisputedCase("CASE-030", "PAY-30");
     const alloc = await request(app)
       .post("/cases/CASE-030/evidence/uploads")
-      .set("Authorization", `Bearer ${recipientToken()}`)
+      .set("Authorization", `Bearer ${merchantToken()}`)
       .send({ filename: "contract.pdf", mimeType: "application/pdf", declaredSizeBytes: 50 });
     await request(app)
       .post(`/cases/CASE-030/evidence/uploads/${alloc.body.uploadId}/complete`)
-      .set("Authorization", `Bearer ${recipientToken()}`)
+      .set("Authorization", `Bearer ${merchantToken()}`)
       .send({ title: "The contract", filename: "contract.pdf" });
 
     // Fetch the shared case body as the recipient — the objectKey must NOT be present.
     const res = await request(app)
       .get("/cases/CASE-030")
-      .set("Authorization", `Bearer ${recipientToken()}`);
+      .set("Authorization", `Bearer ${merchantToken()}`);
     expect(res.status).toBe(200);
     const evs = res.body.evidence as Record<string, unknown>[];
     const uploaded = evs.find((e) => (e.title as string) === "The contract");
@@ -377,22 +386,22 @@ describe("storage path isolation (objectKey never reaches clients)", () => {
     });
     const alloc = await request(app)
       .post("/payouts/PAY-31/documents/uploads")
-      .set("Authorization", `Bearer ${reviewerToken()}`)
+      .set("Authorization", `Bearer ${customerToken()}`)
       .send({ filename: "spec.pdf", mimeType: "application/pdf", declaredSizeBytes: 50 });
     await request(app)
       .post(`/payouts/PAY-31/documents/uploads/${alloc.body.uploadId}/complete`)
-      .set("Authorization", `Bearer ${reviewerToken()}`)
+      .set("Authorization", `Bearer ${customerToken()}`)
       .send({ filename: "spec.pdf" });
 
     // Open a dispute so the shared case body resolves the work order.
     await Case.create({
-      caseNumber: "CASE-031", payoutRef: "PAY-31", openedBy: "platform",
+      caseNumber: "CASE-031", payoutRef: "PAY-31", openedBy: "customer",
       allegationClaimType: "work_not_delivered_in_full", allegationFreeText: "x",
       allegationAmountContested: "10", status: "UNDER_REVIEW", infoRequestCount: 0,
       infoRequests: [], responseDeadline: new Date(Date.now() + 86400000).toISOString(),
       caseHash: canonicalHash({ caseNumber: "CASE-031" }), openedAt: new Date().toISOString(),
     });
-    const res = await request(app).get("/cases/CASE-031").set("Authorization", `Bearer ${reviewerToken()}`);
+    const res = await request(app).get("/cases/CASE-031").set("Authorization", `Bearer ${arbiterToken()}`);
     expect(res.status).toBe(200);
     const docs = (res.body.workOrder?.documents ?? []) as Record<string, unknown>[];
     expect(docs.length).toBe(1);
@@ -407,20 +416,20 @@ describe("preview — case-party access + content", () => {
     const content = "# Agreement\nDeliverable: 3 videos. Fee: 5000 USDC.";
     const alloc = await request(app)
       .post("/cases/CASE-040/evidence/uploads")
-      .set("Authorization", `Bearer ${recipientToken()}`)
+      .set("Authorization", `Bearer ${merchantToken()}`)
       .send({ filename: "notes.md", mimeType: "text/markdown", declaredSizeBytes: content.length });
     // PUT the bytes to the local store (simulating the client upload step).
     const { getLocalStore } = await import("../src/integrations/storage/localStore.ts");
     getLocalStore().setUploadBytes(alloc.body.uploadId, new TextEncoder().encode(content));
     await request(app)
       .post(`/cases/CASE-040/evidence/uploads/${alloc.body.uploadId}/complete`)
-      .set("Authorization", `Bearer ${recipientToken()}`)
+      .set("Authorization", `Bearer ${merchantToken()}`)
       .send({ title: "Agreement", filename: "notes.md" });
     const ev = await Evidence.findOne({ caseRef: "CASE-040" }).lean();
 
     const res = await request(app)
       .get(`/cases/CASE-040/evidence/${ev!._id}/preview`)
-      .set("Authorization", `Bearer ${reviewerToken()}`);
+      .set("Authorization", `Bearer ${arbiterToken()}`);
     expect(res.status).toBe(200);
     expect(res.body.kind).toBe("text");
     expect(res.body.content).toContain("Agreement");
@@ -431,12 +440,12 @@ describe("preview — case-party access + content", () => {
     await seedDisputedCase("CASE-041", "PAY-41");
     await request(app)
       .post("/cases/CASE-041/evidence/links")
-      .set("Authorization", `Bearer ${recipientToken()}`)
+      .set("Authorization", `Bearer ${merchantToken()}`)
       .send({ title: "Demo", linkUrl: "https://www.loom.com/share/abc" });
     const ev = await Evidence.findOne({ caseRef: "CASE-041" }).lean();
     const res = await request(app)
       .get(`/cases/CASE-041/evidence/${ev!._id}/preview`)
-      .set("Authorization", `Bearer ${reviewerToken()}`);
+      .set("Authorization", `Bearer ${arbiterToken()}`);
     expect(res.status).toBe(200);
     expect(res.body.kind).toBe("link");
     expect(res.body.content).toContain("loom.com");
@@ -446,12 +455,12 @@ describe("preview — case-party access + content", () => {
     await seedDisputedCase("CASE-042", "PAY-42");
     await request(app)
       .post("/cases/CASE-042/evidence/links")
-      .set("Authorization", `Bearer ${recipientToken()}`)
+      .set("Authorization", `Bearer ${merchantToken()}`)
       .send({ title: "Demo", linkUrl: "https://youtu.be/abc123" });
     const ev = await Evidence.findOne({ caseRef: "CASE-042" }).lean();
     const res = await request(app)
       .get(`/cases/CASE-042/evidence/${ev!._id}/preview`)
-      .set("Authorization", `Bearer ${recipientToken()}`);
+      .set("Authorization", `Bearer ${merchantToken()}`);
     expect(res.status).toBe(200);
   });
 
@@ -459,7 +468,7 @@ describe("preview — case-party access + content", () => {
     await seedDisputedCase("CASE-043", "PAY-43");
     await request(app)
       .post("/cases/CASE-043/evidence/links")
-      .set("Authorization", `Bearer ${recipientToken()}`)
+      .set("Authorization", `Bearer ${merchantToken()}`)
       .send({ title: "Demo", linkUrl: "https://youtu.be/abc123" });
     const ev = await Evidence.findOne({ caseRef: "CASE-043" }).lean();
     const res = await request(app)
@@ -472,7 +481,7 @@ describe("preview — case-party access + content", () => {
     await seedDisputedCase("CASE-044", "PAY-44");
     const res = await request(app)
       .get(`/cases/CASE-044/evidence/000000000000000000000000/preview`)
-      .set("Authorization", `Bearer ${reviewerToken()}`);
+      .set("Authorization", `Bearer ${arbiterToken()}`);
     expect(res.status).toBe(404);
   });
 });
@@ -484,20 +493,20 @@ describe("conversation-aware frame (responses + info requests)", () => {
     const { Case: CaseModel } = await import("../src/models/index.ts");
     await CaseModel.updateOne(
       { caseNumber: "CASE-050" },
-      { $push: { infoRequests: { target: "recipient", text: "When was the second video delivered?", requestedAt: new Date().toISOString(), answeredAt: null } } },
+      { $push: { infoRequests: { target: "merchant", text: "When was the second video delivered?", requestedAt: new Date().toISOString(), answeredAt: null } } },
     );
 
     // The recipient responds (a chat message) → triggers frame re-assembly.
     const reply = await request(app)
       .post("/cases/CASE-050/responses")
-      .set("Authorization", `Bearer ${recipientToken()}`)
+      .set("Authorization", `Bearer ${merchantToken()}`)
       .send({ text: "The second video was delivered on May 3rd — see the attached file." });
     expect(reply.status).toBe(201);
 
     // Give the fire-and-forget frame assembly a beat to land, then fetch the
     // shared case body which carries the assembled frame.
     await new Promise((r) => setTimeout(r, 300));
-    const res = await request(app).get("/cases/CASE-050").set("Authorization", `Bearer ${reviewerToken()}`);
+    const res = await request(app).get("/cases/CASE-050").set("Authorization", `Bearer ${arbiterToken()}`);
     expect(res.status).toBe(200);
     // A frame should exist (the conversation triggered re-assembly). At minimum
     // the deterministic rung-1 parts (requirements/unresolved) are present even

@@ -13,7 +13,8 @@ import type {
 } from "./types";
 import { ROLE_ALLOWED, ROLE_HOME } from "./domain/access";
 import { api } from "./api";
-import { signRefund, awaitRefundReceipt, isUserRejection } from "./wallet";
+import { signRefund, isUserRejection, signRefundAuthorization, directRefundByArbiter } from "./wallet";
+import type { RefundTypedData } from "./api";
 
 /**
  * useFinne is the single source of truth for the prototype.
@@ -189,8 +190,11 @@ export function useFinne(initialRole: Role = "arbiter") {
   const v = useMemo(() => {
     const role = state.roleOverride ?? state.role;
     const isReviewer = role === "arbiter";
-    const isClaimant = role === "merchant";
-    const isRecipient = role === "customer";
+    // Standard-commerce nomenclature: the CUSTOMER is the payer/claimant who
+    // opens disputes; the MERCHANT is the payment recipient who responds and
+    // withdraws. (Previously these labels were flipped.)
+    const isClaimant = role === "customer";
+    const isRecipient = role === "merchant";
     const isPlatformSide = role === "platform";
 
     // Route guard: if the current screen is not allowed for this role, redirect
@@ -235,14 +239,14 @@ export function useFinne(initialRole: Role = "arbiter") {
     const reqSent = reqLog.length > 0;
     const lastReq = reqLog[reqLog.length - 1];
     const nameFor = (t: InfoTarget) =>
-      t === "merchant" ? "the merchant (Northstar Creators)" : "the customer (Maya Santos)";
+      t === "merchant" ? "the merchant (Maya Santos)" : "the customer (Northstar Creators)";
     const reqSentLabel = !reqSent
       ? ""
       : reqLog.length === 1
         ? "Request sent to " + nameFor(lastReq.target) + "."
         : reqLog.length + " requests sent · most recently to " + nameFor(lastReq.target) + ".";
     const myReqs = reqLog.filter(
-      (rq) => (rq.target === "merchant" && isClaimant) || (rq.target === "customer" && isRecipient)
+      (rq) => (rq.target === "customer" && isClaimant) || (rq.target === "merchant" && isRecipient)
     );
     const myLastReq = myReqs[myReqs.length - 1];
 
@@ -324,15 +328,15 @@ export function useFinne(initialRole: Role = "arbiter") {
       sendReq: async () => {
         const t = state.reqText.trim();
         if (!t) return;
-        // Map frontend target to backend target
-        const backendTarget = state.reqTarget === "merchant" ? "platform" : "recipient";
+        // The frontend InfoTarget ("customer"|"merchant") now matches the
+        // backend side vocabulary directly — no translation needed.
         const caseNumber = state.selectedCaseId ?? "";
         if (!caseNumber) return;
         // Clear the text optimistically so a fast double-click can't send twice
         // (the empty-text guard above stops the second invocation).
         setState((s) => ({ ...s, reqText: "" }));
         try {
-          await api.requestInfo(caseNumber, { target: backendTarget as "platform" | "recipient", text: t });
+          await api.requestInfo(caseNumber, { target: state.reqTarget, text: t });
           setState((s) => ({
             ...s,
             reqLog: [...s.reqLog, { target: s.reqTarget, text: t }],
@@ -348,8 +352,8 @@ export function useFinne(initialRole: Role = "arbiter") {
       reqCardText: myLastReq ? myLastReq.text : "",
 
       showAddEvidence: (isClaimant || isRecipient) && !stageDecided,
-      evidenceAsLabel: isClaimant ? "the merchant" : "the service provider",
-      evSideLabel: isClaimant ? "Merchant" : "Customer",
+      evidenceAsLabel: isClaimant ? "the customer" : "the merchant",
+      evSideLabel: isClaimant ? "Customer" : "Merchant",
       evItems: state.evItems,
       evComposerOpen: state.evOpen,
       evPrompt: !state.evOpen,
@@ -418,7 +422,7 @@ export function useFinne(initialRole: Role = "arbiter") {
           : "Under review",
       showReply: !stageAwaiting,
       canDecide: (stageReview || stageMoreInfo || stageAwaiting) && isReviewer,
-      showComposer: isRecipient && (stageAwaiting || stageMoreInfo) && screen === "case",
+      showComposer: (isClaimant || isRecipient) && !stageDecided && screen === "case",
       disputeDeadlineCell: stageAwaiting ? "in " + countdown : stageDecided ? "Closed 29 Jul" : "—",
       selectedPaymentId: state.selectedPaymentId,
       selectedCaseId: state.selectedCaseId,
@@ -485,17 +489,102 @@ export function useFinne(initialRole: Role = "arbiter") {
         try {
           patch({ decPhase: "awaiting" });
           const txHash = await signRefund(unsignedTx as never, requiredSigner);
-          patch({ decPhase: "pending", decTxHash: txHash });
-          // Genuinely confirm: wait for the tx to be mined on Arc. Throws on
-          // revert/timeout → caught below → failed phase. This replaces the old
-          // hardcoded 3s → confirmed timer that lied about confirmation.
-          await awaitRefundReceipt(txHash);
-          patch({ decPhase: "confirmed" });
+          // Tx submitted — record the hash and proceed immediately. Do NOT wait
+          // for block confirmation (can take minutes on Arc). The indexer
+          // independently confirms and stamps the case CLOSED on its next tick.
+          patch({ decPhase: "confirmed", decTxHash: txHash });
+          // Stamp the refund tx hash on the decision so the receipt shows it.
+          const cn = state.selectedCaseId;
+          if (cn) {
+            void api.stampRefundTx(cn, txHash).catch(() => {});
+          }
           // The chain has moved, but the indexer writes refundTxHash only on its
           // next ~30s tick. Bump both versions so App.tsx re-fetches on an
           // escalating schedule until the case/receipt reflect the real state.
           // Read from the updater, not the frozen `state` closure — see the
           // note on reloadPayouts/reloadCase above.
+          setState((s) => ({
+            ...s,
+            caseVersion: s.caseVersion + 1,
+            payoutVersion: s.payoutVersion + 1,
+          }));
+          setTimer(() => go("final"), 1600);
+          return txHash;
+        } catch (e) {
+          if (isUserRejection(e)) {
+            patch({ decPhase: "sig_rejected" });
+          } else {
+            patch({ decPhase: "failed" });
+          }
+          throw e;
+        }
+      },
+      /**
+       * Signature-based refund (refundByArbiterWithSig). The arbiter signs an
+       * EIP-712 RefundAuthorization in their wallet (no gas, no chain switch),
+       * then the backend RELAYS the signed authorization to the chain via its
+       * operator key. The authorizer (signer) and the submitter (backend) are
+       * decoupled — so the BACKEND no longer needs to hold the arbiter key.
+       *
+       * Note: the connected SIGNING wallet MUST still be the arbiter's wallet —
+       * the contract reverts if ecrecover does not recover the arbiter address.
+       * The decoupling is between signer (still the arbiter) and submitter (now
+       * the backend operator). This fixes the "approve fails to record" coupling:
+       * the Decision records immediately on the POST /decisions call, and this
+       * action only authorizes the refund execution.
+       */
+      authorizeAndRelayRefund: async (caseNumber: string, typedData: RefundTypedData) => {
+        const rpAddress = (typedData.domain?.verifyingContract ?? "") as `0x${string}`;
+        const paymentId = typedData.paymentId ?? "";
+
+        // Path 1 (direct): the arbiter's browser wallet calls refundByArbiter
+        // directly on the contract. Simplest path — no backend relay, no
+        // operator key. Works when the connected wallet IS the contract's
+        // arbiter. Fails fast (WrongWalletError, no popup) if it isn't.
+        try {
+          if (rpAddress && paymentId) {
+            patch({ decPhase: "awaiting" });
+            const hash = await directRefundByArbiter(rpAddress, paymentId);
+            // Tx submitted — record the hash and proceed immediately. Do NOT
+            // wait for block confirmation (that can take minutes on Arc).
+            patch({ decPhase: "confirmed", decTxHash: hash });
+            // Stamp the refund tx hash on the decision + payout in the DB so
+            // the receipt shows the refund transaction immediately (not waiting
+            // for the indexer's 30s tick). Fire-and-forget — the indexer
+            // reconciles anyway.
+            if (!hash.startsWith("0xalready-refunded")) {
+              void api.stampRefundTx(caseNumber, hash).catch(() => {});
+            }
+            setState((s) => ({ ...s, caseVersion: s.caseVersion + 1, payoutVersion: s.payoutVersion + 1 }));
+            setTimer(() => go("final"), 1600);
+            return hash;
+          }
+        } catch (directErr) {
+          // User rejected the MetaMask popup — respect it, don't fall through.
+          if (isUserRejection(directErr)) {
+            patch({ decPhase: "sig_rejected" });
+            throw directErr;
+          }
+          // Direct call failed (wrong wallet, contract revert, RPC error) —
+          // fall through to the signature+relay path.
+        }
+
+        // Path 2 (signature + relay): arbiter signs off-chain, backend relays
+        // via refundByArbiterWithSig. This works even when the arbiter's wallet
+        // isn't the onlyArbiter key — the signature authorizes the refund and
+        // the backend's operator key submits it. Requires the backend to have
+        // the operator key configured.
+        try {
+          patch({ decPhase: "awaiting" });
+          const sig = await signRefundAuthorization(typedData);
+          patch({ decPhase: "pending" });
+          const { txHash } = await api.submitRefundTx(caseNumber, sig);
+          // Tx relayed — record the hash and proceed immediately. Same as path
+          // 1: don't wait for block confirmation.
+          patch({ decPhase: "confirmed", decTxHash: txHash });
+          // Stamp the refund tx hash on the decision + payout so the receipt
+          // shows the refund transaction immediately.
+          void api.stampRefundTx(caseNumber, txHash).catch(() => {});
           setState((s) => ({
             ...s,
             caseVersion: s.caseVersion + 1,

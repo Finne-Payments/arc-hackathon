@@ -15,10 +15,11 @@ import { getCaseDetail } from "./services.ts";
 import { buildFrameInput, type FrameInputOverrides } from "./frameInput.ts";
 import { markRunning, markStage, markDone, markFailed } from "./frameStatus.ts";
 import { buildCaseContext } from "./caseContext.ts";
-import { getSharedCase, type SharedCaseBody } from "../services.ts";
+import { getSharedCase, enqueueAnchor, idToUint256, type SharedCaseBody } from "../services.ts";
 import { loadClauseParameters } from "../seed/policy-pack.ts";
 import { loadNorthwindClauseParameters } from "../seed/northwind-pack.ts";
 import type { PayoutDoc, WorkOrderDoc } from "../models/index.ts";
+import { canonicalHash } from "../canonical.ts";
 
 /**
  * Run the full agent pipeline for a case and persist the resulting frame.
@@ -78,6 +79,29 @@ export async function assembleForCaseByNumber(
       ...input,
       onStage: (stage, status) => markStage(caseNumber, stage, status),
     });
+
+    // Anchor the analysis hash on-chain (anchorAnalysis, AGENT_ROLE). The
+    // contract stores the hash so the agent's analysis is verifiable. Only
+    // anchor when the frame was actually produced (rung < 2 = model available).
+    if (result.frame && result.frameId) {
+      const analysisHash = canonicalHash({
+        frameId: result.frameId,
+        caseId: caseNumber,
+        requirements: result.frame.requirements,
+        unresolved: result.frame.unresolved,
+      });
+      const caseDoc = shared.case as { payoutRef?: string };
+      void enqueueAnchor(
+        "analysis",
+        idToUint256(caseNumber),
+        caseDoc?.payoutRef ?? caseNumber,
+        analysisHash,
+        0,
+        { caseNumber, analysisVersion: 1 },
+      ).catch((e: unknown) =>
+        console.error(`[frame-orchestrator] analysis anchor failed for ${caseNumber}:`, e instanceof Error ? e.message : e),
+      );
+    }
 
     markDone(caseNumber);
     return result;
@@ -209,8 +233,8 @@ async function buildFrameInputFromShared(caseNumber: string, shared: SharedCaseB
   const unresolvedInput = {
     hasResponse: responses.length > 0,
     evidenceBySide: {
-      platform: evidence.filter((e) => e.submittedBy !== "recipient").length,
-      recipient: evidence.filter((e) => e.submittedBy === "recipient").length,
+      customer: evidence.filter((e) => e.submittedBy !== "merchant").length,
+      merchant: evidence.filter((e) => e.submittedBy === "merchant").length,
     },
     contestedAmountMicroUsdc: amountContested,
     deliverableAmountsMicroUsdc: [],
@@ -230,12 +254,12 @@ async function buildFrameInputFromShared(caseNumber: string, shared: SharedCaseB
   const turns: Turn[] = [];
   for (const r of responses) {
     if (!r.text?.trim()) continue;
-    const who = r.author === "recipient" ? "Customer" : r.author === "platform" ? "Merchant" : (r.authorName ?? "Party");
+    const who = r.author === "merchant" ? "Merchant" : r.author === "customer" ? "Customer" : (r.authorName ?? "Party");
     turns.push({ t: Date.parse(r.submittedAt ?? "") || 0, label: who, text: r.text.trim() });
   }
   for (const ir of caseDoc?.infoRequests ?? []) {
     if (!ir.text?.trim()) continue;
-    const to = ir.target === "recipient" ? "Customer" : "Merchant";
+    const to = ir.target === "merchant" ? "Merchant" : "Customer";
     turns.push({ t: Date.parse(ir.requestedAt ?? "") || 0, label: `Arbiter → ${to}`, text: ir.text.trim() });
   }
   turns.sort((a, b) => a.t - b.t);
@@ -247,7 +271,7 @@ async function buildFrameInputFromShared(caseNumber: string, shared: SharedCaseB
   const evidenceLines = evidence.map((e) => {
     const id = e._id ?? "";
     const summary = evidenceAnnotationMap.get(String(id));
-    const side = e.submittedBy === "recipient" ? "customer" : "merchant";
+    const side = e.submittedBy === "merchant" ? "merchant" : "customer";
     if (summary) return `- "${e.title ?? "(untitled)"}" (submitted by ${side}; source: agent summary of ${e.source ?? "evidence"}):\n  ${summary}`;
     if (e.source === "link" && e.linkUrl) return `- "${e.title}" — video link: ${e.linkUrl} (submitted by ${side}; source: evidence)`;
     if (e.source === "upload") return `- "${e.title}" (${e.filename ?? "file"}, ${e.mimeType ?? "?"}; submitted by ${side}; source: evidence — document on file, summary pending)`;

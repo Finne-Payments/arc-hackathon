@@ -24,7 +24,7 @@ export interface UnresolvedInput {
   /** Whether the recipient has responded to the dispute. */
   hasResponse: boolean;
   /** Evidence submitted by each side. Counted per side. */
-  evidenceBySide: { platform: number; recipient: number };
+  evidenceBySide: { customer: number; merchant: number };
   /** The contested amount (micro-USDC) vs the deliverable amounts. */
   contestedAmountMicroUsdc: string;
   deliverableAmountsMicroUsdc: string[];
@@ -50,17 +50,17 @@ export function computeUnresolved(input: UnresolvedInput): UnresolvedItem[] {
   }
 
   // Uncountered evidence: one side submitted evidence the other did not address.
-  const { platform, recipient } = input.evidenceBySide;
-  if (platform > 0 && recipient === 0) {
+  const { customer, merchant } = input.evidenceBySide;
+  if (customer > 0 && merchant === 0) {
     items.push({
       kind: "uncountered_evidence",
-      refs: [`platform:${platform}`, `recipient:${recipient}`],
+      refs: [`customer:${customer}`, `merchant:${merchant}`],
       provenance: "computed",
     });
-  } else if (recipient > 0 && platform === 0) {
+  } else if (merchant > 0 && customer === 0) {
     items.push({
       kind: "uncountered_evidence",
-      refs: [`platform:${platform}`, `recipient:${recipient}`],
+      refs: [`customer:${customer}`, `merchant:${merchant}`],
       provenance: "computed",
     });
   }

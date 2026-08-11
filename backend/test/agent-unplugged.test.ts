@@ -51,7 +51,7 @@ describe("FIN-105 models-unplugged degrade path", () => {
     const findings = runChecks(CHECK_INPUT);
     const items = computeUnresolved({
       hasResponse: false,
-      evidenceBySide: { platform: 2, recipient: 0 },
+      evidenceBySide: { customer: 2, merchant: 0 },
       contestedAmountMicroUsdc: "100000000",
       deliverableAmountsMicroUsdc: ["100000000"],
       deliverablesWithoutCriteria: [],
@@ -88,7 +88,7 @@ describe("FIN-105 models-unplugged degrade path", () => {
     });
     const items = computeUnresolved({
       hasResponse: false, // (1) unanswered reply
-      evidenceBySide: { platform: 2, recipient: 0 }, // (2) uncountered evidence
+      evidenceBySide: { customer: 2, merchant: 0 }, // (2) uncountered evidence
       contestedAmountMicroUsdc: "70000000", // (3) 70M doesn't match the 100M tranche
       deliverableAmountsMicroUsdc: ["100000000"],
       deliverablesWithoutCriteria: [], // criteria present
@@ -109,7 +109,7 @@ describe("FIN-105 models-unplugged degrade path", () => {
     const requirements = fillOutcomeRequirements("non_delivery", findings);
     const unresolved = computeUnresolved({
       hasResponse: false,
-      evidenceBySide: { platform: 2, recipient: 0 },
+      evidenceBySide: { customer: 2, merchant: 0 },
       contestedAmountMicroUsdc: "100000000",
       deliverableAmountsMicroUsdc: ["100000000"],
       deliverablesWithoutCriteria: [],

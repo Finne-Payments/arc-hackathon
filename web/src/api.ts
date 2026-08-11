@@ -21,28 +21,30 @@ export function setToken(token: string | null): void {
   else localStorage.removeItem(TOKEN_KEY);
 }
 
-/** Map the frontend's Role union to the transport seat. */
-export function roleToSeat(role: Role): "reviewer" | "recipient" | "platform" {
+/** Map the frontend's Role union to the transport seat (1:1 with backend roles).
+ * Standard-commerce nomenclature: customer = payer, merchant = payment recipient. */
+export function roleToSeat(role: Role): "arbiter" | "customer" | "merchant" | "platform" {
   switch (role) {
     case "arbiter":
-      return "reviewer";
-    case "merchant":
-      return "reviewer";
+      return "arbiter";
     case "customer":
-      return "recipient";
+      return "customer";
+    case "merchant":
+      return "merchant";
     case "platform":
       return "platform";
   }
 }
 
-/** Map the frontend's Role union to the backend's stored role. */
-export function roleToBackendRole(role: Role): "reviewer" | "recipient" | "platform_viewer" {
+/** Map the frontend's Role union to the backend's stored role (1:1). */
+export function roleToBackendRole(role: Role): "arbiter" | "customer" | "merchant" | "platform_viewer" {
   switch (role) {
     case "arbiter":
-    case "merchant":
-      return "reviewer";
+      return "arbiter";
     case "customer":
-      return "recipient";
+      return "customer";
+    case "merchant":
+      return "merchant";
     case "platform":
       return "platform_viewer";
   }
@@ -349,6 +351,16 @@ export interface UnsignedTx {
   abiName: string;
 }
 
+/** EIP-712 typed-data payload the arbiter signs to authorize a refund. Mirrors
+ *  the backend's RefundTypedData — the contract's RefundAuthorization struct. */
+export interface RefundTypedData {
+  domain: { name: string; version: string; chainId: number; verifyingContract: string };
+  types: { RefundAuthorization: Array<{ name: string; type: string }> };
+  primaryType: "RefundAuthorization";
+  message: { paymentID: string; expiry: number; salt: number };
+  paymentId: string;
+}
+
 /* ---- endpoint wrappers ---- */
 export const api = {
   healthz: () => request<{ ok: boolean }>("/healthz"),
@@ -369,6 +381,12 @@ export const api = {
   // chain commitment.
   savePayoutMetadata: (paymentId: string, body: { description?: string; deliverables?: { name: string; due?: string; acceptanceCriteria?: string }[]; settleImmediately?: boolean }) =>
     request<{ payout: PayoutRow }>(`/payouts/${paymentId}/metadata`, { method: "POST", body: JSON.stringify(body) }),
+
+  /** Confirm a just-broadcast pay() — creates the payout row immediately.
+   *  Does NOT wait for the tx to be mined; the backend uses these details
+   *  optimistically and the indexer reconciles later. Idempotent. */
+  confirmPayment: (body: { txHash: string; paymentId?: string; to?: string; amount?: string; refundTo?: string }) =>
+    request<{ paymentId: string; payout: PayoutRow; created: boolean }>("/payouts/confirm", { method: "POST", body: JSON.stringify(body) }),
 
   cases: () => request<{ cases: CaseRow[] }>("/cases"),
   case: (caseNumber: string) => request<SharedCase>(`/cases/${caseNumber}`),
@@ -418,11 +436,22 @@ export const api = {
   workOrderAnnotations: (paymentId: string) =>
     request<{ annotations: EvidenceAnnotation[] }>(`/payouts/${paymentId}/documents/annotations`),
 
-  requestInfo: (caseNumber: string, body: { target: "platform" | "recipient"; text: string }) =>
+  requestInfo: (caseNumber: string, body: { target: "customer" | "merchant"; text: string }) =>
     request<{ caseNumber: string; status: string; infoRequestCount: number }>(`/cases/${caseNumber}/requests`, { method: "POST", body: JSON.stringify(body) }),
 
   decide: (caseNumber: string, body: { outcome: "refund" | "release" | "no_action"; reason: string }) =>
-    request<{ decision: DecisionRow; unsignedTx: UnsignedTx | null }>(`/cases/${caseNumber}/decisions`, { method: "POST", body: JSON.stringify(body) }),
+    request<{ decision: DecisionRow; refundTypedData: RefundTypedData | null }>(`/cases/${caseNumber}/decisions`, { method: "POST", body: JSON.stringify(body) }),
+
+  /** Submit the arbiter's signed refund authorization. The backend relays it to
+   *  refundByArbiterWithSig via its operator key — the arbiter signs, the backend
+   *  submits. Returns the on-chain tx hash. */
+  submitRefundTx: (caseNumber: string, sig: { paymentID: string; expiry: number; salt: number; v: number; r: string; s: string }) =>
+    request<{ txHash: string }>(`/cases/${caseNumber}/decisions/refund-tx`, { method: "POST", body: JSON.stringify(sig) }),
+
+  /** Stamp the refund tx hash on the decision immediately after the arbiter's
+   *  direct refundByArbiter tx is broadcast (not waiting for the indexer). */
+  stampRefundTx: (caseNumber: string, txHash: string) =>
+    request<{ ok: boolean; txHash: string }>(`/cases/${caseNumber}/refund-tx`, { method: "POST", body: JSON.stringify({ txHash }) }),
 
   /** Log a per-line reviewer action on the agent decision frame (FIN-127).
    *  Mirrors the v1 frame/actions route but keyed on caseNumber + legacy auth. */
@@ -502,9 +531,8 @@ export async function walletLogin(body: { walletAddress: string; role?: Role }):
     body: JSON.stringify({
       walletAddress: body.walletAddress,
       // Send the frontend seat (arbiter/merchant/customer/platform). The backend
-      // derives the stored role from it and enforces one-wallet-one-seat, so the
-      // same wallet can't sign in as a different seat (incl. arbiter vs merchant,
-      // which share the backend `reviewer` role).
+      // maps it 1:1 to a stored role and enforces one-wallet-one-seat, so the
+      // same wallet can't sign in as a different seat.
       seat: body.role,
     }),
   });
@@ -513,7 +541,7 @@ export async function walletLogin(body: { walletAddress: string; role?: Role }):
 export interface PublicUser {
   id: string;
   email: string;
-  role: "reviewer" | "recipient" | "platform_viewer";
+  role: "arbiter" | "customer" | "merchant" | "platform_viewer";
   seat: string | null;
   displayName: string;
   platformKey: string;

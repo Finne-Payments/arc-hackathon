@@ -7,6 +7,7 @@ import { getEvidenceStore } from "../integrations/storage/localStore.ts";
 import { validateUploadDeclaration, sanitizeFilename } from "../integrations/storage/uploadPolicy.ts";
 import { scopeFor } from "../scope.ts";
 import { HttpError } from "../errors.ts";
+import { loadEnv } from "../env.ts";
 
 /* ============================================================================
    Payout + receipt routes (PRD §11.2).
@@ -43,6 +44,137 @@ payoutRoutes.post("/payouts/detected", requireInternal, async (req, res, next) =
     };
     const { payout, created } = await recordDetectedPayment(det);
     res.status(201).json({ payout, created });
+  } catch (e) {
+    next(e);
+  }
+});
+
+/**
+ * @openapi
+ * /payouts/confirm:
+ *   post:
+ *     tags: [Payouts]
+ *     summary: Confirm a just-broadcast pay() — creates the payout row immediately
+ *     security: [{ bearerAuth: [] }]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [txHash]
+ *             properties:
+ *               txHash: { type: string, description: "The on-chain pay() transaction hash" }
+ *               paymentId: { type: string, description: "The pre-read nonce (optimistic, used if tx not yet mined)" }
+ *               to: { type: string, description: "Recipient address (optimistic)" }
+ *               amount: { type: string, description: "Amount in USDC (optimistic)" }
+ *               refundTo: { type: string, description: "Refund address (optimistic)" }
+ *     responses:
+ *       201: { description: "{ paymentId, payout } — the payout row is now in the DB" }
+ *     notes: |
+ *       Called right after the wallet broadcasts pay() — does NOT wait for the
+ *       receipt. Tries to fetch the receipt first (authoritative event data);
+ *       if the tx isn't mined yet, falls back to the payment details in the
+ *       body (optimistic). The indexer reconciles the authoritative data when
+ *       it detects the PaymentCreated event. Idempotent.
+ */
+payoutRoutes.post("/payouts/confirm", requirePermission("payout:create"), requireChainConfigured("refundProtocol"), async (req, res, next) => {
+  try {
+    const { txHash, paymentId, to, amount, refundTo } = req.body ?? {};
+    if (!txHash || !String(txHash).startsWith("0x")) {
+      throw new HttpError(400, "txHash is required (0x…).");
+    }
+
+    const rpAddr = loadEnv().arc.refundProtocolAddress ?? "";
+
+    // Try to fetch the receipt (authoritative). If the tx isn't mined yet,
+    // fall back to the optimistic details from the request body.
+    let det;
+
+    try {
+      const { getPublicClient } = await import("../chain/client.ts");
+      const { decodeLog } = await import("../chain/reads.ts");
+      const client = getPublicClient();
+
+      if (client) {
+        const receipt = await client.getTransactionReceipt({ hash: String(txHash) as `0x${string}` }).catch(() => null);
+
+        if (receipt) {
+          // Tx is mined — parse the authoritative PaymentCreated event.
+          const rpLogs = receipt.logs.filter((l) => l.address.toLowerCase() === rpAddr.toLowerCase());
+          for (const log of rpLogs) {
+            const decoded = decodeLog(log);
+            if (decoded?.eventName === "PaymentCreated") {
+              const block = await client.getBlock({ blockNumber: receipt.blockNumber }).catch(() => null);
+              const tx = await client.getTransaction({ hash: String(txHash) as `0x${string}` }).catch(() => null);
+              const args = decoded.args;
+              // Convert the on-chain amount from base units (micro-USDC) to
+              // display units — the indexer does this via fromBaseUnitsDisplay.
+              const { fromBaseUnitsDisplay } = await import("../usdc.ts");
+              const rawAmount = BigInt((args.amount ?? args[2] ?? 0) as bigint | number | string);
+              det = {
+                paymentId: String(args.paymentID ?? args[0] ?? paymentId ?? ""),
+                chain: "arc",
+                contractAddress: rpAddr,
+                txHash: String(txHash),
+                to: String(args.to ?? args[1] ?? to ?? ""),
+                amount: fromBaseUnitsDisplay(rawAmount),
+                refundTo: String(args.refundTo ?? args[4] ?? refundTo ?? ""),
+                releaseTimestamp: args.releaseTimestamp !== undefined ? String(args.releaseTimestamp) : undefined,
+                blockTimestamp: block ? new Date(Number(block.timestamp) * 1000).toISOString() : new Date().toISOString(),
+                txSender: tx?.from ?? "",
+              };
+              break;
+            }
+          }
+        }
+      }
+    } catch {
+      // Chain read failed — fall through to optimistic.
+    }
+
+    // Optimistic fallback: use the details from the request body (the frontend
+    // knows the recipient, amount, refundTo, and the pre-read nonce). The
+    // indexer will reconcile the authoritative on-chain data later.
+    if (!det) {
+      // If the frontend didn't provide a paymentId (the nonce pre-read failed
+      // due to RPC rate-limiting), try reading the contract's current nonce.
+      // After a pay() tx, nonce = lastPaymentId + 1, so paymentId = nonce - 1.
+      let derivedPaymentId = paymentId ? String(paymentId) : "";
+      if (!derivedPaymentId) {
+        try {
+          const { getPublicClient } = await import("../chain/client.ts");
+          const client = getPublicClient();
+          if (client) {
+            const nonce = await client.readContract({
+              address: rpAddr as `0x${string}`,
+              abi: [{ type: "function", name: "nonce", stateMutability: "view", inputs: [], outputs: [{ name: "", type: "uint256" }] }],
+              functionName: "nonce",
+            }) as bigint;
+            if (nonce > 0n) derivedPaymentId = (nonce - 1n).toString();
+          }
+        } catch {
+          // RPC failed — can't derive the paymentId.
+        }
+      }
+      if (!derivedPaymentId || !to || !amount) {
+        throw new HttpError(400, "The transaction isn't mined yet and the payment ID couldn't be determined. It will appear once the indexer detects it.");
+      }
+      det = {
+        paymentId: derivedPaymentId,
+        chain: "arc",
+        contractAddress: rpAddr,
+        txHash: String(txHash),
+        to: String(to),
+        amount: String(amount),
+        refundTo: String(refundTo ?? ""),
+        blockTimestamp: new Date().toISOString(),
+        txSender: "",
+      };
+    }
+
+    const { payout, created } = await recordDetectedPayment(det);
+    res.status(201).json({ paymentId: det.paymentId, payout, created });
   } catch (e) {
     next(e);
   }
@@ -140,7 +272,7 @@ payoutRoutes.get("/payouts/:paymentId/receipt", requirePermission("payout:read")
 payoutRoutes.post("/payouts/:paymentId/metadata", requirePermission("workorder:create"), async (req, res, next) => {
   try {
     const { paymentId } = req.params;
-    const { description, deliverables, settleImmediately } = req.body ?? {};
+    const { description, deliverables } = req.body ?? {};
 
     // Chain-first gate: the payout must already exist in the DB. The indexer
     // creates it only when it detects a real on-chain PaymentCreated event, so
@@ -180,19 +312,25 @@ payoutRoutes.post("/payouts/:paymentId/metadata", requirePermission("workorder:c
       );
     }
 
-    // "Settle immediately": the merchant confirms the deliverables are already
-    // delivered, so the protection window is skipped. Transition the payout
-    // ESCROWED → WITHDRAWABLE so the recipient can claim the funds right away.
-    // The on-chain lockup (set by the arbiter at deploy) still applies — the
-    // recipient calls withdraw() once the contract's releaseTimestamp passes.
-    if (settleImmediately && payout.status === "ESCROWED") {
-      try {
-        const { applyPaymentEvent } = await import("../stateMachines.ts");
-        payout.status = applyPaymentEvent(payout.status as never, "lockup_end_no_dispute");
-      } catch {
-        // Already past ESCROWED (e.g. disputed) — the transition is a no-op.
+    // Settlement deadline from deliverables: if any deliverable has a due date,
+    // extend lockupEnd + disputeDeadline to the LATEST due date (but never
+    // shorten it — the T+3 minimum set at creation always applies). This makes
+    // the settlement window reflect the real work timeline: the merchant can't
+    // withdraw until the last deliverable is due, and the customer can dispute
+    // up to that point.
+    const dueDates = (deliverables as { due?: string }[] | undefined)
+      ?.map((d) => d.due)
+      .filter((d): d is string => !!d && /^\d{4}-\d{2}-\d{2}/.test(d))
+      .map((d) => new Date(d).getTime())
+      .filter((t) => !isNaN(t));
+    if (dueDates && dueDates.length > 0) {
+      const latestDue = new Date(Math.max(...dueDates));
+      const currentLockup = new Date(payout.lockupEnd).getTime();
+      if (latestDue.getTime() > currentLockup) {
+        payout.lockupEnd = latestDue.toISOString();
+        payout.disputeDeadline = latestDue.toISOString();
+        await payout.save();
       }
-      await payout.save();
     }
 
     res.status(200).json({ payout, workOrder });
@@ -315,6 +453,21 @@ payoutRoutes.post("/payouts/:paymentId/disputes", requirePermission("case:open")
     const openedBy = openedByForRole(role);
     const { claimType, freeText, amountContested } = req.body ?? {};
     if (!freeText?.trim()) throw new HttpError(400, "Tell us what went wrong — the free-text claim is required.");
+
+    // Party verification: a customer may only dispute a payout THEY paid for.
+    // The caller's wallet must match the payout's refundTo (the payer address).
+    // This stops any customer-seat wallet from opening a dispute on someone
+    // else's payment. Backend wallet is authoritative (resolved from the JWT's
+    // userId, never trusted from the request body).
+    const payout = await Payout.findOne({ paymentId: req.params.paymentId }).lean();
+    if (!payout) throw new HttpError(404, `No payout found for payment ${req.params.paymentId}.`);
+    const caller = await User.findById(req.session?.userId).lean();
+    const callerWallet = caller?.walletAddress?.toLowerCase() ?? null;
+    const payerWallet = payout.refundTo?.toLowerCase() ?? null;
+    if (!callerWallet || !payerWallet || callerWallet !== payerWallet) {
+      throw new HttpError(403, "You can only dispute payments you made. This payout was paid by a different wallet.");
+    }
+
     const { caseDoc } = await openDispute(req.params.paymentId, openedBy, {
       claimType: String(claimType ?? "work_not_delivered_in_full"),
       freeText: String(freeText),

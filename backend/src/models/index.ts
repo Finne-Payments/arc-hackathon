@@ -198,7 +198,7 @@ appendOnly(payoutSchema, "Payout", PAYOUT_IMMUTABLE);
 export interface EvidenceDoc {
   caseRef: string | null;
   payoutRef: string | null;
-  submittedBy: "platform" | "recipient" | "agent";
+  submittedBy: "customer" | "merchant" | "agent";
   type: string;
   title: string;
   fileOrText: string;
@@ -256,7 +256,7 @@ export interface CaseDoc {
   caseNumber: string;
   caseCode: string; // readable, auto-derived: e.g. NORT-MAYA-001 (display/search friendly)
   payoutRef: string;
-  openedBy: "platform" | "recipient";
+  openedBy: "customer" | "merchant";
   allegationClaimType: string;
   allegationFreeText: string;
   allegationAmountContested: string;
@@ -296,7 +296,7 @@ const caseSchema = new Schema<CaseDoc>(
 
 export interface ResponseDoc {
   caseRef: string;
-  author: "recipient" | "platform";
+  author: "merchant" | "customer" | "arbiter";
   authorName: string;
   text: string;
   evidenceRefs: string[];
@@ -500,10 +500,11 @@ const metaSchema = new Schema<MetaDoc>(
 export interface UserDoc {
   email: string;
   passwordHash?: string; // optional: wallet-login users have no password
-  role: "reviewer" | "recipient" | "platform_viewer";
+  // Backend role is 1:1 with the UI seat (standard-commerce nomenclature):
+  //   arbiter · customer · merchant · platform_viewer
+  role: "arbiter" | "customer" | "merchant" | "platform_viewer";
   // The UI seat this wallet is bound to (arbiter/merchant/customer/platform).
-  // Distinct from `role`: arbiter and merchant both map to backend `reviewer`,
-  // so without `seat` the same wallet could be reused across those two seats.
+  // Kept in lockstep with `role`.
   seat: string | null;
   displayName: string;
   platformKey: string;

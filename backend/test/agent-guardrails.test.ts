@@ -33,7 +33,7 @@ describe("FIN-124 frame degrade ladder", () => {
     const requirements = fillOutcomeRequirements("non_delivery", findings);
     const unresolved = computeUnresolved({
       hasResponse: false,
-      evidenceBySide: { platform: 2, recipient: 0 },
+      evidenceBySide: { customer: 2, merchant: 0 },
       contestedAmountMicroUsdc: "100000000",
       deliverableAmountsMicroUsdc: ["100000000"],
       deliverablesWithoutCriteria: [],
@@ -59,7 +59,7 @@ describe("FIN-124 frame degrade ladder", () => {
     const requirements = fillOutcomeRequirements("non_delivery", findings);
     const unresolved = computeUnresolved({
       hasResponse: false,
-      evidenceBySide: { platform: 2, recipient: 0 },
+      evidenceBySide: { customer: 2, merchant: 0 },
       contestedAmountMicroUsdc: "100000000",
       deliverableAmountsMicroUsdc: ["100000000"],
       deliverablesWithoutCriteria: [],

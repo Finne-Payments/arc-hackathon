@@ -187,6 +187,95 @@ export async function signRefund(unsignedTx: UnsignedTx, requiredSigner?: string
  * not require finality-depth for the demo beat (the indexer independently
  * confirms and writes the refundTxHash).
  */
+/**
+ * Direct refund: the arbiter's browser wallet calls refundByArbiter(paymentId)
+ * on the RefundProtocol. This is the SIMPLEST refund path — no backend relay,
+ * no EIP-712 signature, no operator key. The connected wallet MUST be the
+ * contract's arbiter (msg.sender == arbiter). If it isn't, the pre-flight
+ * check throws WrongWalletError before broadcasting.
+ *
+ * Returns the tx hash on success. Used as the PRIMARY refund path; the
+ * signature+relay path (signRefundAuthorization) is the fallback for when the
+ * arbiter can't or won't call the contract directly.
+ */
+export async function directRefundByArbiter(
+  refundProtocolAddress: Address,
+  paymentId: string,
+): Promise<Hash> {
+  const client = _walletClient ?? (await connectWallet());
+  await ensureArcChain();
+  const connected = client.account?.address;
+
+  const reader = getPublicReader();
+  const paymentAbi = [
+    { type: "function", name: "arbiter", stateMutability: "view", inputs: [], outputs: [{ name: "", type: "address" }] },
+    { type: "function", name: "payments", stateMutability: "view", inputs: [{ name: "", type: "uint256" }], outputs: [
+      { name: "to", type: "address" },
+      { name: "amount", type: "uint256" },
+      { name: "releaseTimestamp", type: "uint256" },
+      { name: "refundTo", type: "address" },
+      { name: "withdrawnAmount", type: "uint256" },
+      { name: "refunded", type: "bool" },
+    ] },
+  ];
+
+  // Pre-flight 1: read the contract's arbiter and verify the connected wallet
+  // matches. This avoids a confusing MetaMask popup for a tx that would revert.
+  try {
+    const arbiter = await reader.readContract({
+      address: refundProtocolAddress,
+      abi: paymentAbi,
+      functionName: "arbiter",
+    }) as Address;
+    if (connected && arbiter && connected.toLowerCase() !== arbiter.toLowerCase()) {
+      throw new WrongWalletError(connected, arbiter);
+    }
+  } catch (e) {
+    if (e instanceof WrongWalletError) throw e;
+    // RPC read failed — skip the pre-flight, let the contract revert if needed.
+  }
+
+  // Pre-flight 2: check if the payment is ALREADY refunded. If so, the
+  // refund already happened (a previous attempt succeeded on-chain but the UI
+  // may not have shown it). Return a synthetic "already done" hash so the
+  // caller advances to confirmed without re-submitting a tx that would revert.
+  try {
+    const payment = await reader.readContract({
+      address: refundProtocolAddress,
+      abi: paymentAbi,
+      functionName: "payments",
+      args: [BigInt(paymentId)],
+    }) as readonly [Address, bigint, bigint, Address, bigint, boolean];
+    const alreadyRefunded = payment[5];
+    if (alreadyRefunded) {
+      // Return a sentinel so the caller knows the refund already landed.
+      // Using the paymentId as a fake "hash" — the caller just needs a truthy
+      // value to proceed to "confirmed".
+      return `0xalready-refunded-${paymentId}` as Hash;
+    }
+  } catch {
+    // RPC read failed — skip the pre-flight, try the tx.
+  }
+
+  const hash = await client.writeContract({
+    address: refundProtocolAddress,
+    abi: [
+      {
+        type: "function",
+        name: "refundByArbiter",
+        stateMutability: "nonpayable",
+        inputs: [{ name: "paymentID", type: "uint256" }],
+        outputs: [],
+      },
+    ],
+    functionName: "refundByArbiter",
+    args: [BigInt(paymentId)],
+    account: client.account!,
+    chain: arcTestnet,
+  });
+  return hash;
+}
+
 export async function awaitRefundReceipt(hash: Hash): Promise<void> {
   const publicClient = getPublicReader();
   try {
@@ -331,11 +420,12 @@ export async function approveAndPay(
     chain: arcTestnet,
   });
 
-  // 4. Done — the wallet has broadcast pay(). Return immediately; the indexer
-  //    detects PaymentCreated server-side and builds the payout row. We do NOT
-  //    wait for the receipt here — that was causing a 20-45s delay while the
-  //    rate-limited Arc RPC was polled. The user proceeds to the ledger right
-  //    away; the payout appears once the indexer processes it (30s cycle).
+  // 4. Done — the wallet has broadcast pay(). Return immediately with the tx
+  //    hash + the pre-read nonce (the paymentId). Do NOT wait for the receipt
+  //    — that can take 30-90s on Arc's rate-limited RPC. The frontend passes
+  //    the hash + known payment details to /payouts/confirm, which creates the
+  //    payout row optimistically. The indexer reconciles the authoritative
+  //    on-chain data when it detects the PaymentCreated event.
   onProgress?.("confirming");
   return { hash: payHash, paymentId: nonceBefore };
 }
@@ -348,8 +438,131 @@ function getPublicReader() {
   });
 }
 
+/**
+ * Read the arbiter address from the RefundProtocol contract (the source of
+ * truth — not the Platform DB record, which can be stale). Returns null on
+ * RPC failure so the caller can fall back to the config value.
+ */
+export async function readArbiter(rpAddress: string): Promise<string | null> {
+  try {
+    const reader = getPublicReader();
+    const arbiter = await reader.readContract({
+      address: rpAddress as Address,
+      abi: [{ type: "function", name: "arbiter", stateMutability: "view", inputs: [], outputs: [{ name: "", type: "address" }] }],
+      functionName: "arbiter",
+    }) as string;
+    return arbiter;
+  } catch {
+    return null;
+  }
+}
+
 /** Check if a thrown error is a user-rejected signature. */
 export function isUserRejection(e: unknown): boolean {
   const msg = e instanceof Error ? e.message : String(e);
   return /user rejected|denied|rejected/i.test(msg);
+}
+
+/**
+ * The shape of the EIP-712 typed-data payload the backend returns for a refund
+ * decision. Mirrors the contract's RefundAuthorization struct + the prod domain
+ * (name "RefundProtocol", version "1", chainId 5042002, verifyingContract =
+ * the deployed RefundProtocol address).
+ */
+export interface RefundTypedData {
+  domain: {
+    name: string;
+    version: string;
+    chainId: number;
+    verifyingContract: string;
+  };
+  types: {
+    RefundAuthorization: Array<{ name: string; type: string }>;
+  };
+  primaryType: "RefundAuthorization";
+  message: {
+    paymentID: string;
+    expiry: number;
+    salt: number;
+  };
+  paymentId: string;
+}
+
+/**
+ * The signature components returned by the wallet over the RefundAuthorization
+ * typed-data. The backend relayer packs these into refundByArbiterWithSig.
+ */
+export interface SignatureComponents {
+  v: number;
+  r: string;
+  s: string;
+}
+
+/**
+ * Sign a RefundAuthorization EIP-712 message with the connected wallet. This is
+ * the signature-based refund path: the arbiter signs OFF-CHAIN (no gas, no chain
+ * switch), and the backend relayer submits refundByArbiterWithSig.
+ *
+ * IMPORTANT — what the signature path decouples, and what it does NOT:
+ *   - The SUBMITTER (msg.sender = the backend operator key) no longer needs to
+ *     be the arbiter. That is the whole point of refundByArbiterWithSig.
+ *   - The SIGNER (recovered from the signature via ecrecover) MUST still BE the
+ *     contract's arbiter. The contract reverts if `recovered != arbiter`. So the
+ *     connected wallet MUST be the arbiter's wallet. If you connect a different
+ *     wallet, ecrecover recovers the wrong address and the relay reverts with
+ *     InvalidSignature.
+ *
+ * Returns the (v, r, s) components on success. User rejection throws — the
+ * caller classifies it via isUserRejection and recovers.
+ */
+export async function signRefundAuthorization(typedData: RefundTypedData): Promise<SignatureComponents & { expiry: number; salt: number; paymentID: string }> {
+  const client = _walletClient ?? (await connectWallet());
+  // signTypedData is an off-chain signature — no chain switch is strictly needed,
+  // but keeping the wallet on Arc avoids cross-chain EIP-712 confusion.
+  await ensureArcChain();
+
+  const sig = await client.signTypedData({
+    domain: {
+      name: typedData.domain.name,
+      version: typedData.domain.version,
+      chainId: typedData.domain.chainId,
+      verifyingContract: typedData.domain.verifyingContract as Address,
+    },
+    types: {
+      RefundAuthorization: typedData.types.RefundAuthorization,
+    },
+    primaryType: typedData.primaryType,
+    message: {
+      paymentID: BigInt(typedData.message.paymentID),
+      expiry: BigInt(typedData.message.expiry),
+      salt: BigInt(typedData.message.salt),
+    },
+    account: client.account!,
+  });
+
+  // viem returns a 65-byte serialized signature (0x + r||s||v). Split it into
+  // the (v, r, s) components the contract's refundByArbiterWithSig expects.
+  const { v, r, s } = splitSignature(sig);
+  return { v, r, s, expiry: typedData.message.expiry, salt: typedData.message.salt, paymentID: typedData.message.paymentID };
+}
+
+/**
+ * Split a 65-byte serialized EIP-712 signature into (v, r, s). viem's
+ * signTypedData returns `0x` + 64 bytes (r||s) + 1 byte (v). The contract takes
+ * them as separate uint8 / bytes32 / bytes32 args.
+ */
+function splitSignature(sig: `0x${string}`): { v: number; r: string; s: string } {
+  const bytes = sig.slice(2);
+  if (bytes.length !== 130) {
+    throw new Error(`Unexpected signature length ${bytes.length} (expected 130 hex chars / 65 bytes).`);
+  }
+  const r = "0x" + bytes.slice(0, 64);
+  const s = "0x" + bytes.slice(64, 128);
+  // EIP-712 signers may return v as the yParity (0/1) instead of the ecrecover
+  // recovery byte (27/28). Solidity's ecrecover ONLY accepts 27 or 28 — any
+  // other value makes it return address(0), so refundByArbiterWithSig would
+  // revert InvalidSignature with no obvious cause. Normalize 0/1 → 27/28.
+  const vRaw = parseInt(bytes.slice(128, 130), 16);
+  const v = vRaw < 27 ? vRaw + 27 : vRaw;
+  return { v, r, s };
 }

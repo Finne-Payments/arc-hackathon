@@ -167,7 +167,7 @@ export async function buildCaseContext(detail: CaseDetail): Promise<StructuredCa
   if (onChainPaymentId) {
     const [onChain, figures] = await Promise.all([
       readPayment(onChainPaymentId),
-      readChainFigures(arbiterAddress(), (recipient || null) as Address | null),
+      readChainFigures(await arbiterAddress(), (recipient || null) as Address | null),
     ]);
     if (onChain) {
       paymentOnChain = {

@@ -150,7 +150,7 @@ export interface Env {
    addresses without touching code. The arbiter baked into RefundProtocol at
    construction is immutable and documented in contracts/.env.deploy.
    ========================================================================== */
-const DEFAULT_REFUND_PROTOCOL_ADDRESS = "0x6EE86fEE126C94CD3bE0d2a5187F69368965f989";
+const DEFAULT_REFUND_PROTOCOL_ADDRESS = "0xEa59160B2Cdc26f1D56772094804641a1032AF90";
 const DEFAULT_CASE_REGISTRY_ADDRESS = "0x297730EaF53C95B9d8322b9Af5e48b47227D1e82";
 
 let loaded: Env | null = null;

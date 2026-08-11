@@ -25,12 +25,17 @@ notificationRoutes.get("/notifications", requireAuthenticated, async (req, res, 
 
     // Build the query based on the caller's role. Case-insensitive wallet match
     // — the chain stores checksummed addresses, the user's wallet is lowercase.
+    // The merchant is the payment recipient, so it is scoped by wallet.
+    // IMPORTANT: a null platformKey must NOT default to another platform's data
+    // (scope.ts returns no docs for a null platformKey). If platformKey is unset,
+    // match an impossible value so the query returns nothing instead of leaking
+    // the northstar demo platform's notifications to an unscoped user.
     const query: Record<string, unknown> = { audienceRole: role };
-    if (role === "recipient") {
+    if (role === "merchant") {
       const w = user?.walletAddress ?? "";
       query.recipientWallet = { $regex: new RegExp(`^${w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i") };
     } else {
-      query.platformKey = user?.platformKey ?? "northstar";
+      query.platformKey = user?.platformKey ?? "__no_platform_unscoped__";
     }
 
     const all = await Notification.find(query).sort({ createdAt: -1 }).limit(30).lean();
@@ -54,10 +59,21 @@ notificationRoutes.get("/notifications", requireAuthenticated, async (req, res, 
  */
 notificationRoutes.post("/notifications/:id/read", requireAuthenticated, async (req, res, next) => {
   try {
-    await Notification.updateOne(
-      { _id: req.params.id },
-      { $set: { readAt: new Date().toISOString() } },
-    );
+    // Scope the update the same way the GET handler does: the caller may only
+    // touch notifications addressed to their role AND their platform/wallet.
+    // Without this filter any authenticated user could mark any other user's
+    // notification as read (IDOR).
+    const role = req.session.role!;
+    const userId = req.session.userId!;
+    const user = await User.findById(userId).lean();
+    const query: Record<string, unknown> = { _id: req.params.id, audienceRole: role };
+    if (role === "merchant") {
+      const w = user?.walletAddress ?? "";
+      query.recipientWallet = { $regex: new RegExp(`^${w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i") };
+    } else {
+      query.platformKey = user?.platformKey ?? "__no_platform_unscoped__";
+    }
+    await Notification.updateOne(query, { $set: { readAt: new Date().toISOString() } });
     res.json({ ok: true });
   } catch (e) {
     next(e);
@@ -80,10 +96,10 @@ notificationRoutes.post("/notifications/read-all", requireAuthenticated, async (
     const user = await User.findById(userId).lean();
 
     const query: Record<string, unknown> = { audienceRole: role, readAt: null };
-    if (role === "recipient") {
+    if (role === "merchant") {
       query.recipientWallet = user?.walletAddress;
     } else {
-      query.platformKey = user?.platformKey ?? "northstar";
+      query.platformKey = user?.platformKey ?? "__no_platform_unscoped__";
     }
 
     await Notification.updateMany(query, { $set: { readAt: new Date().toISOString() } });

@@ -16,9 +16,9 @@ import { platformName } from "../mappers";
 function subtitle(role: string): string {
   if (role === "arbiter")
     return "Cases waiting on your decision. The receipt for each payment is linked inside the case as evidence.";
-  if (role === "merchant") return "Cases you opened or that concern your payouts.";
-  if (role === "customer") return "Cases that concern payments made to you.";
-  return "All cases across merchants · view access.";
+  if (role === "customer") return "Disputes you opened on payments you made.";
+  if (role === "merchant") return "Cases that concern payments made to you.";
+  return "All cases across the marketplace · view access.";
 }
 
 type StatusFilter = "open" | "closed" | "all";

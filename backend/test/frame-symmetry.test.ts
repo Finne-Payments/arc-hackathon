@@ -122,7 +122,7 @@ describe("FIN-126 frame symmetry", () => {
     // computation itself is symmetric; both cases draw from the same KIND space.
     const baseInput = {
       hasResponse: false,
-      evidenceBySide: { platform: 1, recipient: 1 },
+      evidenceBySide: { customer: 1, merchant: 1 },
       contestedAmountMicroUsdc: "100000000",
       deliverableAmountsMicroUsdc: ["100000000"],
       deliverablesWithoutCriteria: [] as string[],
@@ -160,7 +160,7 @@ describe("FIN-126 frame symmetry", () => {
 
     const baseInput = {
       hasResponse: false,
-      evidenceBySide: { platform: 1, recipient: 1 }, // symmetric evidence
+      evidenceBySide: { customer: 1, merchant: 1 }, // symmetric evidence
       contestedAmountMicroUsdc: "100000000",
       deliverableAmountsMicroUsdc: ["100000000"],
       deliverablesWithoutCriteria: [] as string[],
@@ -195,7 +195,7 @@ describe("FIN-126 frame symmetry", () => {
     const findings = runChecks(caseFavouringPlatform());
     const unres = computeUnresolved({
       hasResponse: false,
-      evidenceBySide: { platform: 1, recipient: 1 },
+      evidenceBySide: { customer: 1, merchant: 1 },
       contestedAmountMicroUsdc: "100000000",
       deliverableAmountsMicroUsdc: ["100000000"],
       deliverablesWithoutCriteria: [],

@@ -8,6 +8,7 @@ import { seedDemoPolicyPack } from "./seed/policy-pack.ts";
 import { seedNorthwindPack } from "./seed/northwind-pack.ts";
 import { seedNorthwindScenario } from "./seed/northwind-scenario.ts";
 import { reconcilePayoutPlatformKeys } from "./services.ts";
+import { verifyEip712Domain } from "./chain/client.ts";
 
 /* ============================================================================
    Server entry. Boot order (PRD §16.2):
@@ -49,6 +50,26 @@ async function main(): Promise<void> {
 
   if (!env.registryOperatorKey) {
     console.warn("[backend] REGISTRY_OPERATOR_PRIVATE_KEY not set — anchor jobs will queue indefinitely.");
+  }
+
+  // EIP-712 domain check (EIP-5267): confirm the deployed RefundProtocol binds
+  // its refund-auth signatures to the same (name, version, chainId, contract)
+  // the backend builds in buildRefundTypedData(). A mismatch silently breaks
+  // every refundByArbiterWithSig (InvalidSignature with no obvious cause).
+  // Best-effort: a missing contract / RPC failure / old-deployed-bytecode
+  // (predating eip712Domain) logs and continues; only a *successful read with
+  // wrong values* throws to fail boot loudly. Runs after env load, before the
+  // indexer starts, so a bad config is caught before any tx is relayed.
+  if (env.arc.refundProtocolAddress) {
+    try {
+      const dom = await verifyEip712Domain();
+      if (dom) {
+        console.log(`[backend] EIP-712 domain OK: ${dom.name}/${dom.version} @ ${dom.verifyingContract} (chain ${dom.chainId})`);
+      }
+    } catch (e) {
+      console.error(`[backend] FATAL: ${e instanceof Error ? e.message : e}`);
+      process.exit(1);
+    }
   }
 
   // Start the on-chain watchers if chain addresses are configured.

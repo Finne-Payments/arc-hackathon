@@ -25,7 +25,7 @@ RPC="https://rpc.testnet.arc.io"
 USDC="0x3600000000000000000000000000000000000000"  # Arc testnet native USDC
 
 echo "==> 1/3  Deploying contracts to Arc testnet..."
-cd "$ROOT/contracts"
+cd "$ROOT/contracts/refund-protocol"
 DEPLOY_OUTPUT=$(
   USDC_ADDRESS=$USDC \
   $FORGE script script/Deploy.s.sol --rpc-url "$RPC" --broadcast 2>&1
@@ -55,7 +55,7 @@ echo "==> 3/3  Starting backend (indexer + anchor worker) + making real payouts.
 pkill -f "node.*server" 2>/dev/null || true
 npm start > /tmp/finne-backend.log 2>&1 &
 sleep 3
-cd "$ROOT/contracts"
+cd "$ROOT/contracts/refund-protocol"
 USDC_ADDRESS=$USDC REFUND_PROTOCOL_ADDRESS=$RP \
 $FORGE script script/PayTranches.s.sol --rpc-url "$RPC" --broadcast 2>&1 | grep "Paid tranches"
 sleep 3

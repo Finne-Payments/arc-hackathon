@@ -108,7 +108,7 @@ extraRoutes.get("/cases/:id/timeline", requirePermission("case:read"), async (re
         type: "dispute",
         label: `Dispute opened: ${claimLabel(c.allegationClaimType)}`,
         detail: [
-          `${contested} USDC contested · opened by ${c.openedBy === "recipient" ? "recipient" : "platform"}`,
+          `${contested} USDC contested · opened by ${c.openedBy === "merchant" ? "merchant" : "customer"}`,
           snippet(c.allegationFreeText, 90),
         ]
           .filter(Boolean)

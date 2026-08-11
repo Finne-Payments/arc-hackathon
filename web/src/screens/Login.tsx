@@ -14,6 +14,8 @@ import type { Role } from "../types";
 
 type RoleKey = "arbiter" | "merchant" | "customer" | "platform";
 
+// Standard-commerce nomenclature: Customer = payer (creates payouts, OPENS
+// disputes); Merchant = payment recipient (receives payouts, responds, withdraws).
 const ROLE_CARDS: Record<RoleKey, { name: string; title: string; desc: string; color: string }> = {
   arbiter: {
     name: "Dana Whitfield",
@@ -24,13 +26,13 @@ const ROLE_CARDS: Record<RoleKey, { name: string; title: string; desc: string; c
   merchant: {
     name: "Northstar",
     title: "Merchant",
-    desc: "Creates payouts, opens disputes",
+    desc: "Receives payouts, responds, withdraws",
     color: "var(--warn-500)",
   },
   customer: {
     name: "Maya Santos",
     title: "Customer",
-    desc: "Receives payouts, withdraws",
+    desc: "Creates payouts, opens disputes",
     color: "var(--ok-500)",
   },
   platform: {

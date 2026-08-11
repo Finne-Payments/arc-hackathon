@@ -10,9 +10,10 @@ interface NavDef {
 function navForRole(role: Role): NavDef[] {
   if (role === "arbiter")
     return [{ label: "Disputes", s: "disputes", act: ["disputes", "case", "decision", "receipt", "final"] }];
-  if (role === "merchant")
+  if (role === "customer")
+    // Customer = payer: creates payouts (ledger), opens disputes.
     return [
-      { label: "Payouts", s: "ledger", act: ["ledger", "receipt", "final"] },
+      { label: "Payouts", s: "ledger", act: ["ledger", "newpayout", "receipt", "final"] },
       { label: "Disputes", s: "disputes", act: ["disputes", "case"] },
     ];
   if (role === "platform")
@@ -20,13 +21,15 @@ function navForRole(role: Role): NavDef[] {
       { label: "Transactions", s: "platform", act: ["platform", "receipt", "final"] },
       { label: "Disputes", s: "disputes", act: ["disputes", "case"] },
     ];
-  // customer
+  // merchant = payment recipient: sees their received payouts (home).
   return [
     { label: "Your payouts", s: "home", act: ["home", "receipt", "final"] },
     { label: "Disputes", s: "disputes", act: ["disputes", "case"] },
   ];
 }
 
+// Standard-commerce nomenclature: customer = payer (Northstar), merchant =
+// payment recipient (Maya).
 function roleBadge(role: Role): { label: string; session: string; dot: string } {
   switch (role) {
     case "arbiter":
@@ -37,8 +40,8 @@ function roleBadge(role: Role): { label: string; session: string; dot: string } 
       };
     case "merchant":
       return {
-        label: "Merchant · Northstar Creators",
-        session: "Northstar Creators",
+        label: "Merchant · Maya Santos",
+        session: "Maya Santos",
         dot: "var(--warn-500)",
       };
     case "platform":
@@ -48,7 +51,7 @@ function roleBadge(role: Role): { label: string; session: string; dot: string } 
         dot: "var(--brand-400)",
       };
     default:
-      return { label: "Customer · Maya Santos", session: "Maya Santos", dot: "var(--ok-500)" };
+      return { label: "Customer · Northstar Creators", session: "Northstar Creators", dot: "var(--ok-500)" };
   }
 }
 

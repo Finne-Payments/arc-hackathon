@@ -20,18 +20,20 @@ import type { Role, Screen } from "./types";
 import type { ViewModel } from "./useFinne";
 import { isAllowed, homeScreenForRole } from "./domain/access";
 
-/** Map the backend user role to the frontend's Role union (fallback when no
-    explicit frontend role was chosen at login). */
+/** Map the backend user role to the frontend's Role union. Roles are now 1:1
+    (standard-commerce nomenclature): arbiter/customer/merchant/platform_viewer. */
 function userRoleToFrontend(role: string): Role {
   switch (role) {
-    case "reviewer":
+    case "arbiter":
       return "arbiter";
-    case "recipient":
+    case "customer":
       return "customer";
+    case "merchant":
+      return "merchant";
     case "platform_viewer":
       return "platform";
     default:
-      return "arbiter";
+      return "customer";
   }
 }
 
@@ -400,7 +402,7 @@ function AuthenticatedApp({ user, frontendRole, onLogout }: { user: PublicUser; 
 
         <div className="app-main" style={{ flex: 1, width: "100%", maxWidth: 1100, margin: 0, padding: "28px 32px 110px", boxSizing: "border-box" }}>
           {safeScreen === "ledger" && <Ledger v={v} actions={actions} apiData={apiData} />}
-          {safeScreen === "newpayout" && <NewPayout actions={actions} apiData={apiData} />}
+          {safeScreen === "newpayout" && <NewPayout actions={actions} apiData={apiData} userWallet={user.walletAddress} />}
           {(safeScreen === "receipt" || safeScreen === "final") && <Receipt v={v} actions={actions} apiData={apiData} />}
           {safeScreen === "case" && <CaseRoom v={v} actions={actions} apiData={apiData} />}
           {safeScreen === "decision" && <Decision v={v} actions={actions} apiData={apiData} />}

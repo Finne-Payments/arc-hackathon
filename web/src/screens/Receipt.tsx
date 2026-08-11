@@ -4,7 +4,7 @@ import type { ApiData } from "../useApi";
 import { BackLink, Card, Eyebrow, PrimaryButton, SecondaryButton, SharedViewBadge, SpinnerLabel, StatusPill, TechChip } from "../components/primitives";
 import { DocumentPreview } from "../components/DocumentPreview";
 import { OpenDisputeModal } from "../components/OpenDisputeModal";
-import { explorerAddr, explorerTx, receiptStatusView, shortHex } from "../mappers";
+import { explorerAddr, explorerTx, receiptStatusView, shortHex, SIDE_LABEL, lockupCountdown } from "../mappers";
 import { api } from "../api";
 import { connectWallet, signWithdraw, isUserRejection } from "../wallet";
 
@@ -12,7 +12,7 @@ import { connectWallet, signWithdraw, isUserRejection } from "../wallet";
 // fallback so the withdraw/refund path works on first render even before
 // /api/config resolves; the live config value wins when present. Mirrors the
 // same fallback in NewPayout.tsx. See deployments/arc-testnet.json.
-const FALLBACK_REFUND_PROTOCOL = "0x6EE86fEE126C94CD3bE0d2a5187F69368965f989";
+const FALLBACK_REFUND_PROTOCOL = "0xEa59160B2Cdc26f1D56772094804641a1032AF90";
 
 function ChainRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -25,10 +25,11 @@ function ChainRow({ label, children }: { label: string; children: React.ReactNod
 
 export function Receipt({ v, actions, apiData }: { v: ViewModel; actions: FinneActions; apiData?: ApiData }) {
   const isFinal = v.screen === "final";
+  // Customer (payer) returns to the ledger; merchant (recipient) to their home.
   const backLabel =
-    v.role === "arbiter" ? "Back to the case" : v.role === "merchant" ? "All payouts" : v.role === "platform" ? "All transactions" : "Your payouts";
+    v.role === "arbiter" ? "Back to the case" : v.role === "customer" ? "All payouts" : v.role === "platform" ? "All transactions" : "Your payouts";
   const goBack = () =>
-    actions.go(v.role === "arbiter" ? "case" : v.role === "merchant" ? "ledger" : v.role === "platform" ? "platform" : "home");
+    actions.go(v.role === "arbiter" ? "case" : v.role === "customer" ? "ledger" : v.role === "platform" ? "platform" : "home");
 
   // Live receipt data from the API (or null if not yet loaded).
   const r = apiData?.activeReceipt ?? null;
@@ -50,9 +51,9 @@ export function Receipt({ v, actions, apiData }: { v: ViewModel; actions: FinneA
   // caseStage — a freshly-protected payout reads "Protected", not "Disputed".
   const statusView = payout ? receiptStatusView(payout) : null;
 
-  // Open-dispute modal: opens for the payout currently being viewed. Either side
-  // (claimant/merchant or recipient) can open a dispute; creation is a real API
-  // call, and the freshly-created case loads on success.
+  // Open-dispute modal: only the customer (payer/claimant) can open a dispute,
+  // gated in the render below by v.isClaimant. Creation is a real API call, and
+  // the freshly-created case loads on success.
   const [disputeOpen, setDisputeOpen] = useState(false);
   const disputedPaymentId = payout?.paymentId ?? v.selectedPaymentId ?? "";
   const disputedAmount = payout?.amount ?? "0";
@@ -62,7 +63,10 @@ export function Receipt({ v, actions, apiData }: { v: ViewModel; actions: FinneA
   // Document preview modal (case-party private).
   const [previewingDocId, setPreviewingDocId] = useState<string | null>(null);
   const [withdrawMsg, setWithdrawMsg] = useState<string | null>(null);
-  const canWithdraw = v.isRecipient && payout && (payout.status === "WITHDRAWABLE" || payout.status === "ESCROWED") && !payout.withdrawTxHash;
+  // Settlement countdown — same logic as the merchant home page. The merchant
+  // can only withdraw once the settlement window (lockup) has passed.
+  const settlement = payout?.lockupEnd ? lockupCountdown(payout.lockupEnd) : null;
+  const canWithdraw = v.isRecipient && payout && (payout.status === "WITHDRAWABLE" || payout.status === "ESCROWED") && !payout.withdrawTxHash && (settlement?.ready ?? false);
 
   const doWithdraw = async () => {
     if (!payout) return;
@@ -128,6 +132,25 @@ export function Receipt({ v, actions, apiData }: { v: ViewModel; actions: FinneA
           >
             Open the case
           </button>
+        </div>
+      )}
+
+      {/* Settlement window banner — visible to ALL roles so everyone is aligned
+          on when the funds unlock. Matches the merchant home page countdown. */}
+      {payout && payout.status === "ESCROWED" && settlement && !settlement.ready && (
+        <div style={{ display: "flex", alignItems: "center", gap: 12, background: "var(--brand-50)", border: "1px solid var(--brand-200)", borderRadius: "var(--radius-md)", padding: "13px 18px", marginBottom: 20, flexWrap: "wrap" }}>
+          <span style={{ fontSize: 18 }}>⏳</span>
+          <span style={{ fontSize: 14, flex: 1, color: "var(--brand-800)" }}>
+            <strong>{settlement.label}.</strong> The merchant can withdraw once the settlement window ends. Until then, the customer can open a dispute.
+          </span>
+        </div>
+      )}
+      {payout && payout.status === "ESCROWED" && settlement?.ready && v.isRecipient && !payout.withdrawTxHash && (
+        <div style={{ display: "flex", alignItems: "center", gap: 12, background: "var(--ok-soft)", border: "1px solid var(--ok-border)", borderRadius: "var(--radius-md)", padding: "13px 18px", marginBottom: 20, flexWrap: "wrap" }}>
+          <span style={{ fontSize: 18 }}>✅</span>
+          <span style={{ fontSize: 14, flex: 1, color: "var(--ok-600)" }}>
+            <strong>Settlement window complete.</strong> You can withdraw {payout.amount} USDC now.
+          </span>
         </div>
       )}
 
@@ -267,7 +290,7 @@ export function Receipt({ v, actions, apiData }: { v: ViewModel; actions: FinneA
               {evidence.slice(0, 5).map((e, i) => (
                 <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, border: "1px solid var(--color-border)", borderRadius: "var(--radius-md)", padding: "9px 12px", fontSize: 13 }}>
                   <span style={{ flex: 1, fontWeight: 500 }}>{e.title ?? e.type}</span>
-                  <span style={{ border: "1px solid var(--color-border)", borderRadius: "var(--radius-pill)", padding: "1px 8px", fontSize: 11, color: "var(--color-fg-muted)" }}>{e.submittedBy}</span>
+                  <span style={{ border: "1px solid var(--color-border)", borderRadius: "var(--radius-pill)", padding: "1px 8px", fontSize: 11, color: "var(--color-fg-muted)" }}>{SIDE_LABEL[e.submittedBy] ?? e.submittedBy}</span>
                   <span style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--color-fg-subtle)" }}>{e.sha256 ? shortHex(e.sha256) : "—"}</span>
                 </div>
               ))}
@@ -293,12 +316,14 @@ export function Receipt({ v, actions, apiData }: { v: ViewModel; actions: FinneA
               </div>
             )}
 
-            {v.screen === "receipt" && payout && payout.status !== "DISPUTED" && payout.status !== "REFUNDED" && !payout.withdrawTxHash && (
+            {/* Only the customer (the payer/claimant) can open a dispute. The
+                merchant (payment recipient) responds via the case room instead. */}
+            {v.screen === "receipt" && v.isClaimant && payout && payout.status !== "DISPUTED" && payout.status !== "REFUNDED" && !payout.withdrawTxHash && (
               <SecondaryButton
                 onClick={() => setDisputeOpen(true)}
                 style={{ marginTop: 18, fontSize: 13, padding: "9px 15px" }}
               >
-                {v.isRecipient ? "Something wrong with this payment?" : "Open a dispute"}
+                Something wrong with this payment?
               </SecondaryButton>
             )}
           </Card>

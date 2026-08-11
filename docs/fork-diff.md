@@ -23,6 +23,28 @@ Documented in `contracts/refund-protocol/README.md` → "What changed in this fo
   `testRefundCannotBeReenteredViaTokenHook`.
 - **`pay()` input validation (low).** Added `ZeroAmount` / `ZeroRecipient`
   reverts. Pinned by `testPayRejectsZeroAmount` etc.
+- **`refundByArbiterWithSig` — signature-based refund (feature).** A new
+  EIP-712 refund path that decouples the authorizer from the submitter. The
+  arbiter signs a `RefundAuthorization(uint256 paymentID, uint256 expiry,
+  uint256 salt)` typed-data message off-chain; ANY account may then submit
+  `refundByArbiterWithSig` (the backend relayer does this with the operator
+  key). This fixes the arbiter-wallet coupling: the reviewer no longer needs to
+  hold the `onlyArbiter` key in MetaMask, and the off-chain decision records
+  immediately (independent of the signature step). Mirrors the existing
+  `earlyWithdrawByArbiter` pattern (same `withdrawalHashes` replay guard). The
+  original `refundByArbiter` is unchanged (backward compat). Also adds
+  `setArbiter(address)` so the arbiter address can be rotated without
+  redeploying — rotating the arbiter invalidates all outstanding (unsubmitted)
+  refund authorizations, since they no longer recover to the current arbiter.
+  Pinned by `testRefundByArbiterWithSig_HappyPath_AnySubmitter`,
+  `_RevertsOnWrongSigner`, `_RevertsOnReplay`, `_RevertsOnExpiry`,
+  `_RevertsOnMalformedSignature`, `_PathB_RecordsDebt`, and
+  `testSetArbiter_RotatesAndOnlyCurrentCanCall`.
+- **Constructor + signature hardening (low).** The constructor now reverts on a
+  zero arbiter address (`ZeroArbiter`), and `refundByArbiterWithSig` explicitly
+  guards against `ecrecover` returning `address(0)` for malformed signatures.
+  Pinned by `testConstructor_RevertsOnZeroArbiter` +
+  `testRefundByArbiterWithSig_RevertsOnMalformedSignature`.
 
 ### 2. Finné's own contract — `FinneCaseRegistry.sol`
 
